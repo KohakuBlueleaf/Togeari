@@ -16,6 +16,13 @@ from togeari.engines.web import WebCallEngine
 HOLD_S = 10.0
 
 
+class HoldServer(ThreadingHTTPServer):
+    """A listen backlog for every request the tests hold at once."""
+
+    daemon_threads = True
+    request_queue_size = 64
+
+
 class HoldHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     release: threading.Event
@@ -60,8 +67,7 @@ def held_server():
     release = threading.Event()
     arrived = threading.Semaphore(0)
     handler = type("Handler", (HoldHandler,), {"release": release, "arrived": arrived})
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    httpd.daemon_threads = True
+    httpd = HoldServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     yield f"http://127.0.0.1:{httpd.server_address[1]}", release, arrived

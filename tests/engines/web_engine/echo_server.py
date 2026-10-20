@@ -54,6 +54,7 @@ class Httpd(ThreadingHTTPServer):
     """Tracks open connections so ``close`` can drop keep-alive ones too."""
 
     daemon_threads = True
+    request_queue_size = 64
 
     def __init__(self, *args):
         super().__init__(*args)

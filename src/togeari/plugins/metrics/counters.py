@@ -179,11 +179,15 @@ class Counters(BasePlugin):
     def _totals(self, loads: bool) -> dict:
         """Cumulative numbers read from the machine; dispatcher thread or stopped dispatcher."""
         ctx = self.ctx
-        t = time.monotonic()
+
+        # Dispatcher busy time is on the perf_counter clock, unit busy time on the monotonic one
+        t = time.perf_counter()
+        tm = time.monotonic()
         s = ctx.stats()
-        lanes = ctx.lanes(loads=loads, now=t)
+        lanes = ctx.lanes(loads=loads, now=tm)
         return {
             "t": t,
+            "tm": tm,
             "busy_s": s["busy_s"],
             "cycles": s["cycles"],
             "calls": s["calls"],
@@ -222,7 +226,7 @@ class Counters(BasePlugin):
             "dt": dt,
             "dispatcher": self._dispatcher(prev, cur, dt, kinds, self.ctx.events_dropped()),
             "lanes": self._lanes(prev, cur, enqueued, queued),
-            "units": self._units(prev, cur, dt, submits, service),
+            "units": self._units(prev, cur, dt, cur["tm"] - prev["tm"], submits, service),
             "jobs": self._job_counters(self.ctx.job_states(), dt, jobs, kinds),
             "work": {
                 "calls_per_s": (cur["calls"] - prev["calls"]) / dt,
@@ -305,17 +309,20 @@ class Counters(BasePlugin):
         return out
 
     @staticmethod
-    def _units(prev: dict, cur: dict, dt: float, submits: dict, service: dict) -> dict:
+    def _units(prev: dict, cur: dict, dt: float, dtm: float, submits: dict, service: dict) -> dict:
+        """Per unit; ``dtm`` is the interval on the monotonic clock unit busy time uses (0 when
+        the clock has not ticked, and then the busy time has not grown either)."""
         out = {}
         for name, now in cur["units"].items():
             before = prev["units"].get(name, {})
             times = service.get(name, [])
             p50, p90 = percentile(times, 0.5), percentile(times, 0.9)
+            busy = now["busy_s"] - before.get("busy_s", 0.0)
             out[name] = {
                 "lane": now["lane"],
                 "state": now["state"],
                 "inflight": now["inflight"],
-                "busy": (now["busy_s"] - before.get("busy_s", 0.0)) / dt,
+                "busy": busy / dtm if dtm > 0 else 0.0,
                 "rate_ewma": now["rate"],
                 "items_per_s": (now["done"] - before.get("done", 0)) / dt,
                 "submits": submits.get(name, 0),

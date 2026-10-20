@@ -1,11 +1,14 @@
 """Counters: every job, call and submission is counted exactly once across the snapshots."""
 
+import time
+
 import pytest
 from plugin_programs import PROGRAM, jobs
 
 from conftest import build, run_jobs
 from togeari.plugins import Counters
 from togeari.plugins.metrics import bucket_us, hist_percentile
+from togeari.plugins.metrics import counters as counters_module
 
 
 def test_hist_percentile_on_known_histogram():
@@ -16,6 +19,37 @@ def test_hist_percentile_on_known_histogram():
     assert hist_percentile(hist, 0.995) == 16384.0
     assert hist_percentile({}, 0.5) is None
     assert bucket_us(14) == 16384.0
+
+
+class FrozenMonotonic:
+    """The ``time`` module with ``monotonic`` stopped at one value."""
+
+    def __init__(self, at: float):
+        self.at = at
+
+    def monotonic(self) -> float:
+        return self.at
+
+    def __getattr__(self, name: str):
+        return getattr(time, name)
+
+
+def test_busy_fractions_hold_when_samples_fall_inside_one_monotonic_tick(monkeypatch):
+    # A coarse monotonic clock for Counters only: every sample reads the same monotonic time
+    monkeypatch.setattr(counters_module, "time", FrozenMonotonic(time.monotonic()))
+    counters = Counters(interval_s=0.01)
+    snaps: list[dict] = []
+    counters.watchers.append(snaps.append)
+    m = build(PROGRAM, "main", n_units=2, latency_ms=2.0, plugins=[counters])
+    try:
+        run_jobs(m, jobs(20))
+    finally:
+        m.stop()
+    assert len(snaps) >= 2
+    for s in snaps:
+        assert 0.0 <= s["dispatcher"]["busy"] <= 1.0 + 1e-6
+        for u in s["units"].values():
+            assert 0.0 <= u["busy"] <= 1.0 + 1e-6
 
 
 def test_counters_account_for_every_job_and_call():

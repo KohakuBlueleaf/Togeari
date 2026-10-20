@@ -1,0 +1,200 @@
+"""Retire in order-key order; finish a job; snapshot at retire boundaries (spec/03 §3.9, §3.10)."""
+
+import logging
+
+from togeari.core.program.decode.instr import Op
+from togeari.core.runtime.kir import UNDEF
+from togeari.core.runtime.retire import snapshot
+from togeari.core.runtime.state import Inflight, InfState, Job, SlotState, deref, effective
+
+log = logging.getLogger("togeari.dispatcher")
+_FINAL = (float("inf"),)
+
+
+class RetireStage:
+    """Retire, finish, snapshots (mixed into ``Dispatcher``)."""
+
+    def retire(self, job: Job) -> None:
+        w = job.window
+        retired = 0
+        bound = job.oldest_live_key()
+        while w and not job.ended:
+            x = w.first()
+            if x.state != InfState.DONE:
+                break
+            if bound is not None and x.key >= bound:
+                break
+            if x.fault is not None:
+                self.take_fault(job, x)
+                bound = job.oldest_live_key()
+                continue
+            w.pop_first()
+            x.state = InfState.RETIRED
+            retired += 1
+            self.retire_one(job, x)
+            if x.versions:
+                fold_versions(x)
+
+            # The retired statement lets go of its values, work item, view and slots
+            x.values = x.result = x.snapshot = x.kept = x.mutated = x.versions = x.item = None
+            x.inputs = x.outs = ()
+        job.oldest_open_key()
+        job.stats["retired"] += retired
+        if job.ended:
+            return
+
+        # Snapshot at a retire boundary every `snapshot_every` retired statements
+        every = self.knobs["snapshot_every"]
+        due = every and job.stats["retired"] - job.snap_at >= every
+        if due and self.store is not None and not job.snap_off:
+            self.take_snapshot(job)
+
+        # Statements blocked on older work may go now; strands at a cap may fetch again
+        blocked = self.blocked.pop(job.id, None)
+        if blocked:
+            for inf in blocked:
+                if inf.state == InfState.READY:
+                    self.ready.append(inf)
+        if retired and job.runnable:
+            self.dirty.add(job.id)
+        if not w and not job.strands:
+            self.finish(job)
+
+    def retire_one(self, job: Job, x: Inflight) -> None:
+        ins = x.instr
+        if self.knobs["assert_alias"]:
+            self.alias_check(job, x)
+        if job.record is not None and ins.op == Op.CALL:
+            job.record.append((ins.node, x.dig, "ok", x.kept, x.mutated))
+            limit = self.knobs["record_limit"]
+            if limit is not None and len(job.record) > limit:
+                job.record = None
+                job.stats["record_skipped"] = f"more than {limit} calls"
+        # A positional result is stored as copied at settle, before any younger in-place change
+        if x.store_key is not None and not x.hit and ins.binding.store == "positional":
+            self.store_put(x.store_key, x.kept)
+        if self.bus.wants("stmt.retire", job.id):
+            self.emit_stmt("stmt.retire", x)
+
+    def take_snapshot(self, job: Job) -> None:
+        key = self.snapshot_key(job)
+        if key is None:
+            job.snap_off = True
+            return
+        try:
+            blob = snapshot.capture(job)
+        except Exception as exc:  # noqa: BLE001
+            job.snap_off = True
+            msg = f"{type(exc).__name__}: {exc}"
+            job.stats["snapshot_error"] = msg
+            self.stats["snapshot_errors"] += 1
+            log.warning("job %s cannot snapshot: %s", job.key, msg)
+            if self.bus.wants("snapshot.error", job.id):
+                self.bus.emit("snapshot.error", job=job.id, key=job.key, error=msg)
+            return
+        if blob is not None:
+            self.store_put(key, blob)
+            job.snap_at = job.stats["retired"]
+            job.stats["snapshots"] = job.stats.get("snapshots", 0) + 1
+
+    def snapshot_key(self, job: Job) -> bytes | None:
+        """The job's snapshot key; None without a store or with weak inputs."""
+        if self.store is None or job.inputs_dig is None:
+            return None
+        region = self.code.region_of(job.entry.addr)
+        return snapshot.snapshot_key(region.semantic_hash, job.key, job.inputs_dig)
+
+    # ------------------------------------------------------------ debug checks
+    def alias_check(self, job: Job, x: Inflight) -> None:
+        """At retire: every input this statement read and every value it wrote is filled."""
+        bad = [p for p, s in x.inputs if effective(s, x.key).state != SlotState.READY]
+        bad += [
+            f"output {i}"
+            for i, s in enumerate(x.outs)
+            if s is not None and s.state != SlotState.READY
+        ]
+        if x.versions:
+            bad += [f"{p} after" for p, (_, v) in x.versions.items() if v.state != SlotState.READY]
+        if bad and job.failure is None:
+            job.failure = {
+                "kind": "AliasCheck",
+                "node": x.instr.node,
+                "message": f"at retire, not filled: {bad}",
+            }
+
+    def alias_at_end(self, job: Job, final) -> str | None:
+        """A problem with the names a job ends with, or None."""
+        slots = {n: effective(final.get(n), _FINAL) for n in final}
+        squashed = sorted(n for n, s in slots.items() if s.state != SlotState.READY)
+        if squashed:
+            return f"names not filled at the end: {squashed}"
+
+        # Mutable values of this job reachable from another resident job
+        mine = {id(s.value): n for n, s in slots.items() if _mutable(s.value)}
+        for other in self.jobs.values():
+            if other is job:
+                continue
+            for v in _values_of(other):
+                if id(v) in mine:
+                    return f"{mine[id(v)]!r} is shared with job {other.key!r}"
+        return None
+
+    # ------------------------------------------------------------ job end
+    def finish(self, job: Job) -> None:
+        """A job with no live strand and an empty window: collect its outputs."""
+        final = job.final_names
+        outputs, missing = {}, []
+        if final is None:
+            names = list(job.entry.outputs or [])
+        elif job.entry.outputs is None:
+            names = [n for n in final if "__" not in n]
+        else:
+            names = list(job.entry.outputs)
+        for o in names:
+            s = final.get(o) if final is not None else None
+            v = effective(s, _FINAL) if s is not None else None
+            if v is None or v.state != SlotState.READY or v.value is UNDEF:
+                missing.append(o)
+            else:
+                outputs[o] = v.value
+
+        # Debug check: every name filled, no mutable value shared with another resident job
+        if self.knobs["assert_alias"] and final is not None and job.failure is None:
+            message = self.alias_at_end(job, final)
+            if message is not None:
+                job.failure = {"kind": "AliasCheck", "node": None, "message": message}
+        if missing and job.entry.outputs is not None:
+            job.failure = {
+                "kind": "KirRuntimeError",
+                "node": job.entry.name,
+                "message": f"@def {job.entry.name}: outputs {missing} not set",
+            }
+        self.end_job(job, outputs, missing)
+
+
+def fold_versions(x: Inflight) -> None:
+    """A retired `mutates` call: its version becomes the oldest one its values keep.
+
+    Every reader older than the call has retired, so versions before it and squashed ones
+    are dropped; ``effective`` scans only versions of unretired calls.
+    """
+    for before, _ in x.versions.values():
+        base = deref(before)
+        base.muts = [(k, v) for k, v in base.muts if k >= x.key and v.state != SlotState.SQUASHED]
+
+
+def _mutable(v) -> bool:
+    return isinstance(v, (list, dict, set, bytearray)) or hasattr(v, "__dict__")
+
+
+def _values_of(job: Job):
+    """Every value a resident job's live names and window hold."""
+    for st in job.strands.values():
+        if st.names is not None:
+            for slot in st.names.to_dict().values():
+                s = effective(slot, _FINAL)
+                if s.state == SlotState.READY:
+                    yield s.value
+    for x in job.window:
+        if x.values:
+            yield from x.values.values()

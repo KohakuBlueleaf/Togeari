@@ -103,6 +103,8 @@ def run(
 ):
     FAIL[0] = fail
     CALLS.clear()
+
+    # One snapshotting machine per job over the given store
     lane = Lane([SimCall(name="u", latency_ms=5, tail=0.0)])
     m = Machine(
         program=program,
@@ -121,6 +123,7 @@ def run(
         snapshot_every=1,
         run_ahead=run_ahead,
     )
+
     try:
         return m.submit(inputs, key="k").result(20)
     finally:

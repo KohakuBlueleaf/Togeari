@@ -26,6 +26,8 @@ def value_bytes(value: Any, depth: int = 2) -> int:
             return len(value)
         case memoryview():
             return value.nbytes
+
+        # Containers: the first items sampled, scaled to the length
         case list() | tuple() | set() | frozenset() | dict() if depth > 0:
             items = value.values() if isinstance(value, dict) else value
             n = len(value)
@@ -37,6 +39,8 @@ def value_bytes(value: Any, depth: int = 2) -> int:
             if n > _SAMPLE:
                 total = total * n // _SAMPLE
             return sys.getsizeof(value) + total
+
+        # Buffers by ``nbytes``, the rest by ``getsizeof``
         case _:
             nbytes = getattr(value, "nbytes", None)
             if isinstance(nbytes, int):

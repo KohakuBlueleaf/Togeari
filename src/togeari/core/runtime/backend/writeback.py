@@ -103,6 +103,8 @@ class WritebackStage:
         inf = item.owner
         if inf is None:
             return
+
+        # The result event, with queue and service times
         if self.bus.wants("lane.result", inf.job.id):
             sent = item.ext.get("sent")
             queued = sent - item.ext["enqueued"] if sent and "enqueued" in item.ext else None
@@ -117,6 +119,8 @@ class WritebackStage:
                 service_s=(time.monotonic() - sent) if sent else None,
                 result=type(result).__name__,
             )
+
+        # A cancel the machine did not ask for fails the statement
         try:
             match result:
                 case Cancelled():

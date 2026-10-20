@@ -195,12 +195,16 @@ class Compiler:
                 )
             case Call():
                 return self.call(s, each_ctx, try_id)
+
+            # Control
             case Branch():
                 return self.new(Op.BRANCH, s, each_ctx, try_id, operand=operand(s.cond))
             case Switch():
                 return self.new(Op.SWITCH, s, each_ctx, try_id, operand=operand(s.value))
             case Jump() | Parallel():
                 return self.new(Op.JUMP, s, each_ctx, try_id)
+
+            # Loops
             case Each():
                 return self.new(
                     Op.EACH,
@@ -211,6 +215,7 @@ class Compiler:
                     item=s.item,
                     index=s.index,
                 )
+
             case _:
                 raise TypeError(f"cannot compile {type(s).__name__}")
 

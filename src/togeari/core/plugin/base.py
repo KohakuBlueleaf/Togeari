@@ -292,6 +292,19 @@ class BasePlugin:
     # When the plugin's event queue is full: "drop", "sample" or "counters_only".
     overflow: str = "drop"
     queue_size: int = 10_000
+    # With close_s set, event delivery and on_unload's drain share one deadline at stop:
+    # ``unload_deadline``, close_s from the start of the unload.
+    close_s: float | None = None
+    unload_deadline: float | None = None
+
+    def unload_by(self) -> float | None:
+        """The monotonic deadline of this unload: ``unload_deadline`` when the machine set
+        one, else ``close_s`` from now, else None (no bound)."""
+        if self.unload_deadline is not None:
+            return self.unload_deadline
+        if self.close_s is not None:
+            return time.monotonic() + self.close_s
+        return None
 
     def should_apply(self, ctx: PluginContext) -> bool:
         """Dynamic gate, evaluated before each hook call."""

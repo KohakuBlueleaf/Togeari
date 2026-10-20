@@ -74,6 +74,8 @@ def build_job_programs(
     except (OSError, TypeError) as exc:
         problems.add("program", f"{program}: {exc}")
         return []
+
+    # The whole program checked once, unlowered
     passes = list(DEFAULT_PASSES if passes is None else passes)
     try:
         compiled = compile_source(text, libraries, base, sig_path, passes=[])
@@ -85,6 +87,8 @@ def build_job_programs(
     except Exception as exc:  # noqa: BLE001
         problems.add(source, str(exc))
         return []
+
+    # One lowered job program per entry
     defs = {s.name: s for s in compiled.program.body if isinstance(s, Def)}
     out: list[JobProgram] = []
     for entry in entries:
@@ -97,6 +101,8 @@ def build_job_programs(
         except Exception as exc:  # noqa: BLE001
             problems.add(source, f"entry {entry!r}: {exc}")
             continue
+
+        # Its parameters, outputs and hashes
         d = defs.get(entry) if entry else None
         params = []
         if d is not None:
@@ -106,6 +112,7 @@ def build_job_programs(
         outputs = [o.name for o in d.outputs] if d is not None else None
         sem = _mix(semantic_hash(lowered), str(entry), ",".join(passes))
         full = _mix(full_hash(lowered), str(entry), ",".join(passes))
+
         out.append(
             JobProgram(
                 source,

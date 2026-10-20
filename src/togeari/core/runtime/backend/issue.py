@@ -241,7 +241,9 @@ class IssueStage:
         ins = inf.instr
         b = ins.binding
         region = self.code.region_of(ins.addr)
+
         match b.store:
+            # By the inputs' content
             case "content":
                 dig, weak = digest_with_weak(inf.values)
                 if weak:
@@ -251,6 +253,8 @@ class IssueStage:
                 return digest(
                     (region.semantic_hash, ins.node, dig, self.m.identity(b.adapter, b.lane))
                 )
+
+            # By the job and the statement's place in it
             case "positional":
                 job = inf.job
                 self.warn_auto_key(job)

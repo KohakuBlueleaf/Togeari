@@ -56,10 +56,13 @@ class WorkItem:
         self.deadline = deadline
         self.key = key
         self.seq = 0
+
+        # The payload, built once, and its digest
         self._payload: Any = None
         self._has_payload = False
         self._build: threading.Lock | None = None
         self._digest: bytes | None = None
+
         # The machine's inflight and the lane's bookkeeping; engines never look at them
         self.owner = owner
         self.ext: dict = {}

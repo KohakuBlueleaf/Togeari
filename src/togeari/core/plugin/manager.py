@@ -10,6 +10,8 @@ import time
 from typing import Any
 
 from togeari.core.plugin.base import BasePlugin, PluginBlockError, PluginContext
+from togeari.core.policies.former import Greedy
+from togeari.core.policies.select import LeastLoaded
 
 log = logging.getLogger("togeari.plugin")
 
@@ -87,9 +89,10 @@ class PluginManager:
         the plugin's ``on_unload``)."""
         ok, _ = self.call(plugin, "on_load", self.contexts[plugin.name])
         if not ok:
-            # What on_load took before it failed is released
+            # What on_load took before it failed is released, and its policies withdrawn
             log.error("plugin %s not enabled: on_load failed", plugin.name)
             self.call(plugin, "on_unload")
+            self.withdraw(plugin.name)
             return False
         self.enabled.add(plugin.name)
 
@@ -141,10 +144,25 @@ class PluginManager:
         return True
 
     def withdraw(self, name: str) -> None:
-        """Remove what the plugin contributed: entries another plugin replaced since stay."""
+        """Remove what the plugin contributed: entries another plugin replaced since stay. A
+        lane still using a withdrawn policy goes back to its default (``LeastLoaded`` unit
+        choice; ``Greedy`` forming on a batch lane)."""
+        withdrawn = []
         for table, key, value in self.contributed.pop(name, []):
+            withdrawn.append(value)
             if table.get(key) is value:
                 del table[key]
+
+        # Lanes bound to a withdrawn former or selector
+        for lane in getattr(self.m, "lanes", ()):
+            if any(lane.former is v for v in withdrawn):
+                log.warning("lane %s: former of plugin %s withdrawn; Greedy used", lane.name, name)
+                lane.former = Greedy() if lane.kind == "batch" else None
+            if any(lane.select is v for v in withdrawn):
+                log.warning(
+                    "lane %s: selector of plugin %s withdrawn; LeastLoaded used", lane.name, name
+                )
+                lane.select = LeastLoaded()
 
     def get(self, name: str) -> BasePlugin | None:
         return next((p for p in self.plugins if p.name == name), None)
@@ -157,10 +175,19 @@ class PluginManager:
             ]
 
     def unload_all(self) -> None:
+        """Unload every enabled plugin; one with ``close_s`` gets one deadline for the delivery
+        of its queued events and its own drain."""
         for p in self.plugins:
-            if p.name in self.enabled:
-                self.m.bus.unsubscribe(p)
+            if p.name not in self.enabled:
+                continue
+            close_s = getattr(p, "close_s", None)
+            deadline = None if close_s is None else time.monotonic() + close_s
+            p.unload_deadline = deadline
+            try:
+                self.m.bus.unsubscribe(p, deadline=deadline)
                 self.call(p, "on_unload")
+            finally:
+                p.unload_deadline = None
         self.enabled.clear()
         self.rebuild()
 

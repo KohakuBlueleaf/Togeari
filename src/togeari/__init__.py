@@ -1,5 +1,7 @@
 """Togeari: a dataflow machine running many KIR jobs at once, out of order, on pluggable engines."""
 
+from importlib.metadata import PackageNotFoundError, version
+
 from togeari.core.construct.errors import ConstructionError
 from togeari.core.construct.machine import Machine, no_unit_start
 from togeari.core.contracts import (
@@ -23,7 +25,11 @@ from togeari.core.plugin.base import BasePlugin, PluginBlockError, PluginContext
 from togeari.core.program.bind import Inline, Use
 from togeari.core.runtime.handles import DispatcherDied
 
-__version__ = "0.1.0.dev0"
+# The installed distribution's version (pyproject.toml is the one source)
+try:
+    __version__ = version("togeari")
+except PackageNotFoundError:
+    __version__ = "0+unknown"
 
 __all__ = [
     "MISS",

@@ -53,6 +53,16 @@ class Event:
         return {"kind": self.kind, "t": self.t, **self.fields}
 
 
+def _level_takes(level: str, core: bool, sampled: bool) -> bool:
+    """Whether a subscriber level takes an event: core always, sampled from "sampled" up."""
+    match level:
+        case "counters":
+            return core
+        case "sampled":
+            return core or sampled
+    return True
+
+
 class _Sub:
     """One subscriber: its queue, its thread, and the level it receives now."""
 
@@ -85,12 +95,11 @@ class _Sub:
         """Whether this subscriber receives an event at its current level."""
         if self.current != self.level and self.q.qsize() <= self.low:
             self.current = self.level
-        match self.current:
-            case "counters":
-                return core
-            case "sampled":
-                return core or sampled
-        return True
+        return _level_takes(self.current, core, sampled)
+
+    def skips(self, core: bool, sampled: bool) -> bool:
+        """Whether its lowered level skips an event its declared level takes."""
+        return self.current != self.level and _level_takes(self.level, core, sampled)
 
     def offer(self, ev: Event) -> None:
         """Queue ``ev``; a full queue drops it and lowers the level until it drains."""
@@ -104,12 +113,22 @@ class _Sub:
                 case "sample":
                     self.current = "sampled"
 
-    def close(self) -> None:
-        """Deliver what is queued, then end the thread (each step bounded by
-        ``close_timeout_s``)."""
+    def close(self, deadline: float | None = None) -> None:
+        """Deliver what is queued, then end the thread, all by ``deadline`` (monotonic; default
+        ``close_timeout_s`` from now). Events still queued then are dropped (counted)."""
+        if deadline is None:
+            deadline = time.monotonic() + self.close_timeout_s
         with contextlib.suppress(queue.Full):
-            self.q.put(None, timeout=self.close_timeout_s)
-        self.thread.join(timeout=self.close_timeout_s)
+            self.q.put(None, timeout=max(0.0, deadline - time.monotonic()))
+        self.thread.join(timeout=max(0.0, deadline - time.monotonic()))
+
+        # Past the deadline: drop what is left; the thread ends after its current event
+        if self.thread.is_alive():
+            log.warning(
+                "subscriber %s did not drain by its deadline; queued events dropped",
+                getattr(self.plugin, "name", "?"),
+            )
+            self.leave()
 
     def leave(self) -> None:
         """Drop what is queued (counted as dropped) and post the end marker, without waiting."""
@@ -135,6 +154,8 @@ class Bus:
         self.subs: dict[int, _Sub] = {}
         # Subscribers detached without waiting; their threads are joined at close
         self.leaving: list[_Sub] = []
+        # Drops of subscribers that unsubscribed, by plugin name
+        self.gone_dropped: dict[str, int] = {}
         self._sampled: dict[Any, bool] = {}
         self.counts: dict[str, int] = {}
 
@@ -181,17 +202,22 @@ class Bus:
         if id(plugin) not in self.subs:
             self.subs[id(plugin)] = _Sub(plugin)
 
-    def unsubscribe(self, plugin: Any, wait: bool = True) -> None:
+    def unsubscribe(self, plugin: Any, wait: bool = True, deadline: float | None = None) -> None:
         """End ``plugin``'s subscription. ``wait``: deliver its queued events and join its
-        thread; otherwise drop them and return at once (the thread is joined at ``close``)."""
+        thread by ``deadline`` (monotonic; default the subscriber's ``close_timeout_s``);
+        otherwise drop them and return at once (the thread is joined at ``close``)."""
         sub = self.subs.pop(id(plugin), None)
         if sub is None:
             return
         if wait:
-            sub.close()
-            return
-        sub.leave()
-        self.leaving.append(sub)
+            sub.close(deadline)
+        else:
+            sub.leave()
+            self.leaving.append(sub)
+
+        # Its drops stay counted
+        name = getattr(plugin, "name", "?")
+        self.gone_dropped[name] = self.gone_dropped.get(name, 0) + sub.dropped
 
     def sample(self, job: Any, sampled: bool) -> None:
         """Whether the job's detail events reach "sampled" subscribers."""
@@ -247,10 +273,14 @@ class Bus:
             if sub.takes(*passed):
                 ev = ev or Event(kind, time.time(), fields)
                 sub.offer(ev)
+            elif sub.skips(*passed):
+                sub.dropped += 1
 
     def close(self) -> None:
         for sub in list(self.subs.values()):
             sub.close()
+            name = getattr(sub.plugin, "name", "?")
+            self.gone_dropped[name] = self.gone_dropped.get(name, 0) + sub.dropped
         self.subs.clear()
 
         # Subscribers that left without waiting end here
@@ -259,4 +289,9 @@ class Bus:
             sub.join()
 
     def dropped(self) -> dict:
-        return {getattr(s.plugin, "name", "?"): s.dropped for s in self.subs.values()}
+        """Events dropped per subscriber, by plugin name, those that unsubscribed included."""
+        out = dict(self.gone_dropped)
+        for s in self.subs.values():
+            name = getattr(s.plugin, "name", "?")
+            out[name] = out.get(name, 0) + s.dropped
+        return out

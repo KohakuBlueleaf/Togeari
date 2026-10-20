@@ -59,6 +59,7 @@ class LoopStage:
     # ------------------------------------------------------------ events
     def handle(self, ev: tuple) -> None:
         match ev:
+            # Results from a lane
             case ("done", lane, sub, results):
                 try:
                     settled = lane.results(sub, results, time.monotonic())
@@ -69,6 +70,8 @@ class LoopStage:
                         it.ext["settled"] = True
                 for it, r in settled:
                     self.deliver(it, r, sub.unit)
+
+            # Requests from other threads: jobs, queries, commands, calls
             case ("submit", item, handle):
                 try:
                     self.start_job(item, handle)
@@ -90,6 +93,8 @@ class LoopStage:
                     fn()
                 except Exception as exc:  # noqa: BLE001
                     self.plugins.failed_by_name(owner, "post", exc)
+
+            # Runs, wake-ups and stop
             case ("run", buf, sink_q, run):
                 self.attach_run(buf, sink_q, run)
             case ("wake",):
@@ -271,13 +276,17 @@ class LoopStage:
     def died(self, exc: BaseException) -> None:
         """Answer everyone: resident jobs fail, posted work is refused, the source is let go.
 
-        Runs once; a later call only refuses what was posted since.
+        Runs once, even when the loop thread and an abandoning thread call it at once; a later
+        call only refuses what was posted since.
         """
-        if self.dead is not None:
+        with self.death_lock:
+            first = self.dead is None
+            if first:
+                self.dead = exc
+        if not first:
             self.refuse_inbox()
             return
         log.critical("dispatcher stopped on an error", exc_info=exc)
-        self.dead = exc
         self.running = False
         self.bus.emit("machine.error", error=f"{type(exc).__name__}: {exc}")
         failure = {

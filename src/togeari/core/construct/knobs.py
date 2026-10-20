@@ -39,6 +39,7 @@ def _num(v: Any) -> bool:
 
 def _problem(name: str, v: Any) -> str | None:
     match name:
+        # Counts and switches
         case "window" | "retire_buffer":
             ok = _int(v) and v >= 1
             want = "an int >= 1"
@@ -48,6 +49,8 @@ def _problem(name: str, v: Any) -> str | None:
         case "run_ahead" | "fingerprint_inputs" | "assert_alias":
             ok = isinstance(v, bool)
             want = "a bool"
+
+        # Named modes
         case "mutates":
             ok = v in MUTATES_MODES
             want = f"one of {MUTATES_MODES}"
@@ -57,6 +60,8 @@ def _problem(name: str, v: Any) -> str | None:
         case "plugin_errors":
             ok = v in PLUGIN_ERRORS
             want = f"one of {PLUGIN_ERRORS}"
+
+        # Bounds and rates
         case "squash_reuse":
             ok = _int(v) and v >= 0
             want = "an int >= 0 (0 turns reuse off)"
@@ -69,6 +74,11 @@ def _problem(name: str, v: Any) -> str | None:
         case "record":
             ok = v is None or (_num(v) and 0 <= v <= 1)
             want = "None or a rate in [0, 1]"
+        case "event_sample":
+            ok = _num(v) and 0 <= v <= 1
+            want = "a rate in [0, 1]"
+
+        # The collector ask
         case "gc_threshold":
             ok = v is None or (
                 isinstance(v, tuple)
@@ -80,15 +90,15 @@ def _problem(name: str, v: Any) -> str | None:
                 "None or a tuple of 1 to 3 ints: the first >= 1 (0 would stop the collector),"
                 " the others >= 0"
             )
-        case "event_sample":
-            ok = _num(v) and 0 <= v <= 1
-            want = "a rate in [0, 1]"
+
+        # Policies
         case "admission":
             ok = callable(getattr(v, "allows", None))
             want = "an admission rule (allows) or a contributed policy's name"
         case "issue":
             ok = callable(getattr(v, "order", None)) and callable(getattr(v, "priority", None))
             want = "an issue order (order, priority) or a contributed policy's name"
+
         case _:
             return f"unknown knob {name!r}"
     return None if ok else f"{name} must be {want}, not {v!r}"

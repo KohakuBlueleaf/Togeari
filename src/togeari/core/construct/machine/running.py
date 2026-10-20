@@ -2,6 +2,7 @@
 
 import contextlib
 import itertools
+import logging
 import queue
 import threading
 import time
@@ -18,6 +19,11 @@ STOP_CANCEL_S = 10.0
 
 # Seconds added to the start timeout when waiting for a `load` or `attach` reply
 REPLY_SLACK_S = 30.0
+
+# Seconds a run waits for its source reader and sink writer once the dispatcher died
+DEAD_JOIN_S = 5.0
+
+log = logging.getLogger("togeari.machine")
 
 
 class RunStage:
@@ -72,18 +78,30 @@ class RunStage:
             reader.start()
 
             # Wait for the dispatcher to finish the run (or die); after a death nobody reads
-            # the buffer, so it is emptied until the reader stops
+            # the buffer, so it is emptied until the reader stops, for DEAD_JOIN_S at most
             run.done.wait()
+            dead_since: float | None = None
             while reader.is_alive():
                 if d.dead is not None:
                     with contextlib.suppress(queue.Empty):
                         while True:
                             buf.get_nowait()
+                    dead_since = dead_since or time.monotonic()
+                    if time.monotonic() - dead_since > DEAD_JOIN_S:
+                        log.warning("source reader still blocked after the dispatcher died")
+                        break
                 reader.join(0.05)
 
-            # Close the sink, then report
-            sink_q.put(SINK_END)
-            writer.join()
+            # Close the sink, then report; after a death the writer gets DEAD_JOIN_S at most
+            if d.dead is None:
+                sink_q.put(SINK_END)
+                writer.join()
+            else:
+                with contextlib.suppress(queue.Full):
+                    sink_q.put(SINK_END, timeout=DEAD_JOIN_S)
+                writer.join(DEAD_JOIN_S)
+                if writer.is_alive():
+                    log.warning("sink writer still blocked after the dispatcher died")
             if hasattr(sink, "close"):
                 sink.close()
             if d.dead is not None:

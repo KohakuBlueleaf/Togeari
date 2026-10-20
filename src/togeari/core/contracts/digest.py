@@ -97,7 +97,17 @@ class _OrderedSetPickler(pickle._Pickler):
     dispatch[frozenset] = _save_ordered
 
 
+# Protocol-5 opcodes that start a set or frozenset (EMPTY_SET, FROZENSET)
+_SET_OPCODES = (pickle.EMPTY_SET, pickle.FROZENSET)
+
+
 def _pickled(value: Any) -> bytes:
+    """Pickled bytes the same in every process: the C pickler's, unless they may hold a set,
+    then the ordered-set pickler's (a byte equal to a set opcode inside other data also takes
+    that path; the choice depends on the value alone, so it is the same every time)."""
+    data = pickle.dumps(value, protocol=5)
+    if not any(op in data for op in _SET_OPCODES):
+        return data
     buf = io.BytesIO()
     _OrderedSetPickler(buf, protocol=5).dump(value)
     return buf.getvalue()

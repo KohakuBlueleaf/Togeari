@@ -8,6 +8,7 @@ import pytest
 from rt_helpers import ENTERED, LIB, RELEASE, machine, sim_lane
 
 from togeari import ConstructionError, DispatcherDied, Inline, Machine, Use
+from togeari.core.construct.machine import running
 from togeari.io import Iterable, Memory
 from togeari.policies import OldestJobFirst
 
@@ -40,6 +41,45 @@ def test_a_run_ends_as_soon_as_its_stuck_dispatcher_is_abandoned():
         assert not runner.is_alive()
         assert isinstance(result.get("error"), DispatcherDied)
     finally:
+        RELEASE.set()
+
+
+class Hanging:
+    """A source: one item, then a ``next()`` that blocks until ``released``."""
+
+    def __init__(self):
+        self.released = threading.Event()
+
+    def __iter__(self):
+        yield {"x": 1}
+        self.released.wait(30)
+
+
+def test_a_run_ends_after_abandon_even_with_its_source_blocked(monkeypatch):
+    monkeypatch.setattr(running, "DEAD_JOIN_S", 0.5, raising=False)
+    ENTERED.clear()
+    RELEASE.clear()
+    m = machine(program=BLOCK, bind={"block": Inline()})
+    source, result = Hanging(), {}
+
+    def run_it():
+        try:
+            m.run(source, Memory())
+        except BaseException as exc:  # noqa: BLE001
+            result["error"] = exc
+
+    runner = threading.Thread(target=run_it, daemon=True)
+    try:
+        runner.start()
+        assert ENTERED.wait(5)
+
+        # The reader is blocked inside the source; the run still ends after the bound
+        m.stop(drain=False, timeout=0.3)
+        runner.join(4)
+        assert not runner.is_alive()
+        assert isinstance(result.get("error"), DispatcherDied)
+    finally:
+        source.released.set()
         RELEASE.set()
 
 

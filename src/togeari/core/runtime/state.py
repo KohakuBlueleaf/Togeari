@@ -337,10 +337,14 @@ class Inflight:
         self.job = job
         self.instr = instr
         self.key = key
+
+        # Input and output slots
         self.inputs: list[tuple[str, Slot]] = []
         self.outs: list[Slot | None] = []
         # `mutates` ports -> (slot before, version slot after the change); None without `mutates`
         self.versions: dict[str, tuple[Slot, Slot]] | None = None
+
+        # State, the work item and the values it ran with
         self.state = InfState.WAITING
         self.fault: dict | None = None
         self.snapshot = None
@@ -348,10 +352,13 @@ class Inflight:
         self.copy = False
         self.values: dict | None = None
         self.result = None
+
         # A copy of the result taken at settle (for the record and positional stores), and
         # recorded copies of changed `mutates` inputs
         self.kept = None
         self.mutated = None
+
+        # Timing, store and squash reuse
         self.t_issue = 0.0
         self.t_done = 0.0
         self.store_key = None
@@ -464,16 +471,20 @@ class Job:
         self.key = key
         self.entry = entry
         self.inputs = inputs
+
         # Live strands by id, a heap of (next key, seq, strand) with stale entries, runnable ones
         self.strands: dict[int, Strand] = {}
         self.sheap: list = []
         self.runnable: list[Strand] = []
+
         # Window by order key, and a heap of (key, seq, inflight) for unfinished or faulted ones
         self.window = Window()
         self.wheap: list = []
         self.unfinished = 0
         # Issued and not yet done
         self.issued = 0
+
+        # The outcome, and the job's counters and record
         self.final_names = None
         self.final_key: tuple | None = None
         self.failure: dict | None = None
@@ -491,18 +502,23 @@ class Job:
             "bytes_peak": 0,
         }
         self.record: list | None = None
+
+        # Lifecycle, pause and the handle that waits on it
         self.ended = False
         self.start_time = 0.0
         self.paused = False
         # Ready inflights held while the job is paused
         self.held: list[Inflight] = []
         self.handle = None
+
+        # Steps and held bytes, sampling, snapshots
         self.steps = 0
         self.bytes = 0
         self.sampled = False
         self.auto_key = False
         self.snap_at = 0
         self.snap_off = False
+
         # Digest of the inputs as given, taken at start; None when weak (or not taken)
         self.inputs_dig: bytes | None = None
         # The dispatcher's queue of (job, bytes) released by freed held slots

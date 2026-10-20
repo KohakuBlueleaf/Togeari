@@ -61,6 +61,8 @@ class Dispatcher(IssueStage, WritebackStage, FaultStage, RetireStage, JobsStage,
         self.running = False
         self.stopping = False
         self.dead: BaseException | None = None
+        # The check-then-set of ``dead`` (loop thread and abandoning thread)
+        self.death_lock = threading.Lock()
         self.thread: threading.Thread | None = None
         self.inline: dict = {}
         self.stats: dict[str, Any] = {

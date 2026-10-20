@@ -291,6 +291,8 @@ class Queue:
                 if bad and self.failed is not None:
                     msg = f"{bad} named item(s) repeated or not in the bucket; skipped"
                     self.failed("former take", ValueError(msg))
+
+            # The first ``want`` admitted live items in queue order; the rest go back
             case _:
                 taken, aside = [], []
                 heap = b.heap
@@ -304,6 +306,8 @@ class Queue:
                         aside.append(x)
                 for x in aside:
                     heapq.heappush(heap, x)
+
+        # Taken items leave the queue
         for e in taken:
             del self.index[id(e.item)]
             self._drop(e)

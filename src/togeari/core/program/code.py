@@ -189,6 +189,8 @@ def _describe(ins: Instr) -> str:
             return f"({args}){ins.node}({outs}) -> {ins.next}{flags}"
         case Op.ASSIGN:
             return f"{ins.target} = {_fmt(ins.operand)} -> {ins.next}"
+
+        # Control
         case Op.BRANCH:
             return f"branch {_fmt(ins.operand)} ? {ins.targets[0]} : {ins.targets[1]}"
         case Op.SWITCH:
@@ -196,6 +198,8 @@ def _describe(ins: Instr) -> str:
             return f"switch {_fmt(ins.operand)} [{cases}] default {ins.default}"
         case Op.JUMP:
             return f"jump {ins.targets[0]}"
+
+        # Loops and the end
         case Op.EACH:
             return (
                 f"each {_fmt(ins.operand)} as ({ins.item}, {ins.index}) body {ins.body}"

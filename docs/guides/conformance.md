@@ -100,6 +100,7 @@ recorder), and only for the jobs the machine's `record` knob samples.
 | `--lib module:attr` | node libraries to import instead of the references the program files hold (repeatable) |
 | `--run ID` | replay only these runs (repeatable); default: every run in the folder |
 | `--reexecute NODE` | run this node again and compare with its record (repeatable) |
+| `--engine-errors` / `--no-engine-errors` | a recorded failure of a re-executed node that the node itself does not raise counts as an engine failure (default) or as a mismatch |
 | `--max-fail N` | print at most N failures (20) |
 | `--step-budget N` | instructions the reference may execute per job (1 000 000) |
 

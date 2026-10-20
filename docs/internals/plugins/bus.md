@@ -69,10 +69,17 @@ everything.
 | `sample` | `"sampled"` |
 | `counters_only` | `"counters"` |
 
+An event the lowered level skips but the declared level would take is counted in `dropped`
+too (`skips`). `Bus.dropped()` gives the counts by plugin name, including subscribers that
+unsubscribed (`gone_dropped`).
+
 The thread `togeari-sub-<name>` calls `plugin.on_event(event)` per event; exceptions are logged.
-`unsubscribe(plugin)` and `Bus.close` (at `Machine.stop`) put a `None` end marker behind the
-queued events, so every queued event is delivered before the thread ends; each step waits at
-most the plugin's `close_timeout_s` (60 s). `unsubscribe(plugin, wait=False)` (a plugin disabled
+`unsubscribe(plugin, deadline=None)` and `Bus.close` (at `Machine.stop`) put a `None` end marker
+behind the queued events and join the thread, both by one monotonic deadline: the one the
+plugin manager passes (a plugin with `close_s`: `close_s` from the start of its unload, shared
+with its `on_unload` drain), else the plugin's `close_timeout_s` (60 s) from now. Events still
+queued at the deadline are dropped and counted, and the thread ends after its current event.
+`unsubscribe(plugin, wait=False)` (a plugin disabled
 by an error or by `plugin_disable`, on the dispatcher thread) returns at once: the queued events
 are dropped and counted in `dropped`, the end marker is posted, and the thread is joined in
 `Bus.close`.

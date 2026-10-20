@@ -29,17 +29,20 @@ engine, name, base URL, `max_inflight`, `rate`, `timeout_s`. The other arguments
 differ only in them share content-store keys.
 
 `start()` moves the state `STOPPED` → `STARTING` → `UP` under the lock, so a second `start`
-while one runs does nothing and one I/O loop exists per start. It clears a pending health probe
-left by the previous run.
+while one runs does nothing and one I/O loop exists per start; it sets `UP` only from
+`STARTING`, so a `stop()` during the start leaves the engine stopped. It clears a pending health
+probe left by the previous run. `stop()` closes the loop through `_close_now`, which does
+nothing while the loop has not made its closing event yet.
 
 ## Request path
 
 1. `submit(work, done)`: a `Ticket`; `inflight += 1`; with a bucket the ticket is "unpaced"
    until it takes a token. The launch is queued for the I/O loop (`_post`); one
    `call_soon_threadsafe` wake-up serves every queued call.
-2. On the loop: `_launch` creates a task (`ticket.handle`), which takes a connection (`_acquire`:
-   a free connection, else the least loaded client), waits for a token, builds
-   `item.payload()` (an `HttpRequest`) and sends it.
+2. On the loop: `_launch` creates a task (`ticket.handle`), which waits for a token, then takes
+   a connection (`_acquire`: a free connection, else the least loaded client), builds
+   `item.payload()` (an `HttpRequest`) and sends it. A request waiting for a token holds no
+   connection.
 3. `classify(response or exception)`: a result class, or `None` to answer
    `finish(item, response)`.
 4. `_settle`: frees the slot, records latency (EWMA) and errors, answers the ticket. For a
@@ -68,7 +71,7 @@ clients sharing `max_inflight` connections as evenly as possible.
 | `capacity()` | 0 unless up and past `blocked_until`; `max_inflight - inflight`, and 0 while the bucket holds less than one token beyond the unpaced tickets |
 | `wake_at()` | the earliest of the `Retry-After` block end and the time the bucket will hold one token more than the unpaced tickets; `None` when neither applies |
 | `load()` | `running` (in flight), and in `extra` the counters, `latency_ms`, errors by kind, the last probe |
-| `ready()` | false while stopped or before `blocked_until`; with `health_path`, the last health result, a new GET started in the background when none is pending |
+| `ready()` | false while stopped or before `blocked_until`; true for a healthy unit, which is never probed; with `health_path`, an unhealthy unit (after a `UnitError`) is false until a health GET succeeds, one started in the background when none is pending |
 
 Capacity rises through completions (`done`), at a known time (`wake_at()`), or when `_settle`
 frees the slot of a ticket already answered (cancelled, or answered by a unit error under
@@ -87,6 +90,6 @@ limit refilling wakes the dispatcher without polling. `TokenBucket`
 `cancel(ticket)` answers `Cancelled()` if not yet answered. The request task is never aborted:
 aborting an `httpx` request while its connection opens can leave that pooled connection stuck,
 and later requests then wait on it without end. A task whose ticket is already answered sends
-nothing (checked before the pool and after the token wait); one already sent runs to its end,
+nothing (checked before and after the token wait); one already sent runs to its end,
 its answer is dropped, and `_settle` frees its slot. `stop()` answers every open ticket with
 `UnitError(EngineStopped)`, then the loop cancels its tasks and closes the clients.

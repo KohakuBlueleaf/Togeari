@@ -35,6 +35,8 @@ def plugins_for(kind: str, folder: Path) -> list:
 def plan(scale: Scale) -> list[dict]:
     """Configurations in run order: CPU rounds interleaved, then the GPU grid."""
     cfgs = []
+
+    # CPU shapes, every level and plugin set, round by round
     for r in range(scale.rounds):
         for shape in ceiling.SHAPES:
             for level in LEVELS:
@@ -50,6 +52,8 @@ def plan(scale: Scale) -> list[dict]:
                             "plugins": kind,
                         }
                     )
+
+    # The mixed example: the grid with records off, then its default settings
     for r in range(scale.gpu_rounds):
         cfgs.extend(
             {
@@ -78,7 +82,9 @@ def plan(scale: Scale) -> list[dict]:
 
 def run(cfg: dict, scale: Scale, root: Path) -> dict:
     folder = root / "reports" / f"{slug(cfg['name'])}-r{cfg['round']}"
+
     match cfg["where"]:
+        # A dispatcher-ceiling shape on the CPU
         case "cpu":
             program, bind, _ = ceiling.SHAPES[cfg["shape"]]
             machine = Machine(
@@ -92,6 +98,8 @@ def run(cfg: dict, scale: Scale, root: Path) -> dict:
             )
             jobs = ceiling_jobs(cfg["shape"], scale.ceiling_share)
             return measure.run(machine, Iterable(jobs), Memory())
+
+        # The mixed example
         case "mixed":
             mixed = example("mixed")
             mixed.nodes.LOG["path"] = root / "logs" / f"{slug(cfg['name'])}.log"
@@ -119,6 +127,8 @@ def summarize(results: list[dict], root: Path) -> Path:
     for r in results:
         if "error" not in r:
             by_name.setdefault(r["config"]["name"], []).append(r["result"])
+
+    # One row per configuration
     rows = []
     for name, runs in by_name.items():
         rate = measure.spread([x["calls_per_s"] for x in runs])
@@ -133,6 +143,7 @@ def summarize(results: list[dict], root: Path) -> Path:
                 rate["rounds"],
             ]
         )
+
     header = ["config", "calls/s median", "best-worst", "dispatcher us/call", "busy", "rounds"]
     notes = (
         "Dispatcher us/call is the dispatcher's busy time divided by node calls. "

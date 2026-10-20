@@ -13,7 +13,7 @@ a rule can never stall an empty machine. Admission also pauses while the sink qu
 | Rule (`togeari.policies`) | Admits while |
 |---|---|
 | `Fixed(n=64)` (default) | fewer than `n` jobs are resident |
-| `TargetLoad(lane, waiting=8, max_jobs=4096)` | the lane's queue plus its units' reported `waiting` is under `waiting` |
+| `TargetLoad(lane, waiting=8, max_jobs=4096)` | fewer than `max_jobs` resident jobs, and the lane's queue plus its units' reported `waiting` is under `waiting` |
 | `MemoryBound(max_bytes)` | the estimated bytes resident jobs hold are under the cap: their inputs, the values their live slots hold, and results kept after a fault |
 | `All(*rules)` | every rule admits |
 

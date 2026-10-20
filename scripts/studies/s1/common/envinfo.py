@@ -32,6 +32,8 @@ def collect() -> dict:
         "switch_interval_s": sys.getswitchinterval(),
         "gpu": None,
     }
+
+    # The first visible device
     if torch.cuda.is_available():
         props = torch.cuda.get_device_properties(0)
         info["gpu"] = {

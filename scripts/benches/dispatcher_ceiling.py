@@ -58,6 +58,8 @@ def bench(name: str, program: str, bind: dict, jobs: list, **knobs) -> dict:
         admission=Fixed(256),
         **knobs,
     )
+
+    # One run, timed; the dispatcher's counters read before stop
     try:
         sink = Memory()
         t0 = time.perf_counter()
@@ -66,6 +68,7 @@ def bench(name: str, program: str, bind: dict, jobs: list, **knobs) -> dict:
         stats = m.inspect("stats").result()
     finally:
         m.stop()
+
     calls = stats["calls"]
     return {
         "shape": name,

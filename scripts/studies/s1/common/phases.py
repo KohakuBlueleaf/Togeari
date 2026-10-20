@@ -107,6 +107,8 @@ def run_all(
     for name in names:
         part, load = split(name)
         shown = label(name) if label is not None else name
+
+        # A failed phase is reported and the next one runs
         try:
             if before is not None:
                 before()

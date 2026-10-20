@@ -159,7 +159,7 @@ togeari units   examples/hello/machine.py              # engine behaviour checks
 |---|---|
 | `togeari check MACHINE` | builds the machine without starting a unit and prints every problem |
 | `togeari run MACHINE [--limit N] [--report DIR]` | runs the module's source into its sink; with `--report`, a full run report |
-| `togeari conform DIR [--lib M:A] [--run ID] [--reexecute NODE]` | replays recorded jobs through the reference; re-executes the named nodes |
+| `togeari conform DIR [--lib M:A] [--run ID] [--reexecute NODE] [--no-engine-errors]` | replays recorded jobs through the reference; re-executes the named nodes |
 | `togeari decode PROGRAM --entry E [--lib M:A]` | prints the decode tables of one entry |
 | `togeari units MACHINE [--unit U] [--rounds N]` | runs the engine behaviour checks (B1–B7) on every unit with samples |
 | `togeari doctor` | versions, devices, leftover worker processes |

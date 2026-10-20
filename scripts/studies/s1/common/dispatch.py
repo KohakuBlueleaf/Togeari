@@ -83,6 +83,8 @@ def window_stats(a: dict, b: dict) -> dict:
     jobs = (sb["jobs_ok"] + sb["jobs_failed"]) - (sa["jobs_ok"] + sa["jobs_failed"])
     busy = sb["busy_s"] - sa["busy_s"]
     cpu = b["thread_cpu_s"] - a["thread_cpu_s"]
+
+    # Phase times and the cycle histogram over the window
     phases = {k: v - sa["phase_s"].get(k, 0.0) for k, v in sb["phase_s"].items()}
     hist = {
         f"<{2**k}us": v - sa["cycle_hist"].get(k, 0)
@@ -90,6 +92,7 @@ def window_stats(a: dict, b: dict) -> dict:
         if v - sa["cycle_hist"].get(k, 0)
     }
     cycles = sb["cycles"] - sa["cycles"]
+
     return {
         "wall_s": wall,
         "calls": calls,

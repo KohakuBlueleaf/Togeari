@@ -47,7 +47,8 @@ if __name__ == "__main__":
 | `mode` | `"thread"` | `"thread"`: worker threads in the machine's process (`shares_memory=True`); `"process"`: one spawned worker process per slot (`shares_memory=False`) |
 | `transport` | `"shm"` | process mode: buffers of at least `shm_threshold` bytes cross in shared memory, the rest by pickle through a pipe; `"pickle"`: everything through the pipe |
 | `shm_threshold` | 1 MiB (`SHM_THRESHOLD`) | |
-| `imports` | `()` | modules every worker process imports once at start, before it reports ready (the node libraries) |
+| `imports` | `()` | modules every worker process imports once at start, before it reports ready (the node libraries); nothing checks at build that a process-mode function can be imported in a worker (it must be a top-level function of an importable module) |
+| `revive_backoff_s`, `revive_backoff_max_s` | 0.5, 30 | a replacement round that opens no slot while the engine is still up retries after this pause, doubled each time up to the second value |
 | `start_timeout_s`, `stop_timeout_s` | 60, 5 | a worker's ready wait; joining a slot at stop |
 | `name` | `"python"` | |
 

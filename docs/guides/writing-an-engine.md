@@ -134,7 +134,8 @@ class ThreadedEngine(EngineBase):
 | B7 | `ItemError`: this item failed. `UnitError`: the whole unit is blocked |
 | B8 | engines see work items only; equal payloads are separate requests |
 
-`check_engine` drives an engine from one thread the way a dispatcher does and checks B1–B7:
+`check_engine` drives an engine from one thread the way a dispatcher does and checks B1–B7 (B8
+is not visible through the engine interface; one answer per item is B2):
 
 ```python
 from togeari import WorkItem

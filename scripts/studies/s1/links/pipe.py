@@ -26,7 +26,9 @@ def peer_main(requests: Any, replies: Any, shm: bool, threshold: int, copy: bool
             msg = requests.recv()
         except (EOFError, OSError):
             break
+
         match msg:
+            # Timed one-way and echoed messages
             case ("one", packet, _):
                 obj, opened = codec.decode(packet, copy=copy)
                 t = time.perf_counter()
@@ -39,6 +41,8 @@ def peer_main(requests: Any, replies: Any, shm: bool, threshold: int, copy: bool
                 del obj
                 release(opened, unlink=False)
                 replies.send(("echo", back))
+
+            # Control
             case ("release",):
                 held = release(held, unlink=True)
             case ("cpu",):

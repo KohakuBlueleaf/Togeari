@@ -84,7 +84,7 @@ be cheap; heavy work belongs in `on_event` or the plugin's own thread.
 | `on_job_end(record)` | a job ended, or an item was rejected before it became a job | `JobRecord` | — |
 | `pre_sink(record)` | before any record (a job's or a rejected item's) reaches its sink or handle | `JobRecord` | a new `JobRecord`, `None`; `PluginBlockError`: the record is not written (a waiting handle still gets it) |
 | `on_unit_state(unit, state)` | a unit changed state | unit name; `"up"`, `"down"`, `"attach"`, `"detach"`, `"detached"` | — |
-| `on_load(ctx)`, `on_unload()` | enabled / disabled, machine stop; `on_unload` also runs after an `on_load` that raised (the plugin then stays disabled) | `PluginContext` | — |
+| `on_load(ctx)`, `on_unload()` | enabled / disabled, machine stop; `on_unload` also runs after an `on_load` that raised (the plugin then stays disabled, its contributions withdrawn); with `close_s` set, the machine stop unloads the plugin by one deadline, `close_s` from the start of its unload, shared by the delivery of its queued events and its own drain (`self.unload_by()` gives the deadline) | `PluginContext` | — |
 | `on_machine_start()`, `on_machine_stop()` | dispatcher start, `machine.stop()` | — | — |
 | `on_event(event)` | every bus event the plugin receives | `Event(kind, t, fields)` | on the plugin's own thread |
 | `contribute_queries()`, `contribute_commands()` | at load | — | `{name: fn(machine, **args)}` |
@@ -172,9 +172,9 @@ The `lanes` query and `ctx.lanes()` have different shapes:
 | Plugin (`togeari.plugins`) | Does |
 |---|---|
 | `Counters(interval_s=1.0)` | per-interval counters of the dispatcher, lanes, units, jobs (resident jobs by state: `executing`, `queued`, `waiting`, `parked`, and `job_seconds` per state: pool-wide, each sampled count times the interval) and work; the `counters` query and event |
-| `RunReport(path)` | `spec.json`, `env.json`, `metrics.jsonl`, `events.jsonl[.zst]`, conformance records, `summary.json` (rewritten with every counters snapshot, never dropped under an event flood, and at unload after the writer stops within `close_s`; with weak digests by type, `weak_digest_count`, `store_weak`, and `weak_jobs` / `weak_values` of the records) |
-| `Perfetto(path, sample_s=0.25, close_s=10.0)` | a trace file with tracks per dispatcher phase, lane queue, unit and job; at unload the writer drains within about `close_s`, then the array closes |
-| `Recorder(path, close_s=10.0)` | conformance records of recorded jobs, for `togeari conform`; at unload the writer drains within about `close_s`, then the record files close |
+| `RunReport(path)` | `spec.json`, `env.json`, `metrics.jsonl`, `events.jsonl[.zst]`, conformance records, `summary.json` (rewritten with every counters snapshot, never dropped under an event flood, and at unload after the writer stops by the unload's deadline; with weak digests by type, `weak_digest_count`, `store_weak`, and `weak_jobs` / `weak_values` of the records) |
+| `Perfetto(path, sample_s=0.25, close_s=10.0)` | a trace file with tracks per dispatcher phase, lane queue, unit and job; at unload the writer drains by the unload's deadline, then the array closes |
+| `Recorder(path, close_s=10.0)` | conformance records of recorded jobs, for `togeari conform`; at unload the writer drains by the unload's deadline, then the record files close |
 | `Inspector(host="127.0.0.1", port=0, token=<random>, allowed_hosts=())` | HTTP: `GET /queries/<name>`, `POST /commands/<name>`, `GET /events` (server-sent events) |
 | `Budget(max_jobs=, max_calls_per_node=, walltime_s=)` | stops admitting and rejects items past its caps; blocks submits past a node's call cap |
 

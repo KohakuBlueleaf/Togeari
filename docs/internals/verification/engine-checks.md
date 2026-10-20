@@ -62,5 +62,9 @@ so a `prepare` on the driver thread is counted.
 | B6 | batch outputs equal the outputs alone (n/a for other kinds) |
 | B7 | failing items give `ItemError`; after `kill`, `UnitError` (n/a when neither is given) |
 
+B8 (equal payloads are separate requests) is not checked: how many backend requests an engine
+makes is not visible through the engine interface. One answer per item, equal payloads included,
+is B2.
+
 `EngineReport.rules` holds one `RuleResult(rule, ok, detail)` per rule; `ok`, `failed()` and
 `str(report)` summarise it.

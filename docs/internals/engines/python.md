@@ -15,6 +15,7 @@ or threads that each drive one spawned worker process. The contract it keeps is 
 | `shm_threshold` | `SHM_THRESHOLD` = 1 MiB | `engines/common/transport.py` |
 | `start_timeout_s`, `stop_timeout_s` | 60, 5 | a worker process's ready wait; joining a slot |
 | `imports` | `()` | modules every worker process imports once at start, before it reports ready |
+| `revive_backoff_s`, `revive_backoff_max_s` | 0.5, 30 | pause before `_revive` retries a round that opened no slot while the engine is up; doubled each retry up to the second value |
 | `name` | `"python"` | |
 
 `spec()` is the identity: engine, name, mode, transport, workers, imports. `load()` reports
@@ -61,7 +62,7 @@ replacements opened for an old epoch exit at once.
 | the worker process dies under an item | `ItemError(WorkerDied)`; the slot respawns its process (`respawn`); a slot that cannot respawn leaves the engine (`slot_lost`) |
 | a worker process exits while its slot is idle | the slot leaves the engine (`idle_death`); a taken ticket is handed back to the front of `pending` |
 | the last slot leaves | the engine goes `DOWN`; pending tickets get `UnitError`; new submits get `UnitError` |
-| a slot left while others remain | a replacement starts in the background (`_revive`); `_revive` counts the missing slots again after each round, so slots lost while it runs are replaced in the same revive |
+| a slot left while others remain | a replacement starts in the background (`_revive`); `_revive` counts the missing slots again after each round, so slots lost while it runs are replaced in the same revive; a round that opens no slot while the engine is up retries after a doubling pause (waking early on `stop`); on a down engine it ends and `ready()` starts the next |
 
 `ready()` is true while up; while down it starts the replacements in the background once and
 returns false, so the lane's health polls bring the unit back.

@@ -52,6 +52,7 @@ def phase_rows(doc: dict, work: str = "work") -> list[list[Any]]:
             if ph.get("error"):
                 rows.append([c["name"], ph["phase"], "ERROR", *[None] * 11])
                 continue
+
             w = get(ph, "feeders", work)
             d = ph.get("dispatcher")
             rows.append(
@@ -100,6 +101,7 @@ def m1_section(doc: dict) -> list[str]:
             if s.get("error"):
                 rows.append([c["name"], s["kind"], s["size"], "ERROR", *[None] * 8])
                 continue
+
             rows.append(
                 [
                     c["name"],
@@ -116,6 +118,7 @@ def m1_section(doc: dict) -> list[str]:
                     get(s, "stream", "sender_cpu_us_per_msg"),
                 ]
             )
+
     headers = [
         "link",
         "kind",
@@ -140,6 +143,7 @@ def m3_section(doc: dict) -> list[str]:
             if ph.get("error"):
                 rows.append([c["name"], ph["phase"], "ERROR", *[None] * 6])
                 continue
+
             rows.append(
                 [
                     c["name"],
@@ -153,6 +157,7 @@ def m3_section(doc: dict) -> list[str]:
                     get(ph, "gpu", "util_pct_mean"),
                 ]
             )
+
     out = table(
         [
             "layout",
@@ -167,6 +172,8 @@ def m3_section(doc: dict) -> list[str]:
         ],
         rows,
     )
+
+    # Per layout: each side's rate with both running over its rate alone
     inter = [
         [
             c["name"],

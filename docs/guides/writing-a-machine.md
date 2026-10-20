@@ -97,7 +97,8 @@ Policies are passed as objects (`admission=Fixed(128)`, `issue=OldestJobFirst()`
 Construction checks everything at once and raises one `ConstructionError` listing every
 problem: unknown or unbound nodes, ties between patterns, adapters that cannot speak a unit's
 protocol, `mutates` nodes on units that copy values, lanes that mix kinds, formers on the wrong
-lanes, duplicate unit names, invalid knobs, and units that fail to start.
+lanes, duplicate unit names and invalid knobs. Units start only once those checks pass; units
+that fail to start come as a second `ConstructionError` listing every one of them.
 
 ```python
 from togeari import ConstructionError

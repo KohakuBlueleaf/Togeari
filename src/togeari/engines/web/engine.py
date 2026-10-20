@@ -85,6 +85,7 @@ class WebCallEngine(EngineBase):
         start_timeout_s: float = 10.0,
         pool_size: int = 2,
         on_unit_error: str = "block",
+        max_retry_after_s: float = 3600.0,
         name: str | None = None,
     ):
         super().__init__(name or "web")
@@ -115,6 +116,7 @@ class WebCallEngine(EngineBase):
         self.start_timeout_s = start_timeout_s
         self.pool_size = pool_size
         self.on_unit_error = on_unit_error
+        self.max_retry_after_s = max_retry_after_s
 
         # Shared state, guarded by ``lock``.
         self.lock = threading.Lock()
@@ -146,19 +148,24 @@ class WebCallEngine(EngineBase):
         self.pools: list[_Pool] = []
         # One entry per free connection, used as a stack.
         self.free: list[_Pool] = []
+        # The health GET's own client, apart from the work connections
+        self.health_client: httpx.AsyncClient | None = None
         self.closing: asyncio.Event | None = None
 
     # ------------------------------------------------------------ lifecycle
     def start(self) -> None:
         """Start the I/O loop; per-run state (requests in flight, queued calls) starts empty."""
+        # One start at a time: a start while starting or up does nothing
         with self.lock:
             if self.state != EngineState.STOPPED:
                 return
+            self.state = EngineState.STARTING
             self.inflight = 0
             self.tickets.clear()
             self.unpaced.clear()
             self.inbox = []
             self.kicked = False
+            self.health_pending = False
         loop = asyncio.new_event_loop()
         started = threading.Event()
         thread = threading.Thread(
@@ -166,12 +173,23 @@ class WebCallEngine(EngineBase):
         )
         self.loop, self.thread = loop, thread
         thread.start()
+
+        # A loop that does not start in time is told to close, and the start fails
         if not started.wait(self.start_timeout_s):
+            with self.lock:
+                self.state = EngineState.STOPPED
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(self._close_now)
+            thread.join(5.0)
             raise TimeoutError(f"{self.name}: I/O loop did not start")
         with self.lock:
             self.state = EngineState.UP
             self.blocked_until = 0.0
             self.healthy = True
+
+    def _close_now(self) -> None:
+        if self.closing is not None:
+            self.closing.set()
 
     def _serve(self, loop: asyncio.AbstractEventLoop, started: threading.Event) -> None:
         asyncio.set_event_loop(loop)
@@ -195,11 +213,23 @@ class WebCallEngine(EngineBase):
             for size in pool_sizes(self.max_inflight, self.pool_size)
         ]
         self.free = [pool for pool in self.pools for _ in range(pool.size)]
+        if self.health_path is not None:
+            self.health_client = httpx.AsyncClient(
+                base_url=self.base_url,
+                headers=self.headers,
+                timeout=httpx.Timeout(self.health_timeout_s),
+                limits=httpx.Limits(max_connections=1, max_keepalive_connections=1),
+            )
         self.closing = asyncio.Event()
         if self.load_probe is not None:
             asyncio.get_running_loop().create_task(self._probe_loop())
+
+        # A start that timed out has left the state STOPPED: close at once
+        with self.lock:
+            abandoned = self.state != EngineState.STARTING
         started.set()
-        await self.closing.wait()
+        if not abandoned:
+            await self.closing.wait()
 
         # Closing: every task still running is cancelled, then the clients close.
         here = asyncio.current_task()
@@ -209,6 +239,9 @@ class WebCallEngine(EngineBase):
         await asyncio.gather(*tasks, return_exceptions=True)
         for pool in self.pools:
             await pool.client.aclose()
+        if self.health_client is not None:
+            await self.health_client.aclose()
+            self.health_client = None
 
     def stop(self) -> None:
         with self.lock:
@@ -237,15 +270,17 @@ class WebCallEngine(EngineBase):
         return healthy
 
     async def _health(self) -> None:
+        ok = False
         try:
-            client = self.pools[0].client
-            response = await client.get(self.health_path, timeout=self.health_timeout_s)
+            response = await self.health_client.get(self.health_path)
             ok = response.status_code < 400
         except Exception:  # noqa: BLE001
             ok = False
-        with self.lock:
-            self.healthy = ok
-            self.health_pending = False
+        finally:
+            # A probe cancelled by stop also clears the pending flag
+            with self.lock:
+                self.healthy = ok
+                self.health_pending = False
 
     async def _probe_loop(self) -> None:
         while True:
@@ -409,6 +444,12 @@ class WebCallEngine(EngineBase):
         if pool.inflight < pool.size:
             self.free.append(pool)
 
+    def _block_s(self, after: float | None) -> float:
+        """Seconds a ``Retry-After`` blocks the unit: at most ``max_retry_after_s``."""
+        if after is None or not math.isfinite(after):
+            return self.max_retry_after_s if after is not None and after > 0 else 0.0
+        return min(max(0.0, after), self.max_retry_after_s)
+
     def _settle(self, ticket: Ticket, result: Any, seconds: float | None) -> None:
         """Release the ticket's slot, record the outcome, answer it.
 
@@ -447,12 +488,17 @@ class WebCallEngine(EngineBase):
                     self.counts["unit_errors"] += 1
                     key = type(error).__name__
                     self.errors[key] = self.errors.get(key, 0) + 1
-                    self.blocked_until = max(self.blocked_until, time.monotonic() + (after or 0.0))
+                    block = self._block_s(after)
+                    self.blocked_until = max(self.blocked_until, time.monotonic() + block)
                     self.healthy = False
-        ticket.answer([result])
+        delivered = ticket.answer([result])
 
         # The other requests get the same error; their running work finishes unseen
         spread = sum(other.answer_all(result) for other in others)
         if spread:
             with self.lock:
                 self.counts["unit_error_items"] += spread
+
+        # A slot freed without an answer (cancelled or already answered) wakes the lanes
+        if not delivered:
+            self.wake()

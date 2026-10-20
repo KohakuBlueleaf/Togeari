@@ -18,6 +18,7 @@ job gets exactly one reply.
 
 import contextlib
 import itertools
+import logging
 import threading
 import time
 from collections import deque
@@ -29,6 +30,8 @@ from typing import Any
 import torch
 
 from togeari.engines.common.errors import EngineStopped
+
+log = logging.getLogger("togeari.engines.torch")
 
 SCHEDULES = ("co_resident", "swappable", "priority_streams")
 
@@ -213,6 +216,11 @@ class DeviceRuntime:
                 queue.clear()
         for job in left:
             self._reply(job, EngineStopped(f"device {self.device} stopped"))
+
+        # The weights leave the device, unless a forward still runs on them
+        if any(worker.is_alive() for worker in self.workers):
+            log.warning("device %s: a forward still runs; its weights stay put", self.device)
+            return
         with torch.inference_mode():
             for slot in self.slots.values():
                 slot.model.to("cpu")

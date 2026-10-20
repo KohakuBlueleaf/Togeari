@@ -4,6 +4,7 @@ A placement is one device, or a tuple of devices one split model spans (``runtim
 it is named by ``runtime.label`` (``"cuda:0"``, ``"cuda:0+cuda:1"``).
 """
 
+import contextlib
 import copy
 import threading
 from collections.abc import Hashable
@@ -312,11 +313,13 @@ class TorchEngine:
                             revive_backoff_s=self.revive_backoff_s,
                         )
                 backend.on_revived = partial(self._revived, device)
-                self.footprint[device] = backend.start()
+                # Registered before its start, so a start that fails partway is stopped too
                 backends[device] = backend
+                self.footprint[device] = backend.start()
         except BaseException:
             for backend in backends.values():
-                backend.stop()
+                with contextlib.suppress(Exception):
+                    backend.stop()
             raise
         return backends
 

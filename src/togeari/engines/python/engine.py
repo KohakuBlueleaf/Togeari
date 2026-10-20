@@ -150,25 +150,37 @@ class PythonCallEngine(EngineBase):
         threading.Thread(target=self._revive, name=f"{self.name}-revive", daemon=True).start()
 
     def _revive(self) -> None:
-        """Replace lost slots."""
-        with self.lock:
-            missing = self.workers - len(self.slots)
-            epoch = self.epoch
-        slots = self._open(missing, epoch) if missing > 0 else []
-        with self.lock:
-            if epoch == self.epoch:
-                self.reviving = False
-            stale = slots if self.state == State.STOPPED or epoch != self.epoch else []
-            if not stale:
-                self.slots.extend(slots)
-                if self.slots:
-                    self.state = State.UP
-            for slot in stale:
-                slot.exit = True
-            self.lock.notify_all()
+        """Replace lost slots; slots lost while reviving are replaced in the same revive."""
+        added = False
+        while True:
+            with self.lock:
+                missing = self.workers - len(self.slots)
+                epoch = self.epoch
+                if missing <= 0 or self.state == State.STOPPED:
+                    self.reviving = False
+                    break
+            slots = self._open(missing, epoch)
+
+            # New slots join the current start; a stopped or restarted engine retires them
+            with self.lock:
+                stale = slots if self.state == State.STOPPED or epoch != self.epoch else []
+                if not stale:
+                    self.slots.extend(slots)
+                    if self.slots:
+                        self.state = State.UP
+                for slot in stale:
+                    slot.exit = True
+                self.lock.notify_all()
+                done = bool(stale) or not slots
+                if done and epoch == self.epoch:
+                    self.reviving = False
+            added = added or bool(slots and not stale)
+            if done:
+                break
+
         if self.monitor is not None:
             self.monitor.poke()
-        if slots and not stale:
+        if added:
             self.wake()
 
     def stop(self) -> None:

@@ -69,8 +69,6 @@ the surveys do not wait for the storm branch to be decided, and `alert` starts t
 
 ## Install
 
-Togeari 0.1.0 is not on PyPI yet; install from a clone. Once released:
-
 ```
 pip install togeari              # core (kohakunode >= 0.2.2)
 pip install "togeari[web]"       # WebCallEngine (httpx)

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "togeari"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "Togeari: a dataflow machine that runs many KIR jobs at once, out of order, on pluggable engines"
 authors = [
     { name = "Shih-Ying Yeh(KohakuBlueLeaf)", email = "apolloyeh0123@gmail.com" },

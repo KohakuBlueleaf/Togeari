@@ -50,11 +50,12 @@ class JobsStage:
             self.reject(item, "KirRuntimeError", f"no entry {name!r}", handle)
             return
 
-        # Bind the entry's parameters
+        # Bind the entry's parameters; the top level takes no inputs
         params = {p.name: p for p in entry.params}
-        unknown = sorted(set(item.inputs) - set(params)) if entry.outputs is not None else []
+        unknown = sorted(set(item.inputs) - set(params))
         if unknown:
-            msg = f"@def {name}: unknown inputs {unknown}"
+            where = f"@def {name}" if entry.outputs is not None else "the top level"
+            msg = f"{where}: unknown inputs {unknown}"
             self.reject(item, "KirRuntimeError", msg, handle, name)
             return
         names = NameMap()
@@ -97,7 +98,7 @@ class JobsStage:
             self.warn_auto_key(job)
             blob = snapshot.load(self.store, snap, on_error=lambda e: self.store_error("get", e))
             if blob is not None:
-                restored = snapshot.restore(job, blob)
+                restored = snapshot.restore(job, blob, self.code)
 
         # Bytes held: the inputs for the job's life, restored values while their slots live (the
         # entry's parameters are counted once, with the inputs)

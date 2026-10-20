@@ -76,7 +76,10 @@ def _problem(name: str, v: Any) -> str | None:
                 and all(_int(n) and n >= 0 for n in v)
                 and v[0] >= 1
             )
-            want = "None or a tuple of 1 to 3 ints >= 0 whose first is >= 1 (0 stops the collector)"
+            want = (
+                "None or a tuple of 1 to 3 ints: the first >= 1 (0 would stop the collector),"
+                " the others >= 0"
+            )
         case "event_sample":
             ok = _num(v) and 0 <= v <= 1
             want = "a rate in [0, 1]"

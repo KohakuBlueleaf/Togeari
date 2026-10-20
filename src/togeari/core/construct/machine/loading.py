@@ -153,7 +153,9 @@ class LoadStage:
         staged = self._stage(program, list(entries), problems)
         if staged.after is not None:
             return self._load_after(staged.after, program, entries)
-        problems.raise_if_any()
+        if problems.items:
+            self._discard(staged)
+            problems.raise_if_any()
 
         fut: Future = Future()
         units = [u for lane in staged.lanes for u in lane.units]
@@ -168,12 +170,18 @@ class LoadStage:
             self._release(fut)
             if failures:
                 stop_all(units)
+                self._discard(staged)
                 fut.set_exception(ConstructionError(failures))
             else:
                 fut.set_result(self._commit(staged))
 
         self._start_off_thread(units, started, fut)
         return fut
+
+    def _discard(self, staged: Staged) -> None:
+        """Drop a failed load's new regions from code memory, newest first."""
+        for _, region in reversed(staged.entries):
+            self.code.discard(region)
 
     def _hold(self, staged: Staged, fut: Future) -> None:
         for name, region in staged.entries:

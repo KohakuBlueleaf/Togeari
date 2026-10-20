@@ -292,6 +292,12 @@ class LoopStage:
             )
             self.answer_dead(rec, job.handle)
         self.jobs.clear()
+
+        # The run in progress ends now, even while the loop thread is still stuck
+        run = self.run
+        if run is not None:
+            run.stopped = True
+            run.done.set()
         self.refuse_inbox()
 
     def abandon(self, exc: BaseException) -> None:

@@ -87,6 +87,14 @@ class CodeMemory:
         self._by_start[region.start] = region
         self.by_hash[region.semantic_hash] = region
 
+    def discard(self, region: Region) -> bool:
+        """Drop a staged region that was never committed: its instructions leave memory when
+        they are its tail (a later staged region keeps them, unreachable). True if dropped."""
+        if region.start in self._by_start or region.end != len(self.mem):
+            return False
+        del self.mem[region.start :]
+        return True
+
     def load(self, job: JobProgram, problems: list[str] | None = None) -> Region:
         """The cached region of a job program, or a new one, committed when it decodes cleanly."""
         cached = self.cached(job)

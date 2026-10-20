@@ -44,13 +44,15 @@ class Pump:
         self._pumped_at = now
         up = self.units_up()
 
-        # No unit up: the dead-lane clock runs
+        # No unit up: the dead-lane clock runs, and its time counts as it passes
         if not up:
             if self.no_unit_since is None:
-                self.no_unit_since = now
+                self.no_unit_since = self.no_unit_counted = now
+            self.stats["no_unit_s"] += now - self.no_unit_counted
+            self.no_unit_counted = now
             return 0
         if self.no_unit_since is not None:
-            self.stats["no_unit_s"] += now - self.no_unit_since
+            self.stats["no_unit_s"] += now - self.no_unit_counted
             self.no_unit_since = None
         if not self.queued_now():
             return 0

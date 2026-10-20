@@ -23,6 +23,9 @@ from togeari.core.runtime.state import Frame, NameMap, SlotState, Strand, const,
 log = logging.getLogger("togeari.snapshot")
 _FINAL = (float("inf"),)
 
+# The layout of a captured state; restore reads only this version
+VERSION = 1
+
 
 def snapshot_key(region_hash: str, job_key: str, inputs_digest: bytes) -> bytes:
     return digest(("snapshot", region_hash, job_key, inputs_digest))
@@ -63,10 +66,12 @@ def capture(job: Any) -> bytes | None:
             "items": f.items,
             "i": f.i,
             "base": f.base,
+            "joined": f.join is not None,
         }
         for f in frames_now
     ]
     state = {
+        "version": VERSION,
         "pc": pc,
         "prefix": prefix,
         "counter": counter,
@@ -79,16 +84,32 @@ def capture(job: Any) -> bytes | None:
     return pickle.dumps(state, protocol=5)
 
 
-def restore(job: Any, blob: bytes) -> bool:
-    """Put a captured state back into a fresh job; False if it cannot be read."""
+def _frame(d: dict, code: Any) -> Frame:
+    """A captured frame, without its join; an iteration frame that had one ends at its
+    `each`'s reconvergence point (its continuation strand already ran ahead and ended)."""
+    joined = d.pop("joined", False)
+    if joined and d["kind"] == "iter" and code is not None:
+        d["reconv"] = code.tables(d["each"]).reconv.get(d["each"])
+    return Frame(**d)
+
+
+def restore(job: Any, blob: bytes, code: Any = None) -> bool:
+    """Put a captured state back into a fresh job; False if it cannot be read or is of another
+    version. ``code`` is the machine's code memory (for the `each` reconvergence points)."""
     try:
         state = pickle.loads(blob)
     except Exception:  # noqa: BLE001
         log.warning("snapshot of job %s unreadable; starting over", job.key)
         return False
+    if not isinstance(state, dict) or state.get("version") != VERSION:
+        got = state.get("version") if isinstance(state, dict) else None
+        log.warning(
+            "snapshot of job %s has version %r, not %d; starting over", job.key, got, VERSION
+        )
+        return False
 
     # Unpickled values belong to this job alone: no copy
-    frames = tuple(Frame(**d) for d in state["frames"])
+    frames = tuple(_frame(dict(d), code) for d in state["frames"])
     names = NameMap({n: const(v) for n, v in state["values"].items()})
     for st in list(job.strands.values()):
         job.end_strand(st)

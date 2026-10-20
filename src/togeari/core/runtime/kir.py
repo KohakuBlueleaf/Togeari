@@ -5,8 +5,21 @@ from typing import Any
 
 from togeari.core.runtime.state import Slot, SlotState
 
+
+class _Undefined:
+    """The one undefined value; pickles and copies as itself."""
+
+    __slots__ = ()
+
+    def __reduce__(self) -> str:
+        return "UNDEF"
+
+    def __repr__(self) -> str:
+        return "UNDEF"
+
+
 # Value of a name no path wrote; reading it is a runtime error
-UNDEF = object()
+UNDEF = _Undefined()
 
 
 class RuntimeFault(Exception):

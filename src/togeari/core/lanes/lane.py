@@ -91,6 +91,7 @@ class Lane(Pump, Health):
         self.subs: dict[int, Submission] = {}
         self.inflight = 0
         self.no_unit_since: float | None = None
+        self.no_unit_counted = 0.0
         self.stats = {
             "submitted": 0,
             "retries": 0,

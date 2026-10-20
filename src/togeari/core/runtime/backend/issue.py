@@ -118,6 +118,14 @@ class IssueStage:
         ordered += [inf for inf in batch if id(inf) not in seen]
         return ordered
 
+    def issue_priority(self, inf: Inflight) -> int:
+        """The policy's lane priority for a statement; 0 when the policy raises."""
+        try:
+            return self.knobs["issue"].priority(ReadyView(inf))
+        except Exception as exc:  # noqa: BLE001
+            self.policy_failed("issue priority", exc)
+            return 0
+
     def policy_failed(self, what: str, exc: BaseException) -> None:
         """A user policy raised: counted in ``machine_errors`` and ``policy_errors``, logged at
         the 1st, 2nd, 4th, 8th ... error."""
@@ -205,7 +213,7 @@ class IssueStage:
             inf.values,
             b.adapter,
             protocol=self.m.defaults.protocol,
-            priority=self.knobs["issue"].priority(ReadyView(inf)),
+            priority=self.issue_priority(inf),
             owner=inf,
         )
         timeout = ins.hint.get("timeout_s")

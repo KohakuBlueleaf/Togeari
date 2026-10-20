@@ -278,9 +278,19 @@ class Queue:
         """The admitted items ``want`` names: the first ``want`` in queue order, or a list."""
         match want:
             case list():
-                entries = [self.index.get(id(it)) for it in want]
-                taken = [e for e in entries if e is not None and e.bucket is b]
-                taken = [e for e in taken if admits(e.item, unit)]
+                # Each named item once, and only items queued in this bucket
+                taken, seen, bad = [], set(), 0
+                for it in want:
+                    e = self.index.get(id(it))
+                    if e is None or e.bucket is not b or id(it) in seen:
+                        bad += 1
+                        continue
+                    seen.add(id(it))
+                    if admits(e.item, unit):
+                        taken.append(e)
+                if bad and self.failed is not None:
+                    msg = f"{bad} named item(s) repeated or not in the bucket; skipped"
+                    self.failed("former take", ValueError(msg))
             case _:
                 taken, aside = [], []
                 heap = b.heap

@@ -55,13 +55,17 @@ def tags_digest(backwards: bool) -> bytes:
 
 
 def _in_process(backwards: bool) -> str:
+    # The test module and its helpers (one folder up) on the child's path
     code = (
-        "import sys; sys.path.insert(0, sys.argv[1]);"
+        "import sys; sys.path[:0] = sys.argv[1:3];"
         "from test_positional_alias import tags_digest;"
         f"print(tags_digest({backwards}).hex())"
     )
     out = subprocess.run(
-        [sys.executable, "-c", code, str(HERE)], capture_output=True, text=True, check=True
+        [sys.executable, "-c", code, str(HERE), str(HERE.parent)],
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return out.stdout.strip()
 

@@ -59,6 +59,8 @@ max-doc-length = 100
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Shared test helpers (rt_helpers, plugin_programs) sit above their tests' subfolders
+pythonpath = ["tests/runtime", "tests/plugins"]
 markers = [
     "gpu: needs a CUDA device (cuda:0); `-m \"not gpu\"` runs the CPU-only suite",
     "timeout(seconds): the watchdog bound of one test (default TOGEARI_TEST_TIMEOUT, 900 s); past it the stacks go to runs/tests/watchdog.txt and the session exits",

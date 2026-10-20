@@ -362,6 +362,7 @@ class Copied:
 def test_snapshot_restore_keeps_the_unpickled_values():
     # Unpickled values are used as they are, never deep-copied again
     state = {
+        "version": snapshot.VERSION,
         "pc": 0,
         "prefix": (),
         "counter": 0,

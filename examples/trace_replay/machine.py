@@ -3,7 +3,7 @@
 Shows the three lane kinds side by side: ``fetch`` on a stream lane (the engine
 queues), ``parse`` on a call lane (four workers), ``score`` on a batch lane
 (batches formed by the machine). Run it with ``python examples/trace_replay/machine.py``.
-It exits nonzero when a job fails or does not match the reference interpreter.
+It exits nonzero when a job fails, does not match the reference interpreter, or is lost.
 """
 
 import json
@@ -80,13 +80,17 @@ def build():
 
 
 def verify(job_program, records: list) -> list[str]:
-    """Jobs that failed or do not match the reference interpreter."""
+    """Jobs that failed, do not match the reference interpreter, or left no record."""
     inputs = {u["url"]: u for u in URLS}
     problems = []
     for rec in records:
         verdict = conform(job_program, rec, inputs[rec.key])
         if not rec.ok or not verdict.ok:
             problems.append(f"{rec.key}: {rec.failure or verdict.reason}")
+
+    # Every source item ends in exactly one record
+    seen = {rec.key for rec in records}
+    problems.extend(f"{key}: no record" for key in inputs if key not in seen)
     return problems
 
 
@@ -116,7 +120,7 @@ def main() -> None:
 
     # Every job against the reference interpreter
     problems = verify(job_program, sink.records)
-    n = len(sink.records)
+    n = len(URLS)
     print(f"conformance: {n - len(problems)}/{n} jobs match the reference")
     for p in problems:
         print("  ", p)

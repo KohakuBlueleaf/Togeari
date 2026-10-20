@@ -13,7 +13,8 @@ jobs) and the survey log go to ``runs/mixed/``; afterwards
 replays every job through the reference interpreter, and
 ``--reexecute features --reexecute classify --reexecute majority`` also runs those
 nodes again. ``python examples/mixed/machine.py 12`` runs 12 stations instead of 120. It exits
-nonzero when a job fails, does not match the reference interpreter, or the log is out of order.
+nonzero when a job fails, does not match the reference interpreter, or is lost, or the log is
+out of order.
 """
 
 import math
@@ -173,7 +174,8 @@ def main(stations: int = N_STATIONS) -> None:
 
     # Every job against the reference interpreter, and the ordered log
     verdicts = [conform(job_program, rec, inputs[rec.key]) for rec in records.values()]
-    print(f"conformance: {sum(v.ok for v in verdicts)}/{len(verdicts)} jobs match the reference")
+    print(f"conformance: {sum(v.ok for v in verdicts)}/{len(inputs)} jobs match the reference")
+    lost = [key for key in inputs if key not in records]
     problems = check_log(OUT / "survey.log", records)
     print(f"ordered log: {len(problems)} problem(s)")
     for p in problems[:5]:
@@ -188,8 +190,8 @@ def main(stations: int = N_STATIONS) -> None:
             f"  lane {name:<9} submitted {lane['submitted']:>5}  batch sizes {lane['batch_sizes']}"
         )
     print(f"report: {OUT / 'report'}")
-    if failed or mismatched or problems:
-        print(f"failed {failed}, not matching the reference {mismatched}")
+    if failed or mismatched or lost or problems:
+        print(f"failed {failed}, not matching the reference {mismatched}, no record {lost}")
         sys.exit(1)
 
 

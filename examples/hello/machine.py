@@ -1,7 +1,7 @@
 """The hello machine: translation on a simulated slow service, the rest inline.
 
 Run it with ``python examples/hello/machine.py`` (or ``togeari run examples/hello/machine.py``).
-It exits nonzero when a job fails or does not match the reference interpreter.
+It exits nonzero when a job fails, does not match the reference interpreter, or is lost.
 """
 
 import sys
@@ -48,12 +48,16 @@ def build():
 
 
 def verify(job_program, records: list, inputs: dict) -> list[str]:
-    """Jobs that failed or do not match the reference interpreter."""
+    """Jobs that failed, do not match the reference interpreter, or left no record."""
     problems = []
     for rec in records:
         verdict = conform(job_program, rec, inputs[rec.key])
         if not rec.ok or not verdict.ok:
             problems.append(f"{rec.key}: {rec.failure or verdict.reason}")
+
+    # Every source item ends in exactly one record
+    seen = {rec.key for rec in records}
+    problems.extend(f"{key}: no record" for key in inputs if key not in seen)
     return problems
 
 
@@ -69,7 +73,7 @@ def main() -> None:
 
     # Every job checked against the reference interpreter
     problems = verify(job_program, sink.records, {p["name"]: p for p in PEOPLE})
-    n = len(sink.records)
+    n = len(PEOPLE)
     print(f"conformance: {n - len(problems)}/{n} jobs match the reference")
     print(f"{summary['jobs']} jobs, {summary['calls']} node calls in {summary['seconds']:.2f}s")
     for p in problems:

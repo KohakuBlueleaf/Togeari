@@ -1,7 +1,7 @@
 """One lane, three units of different speed; the fastest goes down halfway and comes back.
 
 Run it with ``python examples/multi_unit/machine.py``. It exits nonzero when a job fails, sums
-wrongly, or does not match the reference interpreter.
+wrongly, does not match the reference interpreter, or is lost.
 """
 
 import sys
@@ -47,7 +47,8 @@ def build():
 
 
 def verify(job_program, records: list) -> list[str]:
-    """Jobs that failed, sum wrongly, or do not match the reference interpreter."""
+    """Jobs that failed, sum wrongly, do not match the reference interpreter, or left no
+    record."""
     problems = []
     for rec in records:
         job = JOBS[int(rec.key)]
@@ -57,6 +58,10 @@ def verify(job_program, records: list) -> list[str]:
             problems.append(f"{rec.key}: {rec.failure or verdict.reason}")
         elif rec.outputs.get("total") != expected:
             problems.append(f"{rec.key}: total {rec.outputs.get('total')} != {expected}")
+
+    # Every source item ends in exactly one record
+    seen = {int(rec.key) for rec in records}
+    problems.extend(f"{i}: no record" for i in range(len(JOBS)) if i not in seen)
     return problems
 
 
@@ -70,7 +75,7 @@ def main() -> None:
     # Every job's sum, checked against a plain Python sum and the reference interpreter
     problems = verify(job_program, sink.records)
     wrong = [p.split(":")[0] for p in problems]
-    n = len(sink.records)
+    n = len(JOBS)
     print(f"{summary['jobs']} jobs in {summary['seconds']:.2f}s, wrong results: {wrong or 'none'}")
     print(f"conformance: {n - len(problems)}/{n} jobs match the reference")
 

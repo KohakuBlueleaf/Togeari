@@ -6,7 +6,7 @@ ready call is issued to the lane, which keeps all eight workers busy.
 
 Run it with ``python examples/parallel/machine.py``. Part 1 runs one city and
 draws when each call ran; part 2 runs four cities together. It exits nonzero when a job
-fails or does not match the reference interpreter.
+fails, does not match the reference interpreter, or is lost.
 """
 
 import sys
@@ -67,13 +67,17 @@ def draw(t0: float) -> None:
 
 
 def verify(job_program, records: list, cities: list) -> list[str]:
-    """Jobs that failed or do not match the reference interpreter."""
+    """Jobs that failed, do not match the reference interpreter, or left no record."""
     by_city = {c["city"]: c for c in cities}
     problems = []
     for rec in records:
         verdict = conform(job_program, rec, by_city[rec.key])
         if not rec.ok or not verdict.ok:
             problems.append(f"{rec.key}: {rec.failure or verdict.reason}")
+
+    # Every source item ends in exactly one record
+    seen = {rec.key for rec in records}
+    problems.extend(f"{key}: no record" for key in by_city if key not in seen)
     return problems
 
 
@@ -91,7 +95,7 @@ def run(cities: list, problems: list) -> tuple[list, float, float, float]:
 
     # Every job against the reference interpreter
     found = verify(job_program, sink.records, cities)
-    n = len(sink.records)
+    n = len(cities)
     print(f"  conformance: {n - len(found)}/{n} jobs match the reference")
     problems.extend(found)
     calls = sum(stop - start for _, _, start, stop in nodes.TIMELINE)

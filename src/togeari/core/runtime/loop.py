@@ -36,7 +36,7 @@ class LoopStage:
         """0 with work ready now; the time to the nearest lane deadline; None to wait for events."""
         if self.dirty or self.ready:
             return 0.0
-        now = time.monotonic()
+        now = self.clock()
         nearest = None
         for lane in self.lanes:
             d = lane.next_deadline(now)
@@ -62,7 +62,7 @@ class LoopStage:
             # Results from a lane
             case ("done", lane, sub, results):
                 try:
-                    settled = lane.results(sub, results, time.monotonic())
+                    settled = lane.results(sub, results, self.clock())
                 except Exception as exc:  # noqa: BLE001
                     self.event_error("done", exc)
                     settled = [(it, ItemError(exc)) for it in sub.items]
@@ -163,7 +163,7 @@ class LoopStage:
         phase["drain"] = phase.get("drain", 0.0) + t1 - t_cycle
 
         # Fetch for jobs with runnable strands
-        dirty, self.dirty = self.dirty, set()
+        dirty, self.dirty = self.dirty, {}
         for jid in dirty:
             job = self.jobs.get(jid)
             if job is not None and not job.ended and not job.paused:
@@ -178,7 +178,7 @@ class LoopStage:
         self.issue()
         t3 = time.perf_counter()
         phase["issue"] = phase.get("issue", 0.0) + t3 - t2
-        now = time.monotonic()
+        now = self.clock()
         for lane in self.lanes:
             lane.pump(now)
             for it, r in lane.timers(now):

@@ -33,7 +33,7 @@ class WritebackStage:
             case Strand() if w.state in (StrandState.PARKED, StrandState.STALLED):
                 w.state = StrandState.RUNNABLE
                 w.job.mark_runnable(w)
-                self.dirty.add(w.job.id)
+                self.dirty[w.job.id] = None
                 if self.bus.wants("strand.resume", w.job.id):
                     self.bus.emit("strand.resume", job=w.job.id, strand=w.id, addr=w.pc)
             case Inflight() if w.state == InfState.WAITING:
@@ -116,7 +116,7 @@ class WritebackStage:
                 lane=inf.instr.binding.lane.name,
                 unit=item.ext.get("unit"),
                 queued_s=queued,
-                service_s=(time.monotonic() - sent) if sent else None,
+                service_s=(self.clock() - sent) if sent else None,
                 result=type(result).__name__,
             )
 
@@ -151,7 +151,7 @@ class WritebackStage:
                 node=ins.node,
                 job=job.key,
             )
-        self.dirty.add(job.id)
+        self.dirty[job.id] = None
 
         # The item's failure, or its value
         match result:

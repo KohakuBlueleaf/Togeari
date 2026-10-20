@@ -42,6 +42,8 @@ How the machine is built, file by file. The user-facing picture is in
 | 30 | [Conformance](verification/conformance.md) | `conformance/`, `core/contracts/digest.py`, `plugins/record/` |
 | 31 | [Generated programs](verification/generated-programs.md) | `tests/machine/generated/`, `tests/conftest.py`, `tests/scaling/`, `testing/sim.py` |
 | 32 | [Engine checks](verification/engine-checks.md) | `testing/check.py` |
+| 33 | [Decision logs and traces](verification/trace.md) | `testing/trace/`, `tests/testing/trace/` |
+| 34 | [Native core](native/README.md) | `src/togeari-rust/`, `core/construct/core.py`, `Cargo.toml` |
 
 ## Layout
 
@@ -59,7 +61,8 @@ docs/internals/
 ├── policies/       admission, issue order, formers, selectors
 ├── plugins/        hooks, queries and commands, event bus, inspector
 ├── engines/        the builtin Python and web call engines
-└── verification/   conformance replay, generated programs, engine checks
+├── verification/   conformance replay, generated programs, engine checks, traces
+└── native/         the Rust extension togeari._rs, packaging, core selection
 ```
 
 ## One statement, end to end

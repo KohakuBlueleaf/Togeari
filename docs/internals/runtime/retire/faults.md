@@ -84,7 +84,7 @@ again.
 1. `pop_first()` from the window (`RETIRED`); for a recorded job and a non-control inflight,
    append `(node, dig, "error", {kind, node, message}, None)` to `job.record`.
 2. `on_fault({"job": id, "key": job key, "kind", "node", "message"})` (gate `entry`);
-   `fault.taken` with `addr`, the job's squashed count and the error fields.
+   `fault.taken` with `addr`, the order key, the job's squashed count and the error fields.
 3. Restore `(names, frames, prefix, counter)` from `x.snapshot`.
 
 **Inside a `@try`** (`catchable` and `instr.try_id` set), with `info = code.tries[try_id]`:

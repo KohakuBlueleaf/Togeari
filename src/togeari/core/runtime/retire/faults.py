@@ -37,7 +37,7 @@ class FaultStage:
             "catchable": catchable and not isinstance(exc, RuntimeFault),
         }
         inf.state = InfState.DONE
-        self.dirty.add(job.id)
+        self.dirty[job.id] = None
 
         # Only a fault a handler takes refetches the squashed code; others end the job
         handled = inf.fault["catchable"] and inf.instr.try_id is not None
@@ -163,6 +163,7 @@ class FaultStage:
                 "fault.taken",
                 job=job.id,
                 addr=x.instr.addr,
+                key=x.key,
                 squashed=job.stats["squashed"],
                 **{f"error_{k}": v for k, v in err.items()},
             )
@@ -187,7 +188,7 @@ class FaultStage:
             if info.error_name:
                 nm.set(info.error_name, const(dict(err)))
             job.add_strand(Strand(job, info.handler, prefix, counter, tuple(kept), nm))
-            self.dirty.add(job.id)
+            self.dirty[job.id] = None
             return
 
         # Outside any `@try`: the job fails with the outputs written so far

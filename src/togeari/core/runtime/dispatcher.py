@@ -8,6 +8,7 @@ pool and admission (``pool``), and the supervised loop (``loop``).
 import queue
 import random
 import threading
+import time
 from collections import deque
 from typing import Any
 
@@ -35,12 +36,14 @@ class Dispatcher(IssueStage, WritebackStage, FaultStage, RetireStage, JobsStage,
         self.front = FrontEnd(self)
         self.record_rng = random.Random(seed)
         self.event_rng = random.Random(seed + 1)
+        # The scheduling clock (seconds, monotonic): deadlines, timers, batch waits
+        self.clock = time.monotonic
 
-        # Job pool and scheduling sets
+        # Job pool and scheduling sets; jobs to fetch for, in the order they became dirty
         self.jobs: dict[int, Job] = {}
         self.keys: set[str] = set()
         self.ready: list[Inflight] = []
-        self.dirty: set[int] = set()
+        self.dirty: dict[int, None] = {}
         self.last_started: Any = None
         self.blocked: dict[int, list[Inflight]] = {}
         self.pool_bytes = 0

@@ -56,7 +56,7 @@ class RetireStage:
                 if inf.state == InfState.READY:
                     self.ready.append(inf)
         if retired and job.runnable:
-            self.dirty.add(job.id)
+            self.dirty[job.id] = None
         if not w and not job.strands:
             self.finish(job)
 

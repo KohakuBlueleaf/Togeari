@@ -217,7 +217,7 @@ class IssueStage:
             owner=inf,
         )
         timeout = ins.hint.get("timeout_s")
-        now = time.monotonic()
+        now = self.clock()
         if timeout is not None:
             item.deadline = now + float(timeout)
         item.ext["job_key"] = inf.job.key

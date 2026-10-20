@@ -223,7 +223,7 @@ def c_resume_job(m: Any, id: int) -> bool:
     j.paused = False
     d.ready.extend(j.held)
     j.held.clear()
-    d.dirty.add(j.id)
+    d.dirty[j.id] = None
     return True
 
 

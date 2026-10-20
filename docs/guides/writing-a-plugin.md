@@ -115,8 +115,8 @@ queued event is delivered before the plugin unloads.
 | `job.admit`, `job.end` | job, key, entry; `job.end` adds ok, failure, stats |
 | `stmt.fetch`, `stmt.ready`, `stmt.issue`, `stmt.done`, `stmt.retire`, `stmt.squash` | job, node, addr, key (order key), lane; `stmt.done` adds unit |
 | `strand.park`, `strand.resume`, `strand.end` | job, strand, addr |
-| `fault.taken` | job, addr, squashed, error_kind, error_node, error_message |
-| `lane.enqueue`, `lane.submit`, `lane.result`, `lane.dead` | lane, unit, items, queue and service times |
+| `fault.taken` | job, addr, key (order key), squashed, error_kind, error_node, error_message |
+| `lane.enqueue`, `lane.submit`, `lane.result`, `lane.dead` | lane, unit, items, queue and service times; `lane.submit` adds work (each item's job key, addr, order key) |
 | `unit.up`, `unit.down`, `unit.attach`, `unit.detach`, `unit.detached` | lane, unit, reason |
 | `store.error`, `snapshot.error` | the error |
 | `plugin.hook`, `plugin.error`, `plugin.disabled` | plugin, hook, time or error |

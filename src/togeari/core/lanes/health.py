@@ -7,7 +7,6 @@ until ``ready()`` reports true again.
 
 import contextlib
 import heapq
-import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -123,7 +122,7 @@ class Health:
         unit already in the lane, or another unit with its name, raises ValueError; a
         detached unit with the name is forgotten.
         """
-        now = time.monotonic()
+        now = self.clock()
         st = self.state.get(id(unit))
         match st:
             case None:
@@ -277,5 +276,5 @@ class Health:
 
     def requeue_front(self, item: Any, now: float | None = None) -> None:
         """Put ``item`` back ahead of every queued item."""
-        now = time.monotonic() if now is None else now
+        now = self.clock() if now is None else now
         self._route(item, (FRONT, -next(self._seq)), now)

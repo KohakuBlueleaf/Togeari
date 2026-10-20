@@ -113,7 +113,7 @@ class JobsStage:
         self.pool_bytes += job.bytes
         self.jobs[job.id] = job
         self.keys.add(job.key)
-        self.dirty.add(job.id)
+        self.dirty[job.id] = None
         self.last_started = job
         self.bus.sample(job.id, job.sampled)
         if self.bus.wants("job.admit", job.id):

@@ -72,6 +72,8 @@ class Lane(Pump, Health):
         self.retry = retry or Retry()
         self.timeout_s = timeout_s
         self.lane_dead_s = lane_dead_s
+        # The clock of the times the lane reads itself (monotonic seconds, the dispatcher's)
+        self.clock = time.monotonic
 
         # Queues: the shared one and one per unit (early forming)
         self._former = _checked(former, Former, "former")
@@ -133,7 +135,7 @@ class Lane(Pump, Health):
     @former.setter
     def former(self, former: Any) -> None:
         self._former = _checked(former, Former, "former")
-        now = time.monotonic()
+        now = self.clock()
         for q in self._queues():
             q.set_former(self._former, now)
 
@@ -229,7 +231,7 @@ class Lane(Pump, Health):
 
     def remove(self, item: Any) -> bool:
         """Drop a queued or held item (squashed); True if it was there."""
-        now = time.monotonic()
+        now = self.clock()
         if self._held_ids.pop(id(item), None) is not None:
             return True
         return any(q.remove(item, now) for q in self._queues())

@@ -201,10 +201,18 @@ class Pump:
         except Exception as exc:  # noqa: BLE001
             self.on_done(self, sub, [UnitError(exc)] * len(items))
         st.submit_lat = time.perf_counter() - t0
-        # The event carries the first item's job, so job sampling applies to it
+        # The event carries the first item's job, so job sampling applies to it, and each item's
+        # (job key, address, order key)
         jid = items[0].ext.get("job")
         if self.wants("lane.submit", jid):
-            self.emit("lane.submit", job=jid, lane=self.name, unit=unit.name, items=len(items))
+            self.emit(
+                "lane.submit",
+                job=jid,
+                lane=self.name,
+                unit=unit.name,
+                items=len(items),
+                work=[_place(it) for it in items],
+            )
 
     def _arm_timeout(self, item: Any, sub: Submission, now: float) -> None:
         """The item's deadline in flight: ``sent + timeout_s``, or the ``WorkItem.deadline`` it
@@ -238,3 +246,10 @@ class Pump:
             st.busy_total += now - st.busy_since
             st.busy_since = None
         return st
+
+
+def _place(item: Any) -> tuple:
+    """(job key, address, order key) of an item a statement owns; None parts otherwise."""
+    owner = item.owner
+    instr = getattr(owner, "instr", None)
+    return (item.ext.get("job_key"), getattr(instr, "addr", None), getattr(owner, "key", None))

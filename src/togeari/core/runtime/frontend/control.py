@@ -20,11 +20,12 @@ class ControlOps:
 
     # ------------------------------------------------------------ joins
     @staticmethod
-    def phi_names(names: Names | None, writes: frozenset) -> set[str]:
-        """The names a join needs phis for: the region's writes, or every name with ``ALL``."""
+    def phi_names(names: Names | None, writes: frozenset) -> list[str]:
+        """The names a join needs phis for, sorted: the region's writes, or every name with
+        ``ALL``."""
         if ALL in writes:
-            return set(names.keys() if names is not None else ()) | (writes - {ALL})
-        return set(writes)
+            return sorted(set(names.keys() if names is not None else ()) | (writes - {ALL}))
+        return sorted(writes)
 
     def make_join(self, names: Names | None, writes: frozenset, table) -> Join:
         phis = {n: Slot(phi=True) for n in self.phi_names(names, writes)}

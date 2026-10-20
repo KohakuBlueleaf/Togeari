@@ -100,9 +100,9 @@ key) and `lane` (`None` for inline nodes).
 | `strand.park` | `ControlOps.park` | `job`, `strand`, `addr`, `cont` (the continuation strand) |
 | `strand.resume` | `WritebackStage.wake` | `job`, `strand`, `addr` |
 | `strand.end` | `FrontEnd.end` | `job`, `strand`, `addr` |
-| `fault.taken` | `take_fault` | `job`, `addr`, `squashed`, `error_kind`, `error_node`, `error_message` |
+| `fault.taken` | `take_fault` | `job`, `addr`, `key`, `squashed`, `error_kind`, `error_node`, `error_message` |
 | `lane.enqueue` | `execute` | `job`, `lane`, `node` |
-| `lane.submit` | `Lane._submit` | `lane`, `unit`, `items` |
+| `lane.submit` | `Lane._submit` | `job` (the first item's), `lane`, `unit`, `items` (count), `work` (each item's `(job key, addr, order key)`) |
 | `lane.result` | `deliver` | `job`, `node`, `addr`, `lane`, `unit`, `queued_s`, `service_s`, `result` |
 | `lane.dead` | `Lane.timers` | `lane`, `items` |
 | `unit.up` / `unit.down` / `unit.attach` / `unit.detach` / `unit.detached` | `Lane` (`Health`) | `lane`, `unit`, `reason` |
@@ -115,5 +115,5 @@ key) and `lane` (`None` for inline nodes).
 | `machine.error` | `LoopStage.died` | `error` |
 | `counters` | the counters plugin, through `PluginContext.emit` | its snapshot |
 
-The `job` field is the job's numeric id; `key` is the order key in `stmt.*` events and the job
-key in `job.*` and `snapshot.error` events.
+The `job` field is the job's numeric id; `key` is the order key in `stmt.*` and `fault.taken`
+events and the job key in `job.*` and `snapshot.error` events.

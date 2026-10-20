@@ -55,7 +55,7 @@ It then runs these phases and adds each one's time to `stats["phase_s"][phase]`:
 | Phase | Does |
 |---|---|
 | `drain` | waits for one event up to `next_timeout()`, handles every queued event, flushes held sink records |
-| `fetch` | swaps out `dirty` (job ids); `front.advance(job)` for each resident, unpaused job; an exception is `job_error(job, exc)` |
+| `fetch` | swaps out `dirty` (job ids, in the order they became dirty); `front.advance(job)` for each resident, unpaused job; an exception is `job_error(job, exc)` |
 | `issue` | `issue()` ([issue](../back-end/issue-and-writeback.md)) |
 | `pump` | per lane: `lane.pump(now)`, then `deliver` each pair `lane.timers(now)` returns |
 | `retire` | `retire(job)` for each job of the swapped-out `dirty` set; an exception is `job_error` |
@@ -91,4 +91,14 @@ is held and the source is let go, or, while stopping, once no job is resident; i
 
 A job is fetched and retired only in cycles where it is in `dirty`. Writeback, faults, strand
 wake-ups, a fetch that stopped on its budget, a retire that freed capacity for a capped strand,
-and `resume_job` add it.
+and `resume_job` add it. `dirty` is an insertion-ordered dict, and phis are made in name order,
+so the order of decisions depends only on the program, the inputs and the order of events, not
+on object ids or string hashing.
+
+## The clock
+
+Every scheduling time the dispatcher and its lanes read comes from one clock: `clock`
+(`time.monotonic` by default) on the dispatcher and on each lane. Lane deadlines, item
+timeouts, retry backoff, health polls, former waits and the `rate` estimates all use it.
+[The trace driver](../../verification/trace.md) sets a virtual clock in its place. Stats that
+time the dispatcher itself (`busy_s`, `phase_s`, inline run times) use `time.perf_counter`.

@@ -30,7 +30,8 @@ class EachSpawn:
         self.base: Names = base
         self.saved = saved
         self.frames = frames
-        self.carried: set[str] = carried
+        # Names each iteration's join carries to the next, sorted
+        self.carried: list[str] = carried
         self.table = table
         # The last iteration's join (the names after the loop read its phis)
         self.last: Join = last
@@ -112,14 +113,15 @@ class EachOps:
         base = st.names.snapshot()
         job = st.job
 
-        # The last iteration's join covers every body write (the names after the loop)
+        # The last iteration's join covers every body write (the names after the loop); phis
+        # are made in name order
         extra = {n for n in (ins.item, ins.index) if n is not None}
         if ALL in writes:
-            last_names = set(base.keys()) | (writes - {ALL}) | extra
+            last_names = sorted(set(base.keys()) | (writes - {ALL}) | extra)
             carried = last_names
         else:
-            last_names = set(writes)
-            carried = set(tables.carried(ins.addr))
+            last_names = sorted(writes)
+            carried = sorted(tables.carried(ins.addr))
         last = Join({n: _phi() for n in last_names}, table, ALL in writes)
 
         # A spawner starts the iterations as the window allows

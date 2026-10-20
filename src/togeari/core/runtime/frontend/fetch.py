@@ -81,7 +81,7 @@ class FrontEnd(ControlOps, EachOps):
             if s.state == StrandState.RUNNABLE:
                 job.mark_runnable(s)
         if heap and not job.ended:
-            self.d.dirty.add(job.id)
+            self.d.dirty[job.id] = None
 
     def blocked_by_caps(self, st: Strand) -> bool:
         job = st.job

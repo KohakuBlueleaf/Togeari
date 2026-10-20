@@ -1,26 +1,29 @@
 <svg xmlns='http://www.w3.org/2000/svg' width='1600' height='660' viewBox='0 0 1600 660' font-family='ui-sans-serif, -apple-system, Segoe UI, Helvetica, Arial' font-size='12'>
 <defs>
   <marker id='arrow' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto-start-reverse'>
-    <path d='M0,0 L10,5 L0,10 z' fill='#8b949e'/>
+    <path d='M0,0 L10,5 L0,10 z' fill='#6e7781'/>
   </marker>
   <style>
-    .ink { fill: #8b949e; }
+    .bg { fill: #ffffff; stroke: #d0d7de; }
+    .ink { fill: #424a53; }
+    .ink.ttl, .ink.lbl { fill: #1f2328; }
     .ttl { font-size: 15px; font-weight: 600; }
     .lbl { font-size: 13px; font-weight: 600; }
     .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11.5px; }
-    .box { fill: #8b949e14; stroke: #8b949e; }
-    .sub { fill: #8b949e10; stroke: #8b949e88; }
-    .wire { stroke: #8b949e; stroke-width: 1.6; fill: none; }
-    .edge { stroke: #8b949e; stroke-width: 1.2; fill: none; }
-    .ctl { stroke: #2f81f7; stroke-width: 1.4; fill: none; }
-    .bus { stroke: #8b949e; stroke-width: 1.6; fill: none; stroke-dasharray: 6 4; }
-    .core { fill: #2f81f714; stroke: #2f81f7; stroke-width: 1.5; }
-    .stream { fill: #a371f714; stroke: #a371f7; }
-    .batch { fill: #d2992214; stroke: #d29922; }
-    .call { fill: #3fb95014; stroke: #3fb950; }
-    .node { fill: #8b949e1f; stroke: #8b949e; }
+    .box { fill: #6e778114; stroke: #6e7781; }
+    .sub { fill: #6e778110; stroke: #6e778188; }
+    .wire { stroke: #6e7781; stroke-width: 1.6; fill: none; }
+    .edge { stroke: #6e7781; stroke-width: 1.2; fill: none; }
+    .ctl { stroke: #0969da; stroke-width: 1.4; fill: none; }
+    .bus { stroke: #6e7781; stroke-width: 1.6; fill: none; stroke-dasharray: 6 4; }
+    .core { fill: #0969da14; stroke: #0969da; stroke-width: 1.5; }
+    .stream { fill: #8250df14; stroke: #8250df; }
+    .batch { fill: #bf870014; stroke: #bf8700; }
+    .call { fill: #1a7f3714; stroke: #1a7f37; }
+    .node { fill: #6e77811f; stroke: #6e7781; }
   </style>
 </defs>
+<rect x='0.5' y='0.5' width='1599' height='659' rx='12' class='bg'/>
 
 <!-- Input: one program, as KIR text and as a node graph -->
 <text x='20' y='28' class='ink ttl'>one program</text>
@@ -113,14 +116,14 @@
 <text x='392' y='532' class='ink'>every job is plain data</text>
 
 <rect x='380' y='560' width='190' height='72' rx='8' class='call'/>
-<text x='392' y='582' fill='#3fb950' class='lbl'>Sink</text>
+<text x='392' y='582' fill='#1a7f37' class='lbl'>Sink</text>
 <text x='392' y='600' class='ink'>one record per job;</text>
 <text x='392' y='616' class='ink'>togeari conform replays it</text>
 
 <path d='M570,426 H598' class='wire' marker-start='url(#arrow)' marker-end='url(#arrow)'/>
 
 <!-- Dispatcher -->
-<text x='600' y='28' fill='#2f81f7' class='ttl'>Dispatcher</text>
+<text x='600' y='28' fill='#0969da' class='ttl'>Dispatcher</text>
 <text x='690' y='28' class='ink'>one thread, out of order, like a CPU core</text>
 <rect x='600' y='40' width='410' height='560' rx='12' class='core'/>
 
@@ -129,9 +132,9 @@
 <text x='626' y='92' class='ink'>next statement from each strand's pc;</text>
 <text x='626' y='106' class='ink'>parallel arms, each items, code past a pending branch</text>
 <g>
-  <path d='M900,66 H986' stroke='#2f81f7' stroke-width='3'/>
-  <path d='M912,66 L928,78 H986' stroke='#a371f7' stroke-width='3' fill='none'/>
-  <path d='M922,66 L938,90 H986' stroke='#3fb950' stroke-width='3' fill='none'/>
+  <path d='M900,66 H986' stroke='#0969da' stroke-width='3'/>
+  <path d='M912,66 L928,78 H986' stroke='#8250df' stroke-width='3' fill='none'/>
+  <path d='M922,66 L938,90 H986' stroke='#1a7f37' stroke-width='3' fill='none'/>
 </g>
 
 <rect x='614' y='122' width='382' height='50' rx='6' class='sub'/>
@@ -141,15 +144,15 @@
 <rect x='614' y='182' width='382' height='158' rx='6' class='sub'/>
 <text x='626' y='202' class='ink lbl'>Window (per job)</text>
 <g class='ink mono'>
-  <rect x='626' y='212' width='358' height='20' rx='3' fill='#3fb95022'/>
+  <rect x='626' y='212' width='358' height='20' rx='3' fill='#1a7f3722'/>
   <text x='634' y='226'>weather</text><text x='700' y='226'>city → sky#1</text><text x='862' y='226'>done</text>
-  <rect x='626' y='236' width='358' height='20' rx='3' fill='#2f81f722'/>
+  <rect x='626' y='236' width='358' height='20' rx='3' fill='#0969da22'/>
   <text x='634' y='250'>traffic</text><text x='700' y='250'>city → jam#3</text><text x='862' y='250'>issued</text>
-  <rect x='626' y='260' width='358' height='20' rx='3' fill='#2f81f722'/>
+  <rect x='626' y='260' width='358' height='20' rx='3' fill='#0969da22'/>
   <text x='634' y='274'>survey</text><text x='700' y='274'>city, d#7 → score#8</text><text x='862' y='274'>issued</text>
-  <rect x='626' y='284' width='358' height='20' rx='3' fill='#8b949e18'/>
+  <rect x='626' y='284' width='358' height='20' rx='3' fill='#6e778118'/>
   <text x='634' y='298'>append</text><text x='700' y='298'>scores#6, score#8</text><text x='862' y='298'>waits score#8</text>
-  <rect x='626' y='308' width='358' height='20' rx='3' fill='#8b949e18'/>
+  <rect x='626' y='308' width='358' height='20' rx='3' fill='#6e778118'/>
   <text x='634' y='322'>compose</text><text x='700' y='322'>sky#1, n#2, jam#3 …</text><text x='862' y='322'>waits note</text>
 </g>
 
@@ -186,14 +189,14 @@
 
 <text x='1042' y='136' class='ink'>STREAM LANE · paces only</text>
 <path d='M1042,176 H1228' class='wire' marker-end='url(#arrow)'/>
-<rect x='1062' y='166' width='12' height='20' rx='2' fill='#a371f7'/>
-<rect x='1078' y='166' width='12' height='20' rx='2' fill='#a371f7'/>
+<rect x='1062' y='166' width='12' height='20' rx='2' fill='#8250df'/>
+<rect x='1078' y='166' width='12' height='20' rx='2' fill='#8250df'/>
 
 <text x='1042' y='256' class='ink'>BATCH LANE</text>
-<rect x='1046' y='284' width='12' height='32' rx='2' fill='#d29922'/>
-<rect x='1061' y='284' width='12' height='32' rx='2' fill='#d29922'/>
-<rect x='1076' y='284' width='12' height='32' rx='2' fill='#d29922'/>
-<rect x='1091' y='284' width='12' height='32' rx='2' fill='#8b949e55'/>
+<rect x='1046' y='284' width='12' height='32' rx='2' fill='#bf8700'/>
+<rect x='1061' y='284' width='12' height='32' rx='2' fill='#bf8700'/>
+<rect x='1076' y='284' width='12' height='32' rx='2' fill='#bf8700'/>
+<rect x='1091' y='284' width='12' height='32' rx='2' fill='#6e778155'/>
 <path d='M1106,300 H1118' class='wire' marker-end='url(#arrow)'/>
 <rect x='1120' y='276' width='90' height='48' rx='5' class='sub'/>
 <text x='1130' y='296' class='ink lbl'>former</text>
@@ -201,9 +204,9 @@
 <path d='M1210,300 H1228' class='wire' marker-end='url(#arrow)'/>
 
 <text x='1042' y='392' class='ink'>CALL LANE</text>
-<rect x='1046' y='414' width='12' height='32' rx='2' fill='#3fb950'/>
-<rect x='1061' y='414' width='12' height='32' rx='2' fill='#8b949e55'/>
-<rect x='1076' y='414' width='12' height='32' rx='2' fill='#8b949e55'/>
+<rect x='1046' y='414' width='12' height='32' rx='2' fill='#1a7f37'/>
+<rect x='1061' y='414' width='12' height='32' rx='2' fill='#6e778155'/>
+<rect x='1076' y='414' width='12' height='32' rx='2' fill='#6e778155'/>
 <path d='M1091,430 H1118' class='wire' marker-end='url(#arrow)'/>
 <rect x='1120' y='406' width='90' height='48' rx='5' class='sub'/>
 <text x='1130' y='426' class='ink lbl'>select</text>
@@ -212,26 +215,26 @@
 
 <!-- Engines -->
 <rect x='1230' y='126' width='350' height='100' rx='8' class='stream'/>
-<text x='1244' y='150' fill='#a371f7' class='ttl'>Stream engine</text>
+<text x='1244' y='150' fill='#8250df' class='ttl'>Stream engine</text>
 <text x='1244' y='170' class='ink'>owns its queue and batches by itself;</text>
 <text x='1244' y='186' class='ink'>its load() feeds admission</text>
 <text x='1244' y='210' class='ink mono'>submit(item) … results as they finish</text>
 
 <rect x='1230' y='246' width='350' height='108' rx='8' class='batch'/>
-<text x='1244' y='270' fill='#d29922' class='ttl'>Batch engine</text>
+<text x='1244' y='270' fill='#bf8700' class='ttl'>Batch engine</text>
 <text x='1360' y='270' class='ink'>TorchEngine</text>
 <text x='1244' y='290' class='ink'>models sharing one GPU; one batch mixes jobs</text>
 <g>
-  <rect x='1244' y='300' width='22' height='16' rx='3' fill='#d29922'/>
-  <rect x='1270' y='300' width='22' height='16' rx='3' fill='#d29922'/>
-  <rect x='1296' y='300' width='22' height='16' rx='3' fill='#d29922'/>
-  <rect x='1322' y='300' width='22' height='16' rx='3' fill='#d29922'/>
+  <rect x='1244' y='300' width='22' height='16' rx='3' fill='#bf8700'/>
+  <rect x='1270' y='300' width='22' height='16' rx='3' fill='#bf8700'/>
+  <rect x='1296' y='300' width='22' height='16' rx='3' fill='#bf8700'/>
+  <rect x='1322' y='300' width='22' height='16' rx='3' fill='#bf8700'/>
   <text x='1354' y='313' class='ink'>Kyoto · Lisbon · Quito · Kyoto</text>
 </g>
 <text x='1244' y='340' class='ink mono'>submit([items]) → [results]</text>
 
 <rect x='1230' y='374' width='350' height='108' rx='8' class='call'/>
-<text x='1244' y='398' fill='#3fb950' class='ttl'>Call engine</text>
+<text x='1244' y='398' fill='#1a7f37' class='ttl'>Call engine</text>
 <text x='1344' y='398' class='ink'>PythonCallEngine · WebCallEngine</text>
 <text x='1244' y='418' class='ink'>threads, processes, shared memory;</text>
 <text x='1244' y='434' class='ink'>any HTTP service: rate limits, Retry-After</text>

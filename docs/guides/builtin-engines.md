@@ -134,6 +134,7 @@ server.shutdown()
 | `pool_size` | 2 | connections per client; `max_inflight` is split over `ceil(max_inflight / pool_size)` clients |
 | `headers` | `{}` | sent with every request |
 | `timeout_s` | 600 | per request |
+| `connect_timeout_s` | 10 | opening a connection; past it the request is a `UnitError` (`ConnectTimeout`) |
 | `health_path`, `health_timeout_s` | `None`, 2 | after a `UnitError`, `ready()` stays false until a GET of this path succeeds |
 | `classify` | `default_classify` | outcome (response or exception) → `ItemError`, `UnitError` or `None` (decode it) |
 | `load_probe`, `probe_interval_s` | `None`, 1 | a function polled in the background; its dict appears in `load().extra["probe"]` |

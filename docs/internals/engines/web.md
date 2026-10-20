@@ -13,6 +13,7 @@ example `JsonHttp`) builds the request and decodes the response.
 | `rate` | `None` | token bucket: `(requests per second, burst)`, or a number (burst 1) |
 | `headers` | `{}` | sent with every request |
 | `timeout_s` | 600 | per request (`httpx.Timeout`) |
+| `connect_timeout_s` | 10 | the connect part of `httpx.Timeout`; `ConnectTimeout` classifies as `UnitError` |
 | `load_probe` | `None` | a function polled every `probe_interval_s` (default 1) in a thread; its dict is reported in `load()` |
 | `classify` | `default_classify` | outcome to result class |
 | `health_path`, `health_timeout_s` | `None`, 2 | a GET that must succeed before `ready()` is true again after a `UnitError` |

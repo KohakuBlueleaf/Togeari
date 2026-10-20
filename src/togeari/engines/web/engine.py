@@ -75,6 +75,7 @@ class WebCallEngine(EngineBase):
         rate: tuple[float, float] | float | None = None,
         headers: dict[str, str] | None = None,
         timeout_s: float = 600.0,
+        connect_timeout_s: float = 10.0,
         load_probe: Callable[[], dict] | None = None,
         classify: Classify | None = None,
         health_path: str | None = None,
@@ -104,6 +105,7 @@ class WebCallEngine(EngineBase):
         self.rate = rate
         self.headers = dict(headers or {})
         self.timeout_s = timeout_s
+        self.connect_timeout_s = connect_timeout_s
         self.load_probe = load_probe
         self.classify = classify or default_classify
         self.health_path = health_path
@@ -183,7 +185,8 @@ class WebCallEngine(EngineBase):
                 httpx.AsyncClient(
                     base_url=self.base_url,
                     headers=self.headers,
-                    timeout=httpx.Timeout(self.timeout_s),
+                    # A connection that does not open in time is a unit error, not a long wait
+                    timeout=httpx.Timeout(self.timeout_s, connect=self.connect_timeout_s),
                     limits=httpx.Limits(max_connections=size, max_keepalive_connections=size),
                 ),
                 size,

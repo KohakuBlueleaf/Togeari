@@ -62,6 +62,19 @@ def test_web_engine_keeps_every_rule(server, mode):
     assert report.ok, str(report)
 
 
+def test_a_connection_that_does_not_open_is_a_unit_error_within_the_connect_timeout():
+    # A non-routable address: the connection never opens (or is refused at once)
+    engine = WebCallEngine("http://10.255.255.1:9", max_inflight=1, connect_timeout_s=0.5)
+    engine.start()
+    try:
+        t0 = time.monotonic()
+        result = run_one(engine, call("/double", 1), timeout=10.0)
+        assert time.monotonic() - t0 < 5.0
+        assert isinstance(result, UnitError)
+    finally:
+        engine.stop()
+
+
 def test_error_classes(server):
     engine = WebCallEngine(server.url, max_inflight=4)
     engine.start()

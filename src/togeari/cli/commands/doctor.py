@@ -1,4 +1,4 @@
-"""``togeari doctor``: versions, devices, and engine worker processes left over from
+"""``togeari doctor``: versions, the core, devices, and engine worker processes left over from
 earlier runs.
 """
 
@@ -9,6 +9,7 @@ import subprocess
 import sys
 from typing import TextIO
 
+from togeari.core.construct.core import info as core_info
 from togeari.engines.common import registry
 from togeari.plugins.report.env import environment
 
@@ -41,7 +42,7 @@ WINDOWS_PROCESSES = (
 
 
 def add(sub: argparse._SubParsersAction) -> None:
-    sub.add_parser("doctor", help="versions, devices, leftover worker processes")
+    sub.add_parser("doctor", help="versions, the core, devices, leftover worker processes")
 
 
 def devices(timeout: float = 120.0) -> dict:
@@ -120,6 +121,18 @@ def run(args: argparse.Namespace, out: TextIO) -> int:
     print(f"os       {env['os']}  cpus {env['cpus']}", file=out)
     for name, v in env["packages"].items():
         print(f"{name:<12} {v or '-'}", file=out)
+
+    # The core a default machine runs, and the native extension
+    core = core_info()
+    ext = core["extension"]
+    native = (
+        "togeari._rs not built"
+        if ext is None
+        else f"togeari._rs {ext['version']}"
+        f"  dispatcher {'yes' if ext['dispatcher'] else 'no'}"
+        f"{'  debug build' if ext['debug'] else ''}"
+    )
+    print(f"core     {core['resolved']}  ({core['default']}; {native})", file=out)
 
     # Devices
     dev = devices()

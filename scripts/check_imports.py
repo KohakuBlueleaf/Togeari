@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1] / "src"
 
 # Package prefix -> allowed import prefixes (beyond the standard library)
 RULES = {
-    "togeari.core": ("togeari.core", "kohakunode"),
+    "togeari.core": ("togeari.core", "togeari._rs", "kohakunode"),
     "togeari.engines": ("togeari.engines", "togeari.core.contracts", "togeari.adapters"),
     "togeari.plugins": ("togeari.plugins", "togeari.core.plugin", "togeari.core.contracts"),
     "togeari.adapters": ("togeari.adapters", "togeari.core", "kohakunode"),
@@ -45,9 +45,12 @@ def imports(tree: ast.AST, mod: str) -> list[str]:
         elif isinstance(node, ast.ImportFrom):
             if node.level:
                 base = mod.rsplit(".", node.level)[0]
-                out.append(f"{base}.{node.module}" if node.module else base)
+                source = f"{base}.{node.module}" if node.module else base
             else:
-                out.append(node.module)
+                source = node.module
+
+            # Each imported name, as it may be a submodule (``from togeari import _rs``)
+            out += [f"{source}.{a.name}" for a in node.names]
     return out
 
 

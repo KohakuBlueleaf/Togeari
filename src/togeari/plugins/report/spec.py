@@ -1,4 +1,5 @@
-"""A machine's construction, as data: programs, entries, bindings, lanes, units, policies, knobs.
+"""A machine's construction, as data: the core, programs, entries, bindings, lanes, units,
+policies, knobs.
 
 Read on the dispatcher thread or while the dispatcher is not running.
 """
@@ -52,6 +53,7 @@ def machine_spec(ctx: PluginContext) -> dict:
     }
 
     return {
+        "core": built["core"],
         "programs": regions,
         "entries": {
             name: {"region": e.region.index, "addr": e.addr} for name, e in code.entries.items()

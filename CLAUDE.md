@@ -12,7 +12,9 @@ A dataflow machine that runs many KIR jobs at once, out of order, on pluggable e
   - `policies/`: admission, issue order, formers, selectors
   - `plugin/`: plugin manager, query / command tables
   - `observe/`: event bus
-  - `construct/`: `Machine`, construction errors
+  - `construct/`: `Machine`, construction errors, core selection (`core.py`)
+- `src/togeari-rust/`: the native core `togeari._rs` (crate `Cargo.toml` at the root); modules
+  mirror `core/`, each with `core.rs` (pure Rust, unit tests) and `python.rs` (bindings).
 - `src/togeari/engines/`: builtin engines (python, web, torch), written against the public contracts.
 - `src/togeari/plugins/`: builtin plugins (counters, run report, perfetto, recorder, inspector, budget).
 - `src/togeari/{adapters,stores,io,conformance,testing,cli}/`
@@ -21,9 +23,14 @@ A dataflow machine that runs many KIR jobs at once, out of order, on pluggable e
 
 ## Commands
 
-The environment is `.venv`. Use `uv` to install into it.
+The environment is `.venv`. Use `uv` to install into it; the install builds the extension
+(maturin), so a change under `src/togeari-rust/` needs `uv pip install -e ".[dev,web,vault]"`
+again. The version lives in `Cargo.toml` alone.
 
 ```
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test --no-default-features
 .venv\Scripts\python.exe -m pytest tests -q -m "not gpu"
 .venv\Scripts\python.exe -m pytest tests -q -m gpu
 .venv\Scripts\python.exe -m black --line-length 100 src tests examples scripts
@@ -39,7 +46,7 @@ run on their own with `-m gpu`. `TOGEARI_SEEDS=300` widens the generated-program
 
 ## Rules
 
-- `togeari.core` imports only `kohakunode`, the standard library and itself.
+- `togeari.core` imports only `kohakunode`, the standard library, `togeari._rs` and itself.
   Engines and plugins use the public contracts.
   `scripts/check_imports.py` checks this.
 - Code style:

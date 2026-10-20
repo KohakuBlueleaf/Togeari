@@ -12,8 +12,57 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build wheel and sdist
+  build-wheels:
+    name: Build cp${{ matrix.python-version }} for ${{ matrix.platform.target }}
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        platform:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            manylinux: '2_28'
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            manylinux: '2_28'
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            manylinux: ''
+          - os: macos-14
+            target: aarch64-apple-darwin
+            manylinux: ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # In the manylinux container the interpreter is named; elsewhere it is the one set up
+      - name: Build the wheel (Linux)
+        if: runner.os == 'Linux'
+        uses: PyO3/maturin-action@v1
+        with:
+          maturin-version: v1.12.6
+          target: ${{ matrix.platform.target }}
+          manylinux: ${{ matrix.platform.manylinux }}
+          args: --release --interpreter python${{ matrix.python-version }} --out dist
+      - name: Build the wheel (Windows, macOS)
+        if: runner.os != 'Linux'
+        uses: PyO3/maturin-action@v1
+        with:
+          maturin-version: v1.12.6
+          target: ${{ matrix.platform.target }}
+          args: --release --interpreter python --out dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform.target }}-py${{ matrix.python-version }}
+          path: dist/
+          retention-days: 7
+
+  build-sdist:
+    name: Build the sdist
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,17 +71,17 @@ jobs:
           python-version: '3.13'
       - name: Build
         run: |
-          pip install build
-          python -m build --outdir dist
+          pip install maturin
+          maturin sdist --out dist
       - uses: actions/upload-artifact@v4
         with:
-          name: dist
-          path: dist/
+          name: sdist
+          path: dist/*.tar.gz
           retention-days: 7
 
   publish-to-pypi:
     name: Publish to PyPI
-    needs: [build]
+    needs: [build-wheels, build-sdist]
     runs-on: ubuntu-latest
     if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
     environment:
@@ -44,8 +93,11 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: dist
           path: dist
+          pattern: '*'
+          merge-multiple: true
+      - name: List artifacts
+        run: ls -lh dist/
       - name: Upload to the GitHub release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')

@@ -42,6 +42,7 @@ def test_run_report_writes_every_file(tmp_path, shared_counters):
 
     # spec.json and env.json describe the machine and its environment
     spec = json.loads((out / "spec.json").read_text())
+    assert spec["core"] == m.core
     assert "main" in spec["entries"]
     assert len(spec["programs"]["0"]["semantic_hash"]) == 64
     assert spec["units"]["call0"] == {"engine": "sim", "name": "call0", "kind": "call"}

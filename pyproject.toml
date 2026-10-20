@@ -1,10 +1,11 @@
 [build-system]
-requires = ["hatchling>=1.25"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.9,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "togeari"
-version = "0.1.0"
+# maturin reads the version from Cargo.toml.
+dynamic = ["version"]
 description = "Togeari: a dataflow machine that runs many KIR jobs at once, out of order, on pluggable engines"
 authors = [
     { name = "Shih-Ying Yeh(KohakuBlueLeaf)", email = "apolloyeh0123@gmail.com" },
@@ -20,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
 ]
@@ -33,13 +35,24 @@ torch = ["torch>=2.4"]
 web = ["httpx>=0.27", "sniffio"]
 vault = ["kohakuvault>=0.8"]
 report = ["zstandard>=0.22"]
-dev = ["pytest>=8", "ruff", "black", "httpx>=0.27", "sniffio", "zstandard>=0.22"]
+dev = [
+    "maturin>=1.9,<2.0",
+    "pytest>=8",
+    "ruff",
+    "black",
+    "httpx>=0.27",
+    "sniffio",
+    "zstandard>=0.22",
+]
 
 [project.scripts]
 togeari = "togeari.cli.main:main"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/togeari"]
+[tool.maturin]
+# Python source is in src/togeari; the crate is src/togeari-rust (Cargo.toml)
+python-source = "src"
+module-name = "togeari._rs"
+include = ["src/togeari/**/*.pyi", "src/togeari/py.typed"]
 
 [tool.black]
 line-length = 100

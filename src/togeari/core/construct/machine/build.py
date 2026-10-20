@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from togeari.core.construct.core import resolve as resolve_core
 from togeari.core.construct.errors import ConstructionError, Problems
 from togeari.core.construct.knobs import KNOB_DEFAULTS, checked
 from togeari.core.construct.machine.loading import LoadStage
@@ -64,9 +65,16 @@ class Machine(LoadStage, UnitStage, RunStage):
         source_buffer: int = 1024,
         sink_buffer: int = 1024,
         seed: int = 0,
+        core: str | None = None,
         **knobs: Any,
     ):
         problems = Problems()
+
+        # The core that runs this machine: core=, else TOGEARI_CORE, else "auto"
+        self.core, problem = resolve_core(core)
+        if problem is not None:
+            problems.add("core", problem)
+
         self.libraries = list(libraries or [])
         self.sig_path = sig_path
         self.passes = passes

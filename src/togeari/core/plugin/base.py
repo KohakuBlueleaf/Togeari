@@ -198,12 +198,14 @@ class PluginContext:
         return self._m.bus.dropped()
 
     def construction(self) -> dict:
-        """How the machine was built: ``default_entry``, ``passes``, ``bind`` (pattern ->
-        binding), ``store``, ``contributed_policies`` (names) and ``warnings``. The
-        bindings and the store are the machine's objects, to describe, not to change.
+        """How the machine was built: ``core`` (``"python"`` or ``"rust"``),
+        ``default_entry``, ``passes``, ``bind`` (pattern -> binding), ``store``,
+        ``contributed_policies`` (names) and ``warnings``. The bindings and the store are the
+        machine's objects, to describe, not to change.
         """
         m = self._m
         return {
+            "core": m.core,
             "default_entry": m.default_entry,
             "passes": m.passes,
             "bind": dict(m.bind),

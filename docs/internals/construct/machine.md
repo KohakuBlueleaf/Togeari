@@ -29,10 +29,13 @@ The knob registry is in `src/togeari/core/construct/knobs.py`; unit start and st
 | `start_units` | `True` | `False`, or a `no_unit_start()` block, checks everything but starts no unit |
 | `source_buffer`, `sink_buffer` | 1024, 1024 | bounds of the source and sink queues |
 | `seed` | 0 | record and event sampling RNGs |
+| `core` | `None` | `"auto"`, `"rust"` or `"python"`; `None` reads `TOGEARI_CORE`, else `"auto"` ([native core](../native/README.md)) |
 | `**knobs` | — | registry entries |
 
 ## Constructor steps
 
+0. **Core.** `resolve(core)` (`core/construct/core.py`) sets `Machine.core`; a core that
+   cannot run is a construction problem.
 1. **Plugins.** A `Bus` over the knob dict, the `QUERIES` / `COMMANDS` tables,
    `PluginManager.add` per plugin, then `collect_policies()` (every `contribute_policies()`,
    before anything is bound).

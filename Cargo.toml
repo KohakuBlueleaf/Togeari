@@ -1,0 +1,28 @@
+[package]
+name = "togeari"
+# The one version of the package; pyproject.toml reads it (dynamic = ["version"]).
+version = "0.2.0-dev0"
+edition = "2021"
+description = "The native core of Togeari: a second implementation of the machine's protocol"
+license = "Apache-2.0"
+repository = "https://github.com/KohakuBlueleaf/Togeari"
+# The sdist carries the crate and the package (maturin adds the Python source)
+include = ["/src/togeari-rust/**", "/Cargo.toml", "/Cargo.lock", "/rustfmt.toml", "/LICENSE"]
+
+[lib]
+name = "_rs"     # == python module path: togeari/_rs
+crate-type = ["cdylib"]
+path = "src/togeari-rust/lib.rs"
+
+[dependencies]
+pyo3 = "0.27"
+
+[features]
+# A wheel build links no libpython; `cargo test --no-default-features` links it, so the
+# unit tests run as a normal binary.
+default = ["extension-module"]
+extension-module = ["pyo3/extension-module"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

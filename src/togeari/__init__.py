@@ -25,7 +25,7 @@ from togeari.core.plugin.base import BasePlugin, PluginBlockError, PluginContext
 from togeari.core.program.bind import Inline, Use
 from togeari.core.runtime.handles import DispatcherDied
 
-# The installed distribution's version (pyproject.toml is the one source)
+# The installed distribution's version (Cargo.toml is the one source; maturin carries it)
 try:
     __version__ = version("togeari")
 except PackageNotFoundError:

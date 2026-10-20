@@ -157,7 +157,7 @@ print(sorted(p.name for p in (out / "report").iterdir()))
 | `report/summary.json` | totals, throughput, slowest lanes, top queue waits, plugin hook time |
 | `report/metrics.jsonl` | one counters snapshot per second: dispatcher busy fraction and phase times, lane queues and waits, unit busy fraction and rates, jobs (resident by state), store hits |
 | `report/events.jsonl[.zst]` | every event the report received |
-| `report/spec.json`, `report/env.json` | what ran: programs, bindings, lanes, unit specs, policies, knobs, versions |
+| `report/spec.json`, `report/env.json` | what ran: the core, programs, bindings, lanes, unit specs, policies, knobs, versions |
 | `trace.json` | open in Perfetto (ui.perfetto.dev) or `chrome://tracing`: a track per dispatcher phase, lane queue, unit (a slice per item) and job |
 
 A dispatcher busy fraction near 1 means the dispatcher is the limit; a unit busy fraction near

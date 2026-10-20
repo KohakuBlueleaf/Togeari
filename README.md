@@ -121,7 +121,9 @@ pip install "togeari[vault]"     # KohakuVault store, source and sink
 pip install "togeari[report]"    # zstd-compressed run report events
 ```
 
-From a clone (Windows PowerShell or bash):
+Wheels cover CPython 3.10–3.14 on Linux x86_64 / aarch64, Windows x64 and macOS arm64; each
+carries the native extension `togeari._rs`. From a clone (Windows PowerShell or bash), with a
+Rust toolchain (`rustup`) to build the extension:
 
 ```
 git clone https://github.com/KohakuBlueleaf/Togeari && cd Togeari
@@ -130,7 +132,9 @@ uv pip install -e ".[web,vault,dev]"     # add torch from the index matching you
 togeari doctor
 ```
 
-Python 3.10+. `togeari doctor` prints versions, devices and any leftover worker processes.
+`togeari doctor` prints versions, the core a machine runs, devices and any leftover worker
+processes. `Machine(core=...)` (or `TOGEARI_CORE`) picks the Python core, the reference, or
+the native one ([native core](docs/internals/native/README.md)).
 
 ## Quick start
 

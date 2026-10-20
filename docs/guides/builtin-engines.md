@@ -138,7 +138,7 @@ server.shutdown()
 | `health_path`, `health_timeout_s` | `None`, 2 | after a `UnitError`, `ready()` stays false until a GET of this path succeeds |
 | `classify` | `default_classify` | outcome (response or exception) → `ItemError`, `UnitError` or `None` (decode it) |
 | `load_probe`, `probe_interval_s` | `None`, 1 | a function polled in the background; its dict appears in `load().extra["probe"]` |
-| `on_unit_error` | `"block"` | the other requests in flight after a `UnitError`: `"block"` lets them finish; `"cancel"` answers them with the same error and cancels them |
+| `on_unit_error` | `"block"` | the other requests in flight after a `UnitError`: `"block"` lets them finish; `"cancel"` answers them with the same error at once |
 | `name` | `"web"` | |
 
 `default_classify` (`togeari.engines.web`): status 429 or 503 → `UnitError` with the
@@ -148,8 +148,9 @@ unit: `ready()` is false and `capacity()` is 0 until the `Retry-After` delay has
 health GET succeeds, with `health_path`), so the lane sends it no new work. Only the request that
 saw the error gets the `UnitError`. With `on_unit_error="block"` (the default), the other
 requests in flight finish and answer normally. With `"cancel"`, each of them is answered with
-the same error at once and its running request is cancelled
-(`load().extra["unit_error_items"]` counts them).
+the same error at once (`load().extra["unit_error_items"]` counts them). A running request is
+never aborted, by a cancel or a unit error: it runs to its end, its late answer is dropped, and
+its slot frees then. A cancelled request not yet sent is never sent.
 
 `wake_at()` tells the lane when the token bucket next allows a request or a `Retry-After`
 block ends, so a rate-limited unit is pumped exactly when it can take work.

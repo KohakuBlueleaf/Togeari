@@ -36,9 +36,10 @@ engine, name, base URL, `max_inflight`, `rate`, `timeout_s`.
 3. `classify(response or exception)`: a result class, or `None` to answer
    `finish(item, response)`.
 4. `_settle`: frees the slot, records latency (EWMA) and errors, answers the ticket. For a
-   `UnitError` under `on_unit_error="cancel"` it also takes every other open ticket, answers
-   each with the same error (`unit_error_items`), and posts a cancel of its task; under
-   `"block"` the other tickets run on.
+   `UnitError` under `on_unit_error="cancel"` it also answers every other unanswered open
+   ticket with the same error (`unit_error_items`); their requests run on, keep their slots,
+   and their late answers are dropped. Under `"block"` the other tickets run on and answer
+   normally.
 
 Connections are split by `pool_sizes(max_inflight, pool_size)`: `ceil(max_inflight / pool_size)`
 clients sharing `max_inflight` connections as evenly as possible.
@@ -73,6 +74,9 @@ limit refilling wakes the dispatcher without polling. `TokenBucket`
 
 ## Cancel and stop
 
-`cancel(ticket)` answers `Cancelled()` if not yet answered and cancels the request task on the
-loop. `stop()` answers every open ticket with `UnitError(EngineStopped)`, then the loop cancels
-its tasks and closes the clients.
+`cancel(ticket)` answers `Cancelled()` if not yet answered. The request task is never aborted:
+aborting an `httpx` request while its connection opens can leave that pooled connection stuck,
+and later requests then wait on it without end. A task whose ticket is already answered sends
+nothing (checked before the pool and after the token wait); one already sent runs to its end,
+its answer is dropped, and `_settle` frees its slot. `stop()` answers every open ticket with
+`UnitError(EngineStopped)`, then the loop cancels its tasks and closes the clients.

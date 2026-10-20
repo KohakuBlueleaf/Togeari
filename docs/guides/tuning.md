@@ -110,7 +110,7 @@ a shorter tuple keeps the process threshold's later values. The process's own th
 back when the last of them stops, or one set from outside while they ran. A first value of 0
 (no automatic collection) is refused. On Python 3.14 the second value sets the incremental
 collector's old-generation scan share and the third is ignored. On the ceiling shapes the
-default gives 2–9% more node calls per second (medians of five interleaved rounds) than
+default gives 6–14% more node calls per second (medians of five interleaved rounds) than
 Python's `(2000, 10, 10)` ([performance](../performance/README.md)).
 
 ## Reading a run

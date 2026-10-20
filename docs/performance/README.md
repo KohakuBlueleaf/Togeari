@@ -15,9 +15,11 @@ run.
 
 | workload | default knob | process threshold | gain | jobs/s | dispatcher busy |
 |---|---|---|---|---|---|
-| a chain of inline nodes | 80,758 (85,011–72,629) | 74,160 (77,972–72,481) | +9% | 4,038 | 1.00 |
-| a chain of calls on an engine lane | 28,530 (30,583–27,296) | 28,104 (28,876–27,995) | +2% | 1,427 | 0.83 |
-| `each` with batched calls | 40,354 (41,230–39,235) | 37,931 (39,011–35,995) | +6% | 400 | 0.92 |
+| a chain of inline nodes | 78,989 (83,845–68,877) | 69,551 (72,605–68,809) | +14% | 3,950 | 0.99 |
+| a chain of calls on an engine lane | 28,702 (29,394–26,982) | 26,872 (28,568–26,585) | +7% | 1,435 | 0.81 |
+| `each` with batched calls | 39,729 (41,277–37,239) | 37,393 (38,716–34,963) | +6% | 393 | 0.92 |
+
+![Dispatcher ceiling per workload](../assets/dispatcher-ceiling.svg)
 
 Retired statements release their work items and payloads, so few objects stay alive between
 collector passes and the process threshold costs little more than the default.
@@ -27,11 +29,11 @@ cost at 4N is above twice the cost at N):
 
 | resident jobs | 500 | 2,000 | 8,000 |
 |---|---|---|---|
-| µs per job | 54.2 | 52.8 | 55.6 |
+| µs per job | 54.2 | 55.8 | 56.4 |
 
 | items in one `each` | 250 | 1,000 | 4,000 |
 |---|---|---|---|
-| µs per item | 76.8 | 79.7 | 82.8 |
+| µs per item | 77.9 | 78.4 | 82.2 |
 
 `tests/scaling` also checks loop iterations: a `jump` loop and a `mutates` loop cost the same
 per iteration at 500 and 2,000 iterations (66–87 µs per iteration up to 8,000).

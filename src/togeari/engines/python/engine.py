@@ -51,6 +51,8 @@ class PythonCallEngine(EngineBase):
         start_timeout_s: float = 60.0,
         stop_timeout_s: float = 5.0,
         imports: tuple[str, ...] | list[str] = (),
+        revive_backoff_s: float = 0.5,
+        revive_backoff_max_s: float = 30.0,
         name: str | None = None,
     ):
         super().__init__(name or "python")
@@ -69,6 +71,8 @@ class PythonCallEngine(EngineBase):
         self.start_timeout_s = start_timeout_s
         self.stop_timeout_s = stop_timeout_s
         self.imports = tuple(imports)
+        self.revive_backoff_s = revive_backoff_s
+        self.revive_backoff_max_s = revive_backoff_max_s
         self.serial = itertools.count()
 
         # Shared state, guarded by ``lock`` (a condition the idle slots wait on).
@@ -150,8 +154,12 @@ class PythonCallEngine(EngineBase):
         threading.Thread(target=self._revive, name=f"{self.name}-revive", daemon=True).start()
 
     def _revive(self) -> None:
-        """Replace lost slots; slots lost while reviving are replaced in the same revive."""
+        """Replace lost slots; slots lost while reviving are replaced in the same revive. When
+        none comes up while the engine is still up, it retries after ``revive_backoff_s``,
+        doubled each time up to ``revive_backoff_max_s``; a down engine waits for ``ready()``.
+        """
         added = False
+        pause = self.revive_backoff_s
         while True:
             with self.lock:
                 missing = self.workers - len(self.slots)
@@ -171,12 +179,21 @@ class PythonCallEngine(EngineBase):
                 for slot in stale:
                     slot.exit = True
                 self.lock.notify_all()
-                done = bool(stale) or not slots
-                if done and epoch == self.epoch:
+                if stale and epoch == self.epoch:
                     self.reviving = False
             added = added or bool(slots and not stale)
-            if done:
+            if stale:
                 break
+
+            # None came up: an engine still up pauses, then retries; a down one stops here
+            if not slots:
+                with self.lock:
+                    if self.state != State.UP or epoch != self.epoch:
+                        if epoch == self.epoch:
+                            self.reviving = False
+                        break
+                    self.lock.wait(timeout=pause)
+                pause = min(pause * 2, self.revive_backoff_max_s)
 
         if self.monitor is not None:
             self.monitor.poke()

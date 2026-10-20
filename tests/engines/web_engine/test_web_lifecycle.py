@@ -12,6 +12,7 @@ from kohakunode import NodeLibrary
 from togeari import Inline, Lane, Machine, Use
 from togeari.adapters.http import JsonHttp
 from togeari.core.contracts.workitem import WorkItem
+from togeari.engines.common.state import EngineState
 from togeari.engines.python import PythonCallEngine
 from togeari.engines.web import WebCallEngine
 from togeari.io import Iterable, Memory
@@ -160,6 +161,60 @@ def test_a_huge_retry_after_blocks_at_most_max_retry_after_s(server, header):
         assert until(engine.ready, timeout=3.0)
     finally:
         engine.stop()
+
+
+def test_a_healthy_unit_is_never_probed_and_an_unhealthy_one_is(server):
+    url, handler = server
+    engine = WebCallEngine(url, max_inflight=2, health_path="/health")
+    engine.start()
+    try:
+        # Healthy: a second of ready() polls sends no health GET
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            assert engine.ready()
+            time.sleep(0.01)
+        assert handler.health_calls == 0
+
+        # After a 503 the unit probes until a GET succeeds
+        run_one(engine, WorkItem("svc", {"x": 1}, JsonHttp("/down"), protocol="http"))
+        assert until(engine.ready)
+        assert handler.health_calls >= 1
+    finally:
+        engine.stop()
+
+
+def test_a_stop_during_start_leaves_the_engine_stopped_and_startable(server):
+    url, _ = server
+    engine = WebCallEngine(url, max_inflight=2)
+
+    # A stop while the engine is still starting (no loop yet)
+    engine.state = EngineState.STARTING
+    engine.stop()
+    assert engine.state == EngineState.STOPPED
+    engine.start()
+    try:
+        assert until(engine.ready)
+    finally:
+        engine.stop()
+
+
+def test_a_request_waiting_for_a_rate_token_holds_no_connection(server):
+    url, _ = server
+    engine = WebCallEngine(url, max_inflight=4, rate=(1.0, 1.0))
+    engine.start()
+    try:
+        for i in range(3):
+            engine.submit(call_slow(i), lambda ticket, results: None)
+
+        # One request has its token and runs; the two others wait without a connection
+        time.sleep(0.3)
+        assert sum(p.inflight for p in engine.pools) == 1
+    finally:
+        engine.stop()
+
+
+def call_slow(x):
+    return WorkItem("svc", {"x": x}, JsonHttp("/slow", parse=lambda b: b["y"]), protocol="http")
 
 
 def test_concurrent_starts_open_one_io_loop(server):

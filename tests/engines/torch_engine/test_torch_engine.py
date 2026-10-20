@@ -101,6 +101,8 @@ def test_swappable_alternates_models_with_correct_outputs(isolation):
     units = {name: e.unit(name) for name in models}
     for unit in units.values():
         unit.start()
+
+    # Three rounds alternating the two models
     try:
         for round_ in range(3):
             for name, unit in units.items():
@@ -115,6 +117,8 @@ def test_swappable_alternates_models_with_correct_outputs(isolation):
     finally:
         for unit in units.values():
             unit.stop()
+
+    # Every round swapped; the footprint and the stopped engine
     assert stats["swaps"] >= 6 and stats["swap_s"] > 0.0, stats
     assert stats["models"]["a"]["batches"] == 3 and stats["models"]["b"]["items"] == 12
     assert footprint["weights_mb"] > 0.0 and footprint["peak_mb"] >= footprint["weights_mb"]

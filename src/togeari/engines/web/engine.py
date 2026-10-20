@@ -182,7 +182,11 @@ class WebCallEngine(EngineBase):
                 loop.call_soon_threadsafe(self._close_now)
             thread.join(5.0)
             raise TimeoutError(f"{self.name}: I/O loop did not start")
+
+        # Up only from STARTING: a stop during the start keeps the engine stopped
         with self.lock:
+            if self.state != EngineState.STARTING:
+                return
             self.state = EngineState.UP
             self.blocked_until = 0.0
             self.healthy = True
@@ -252,22 +256,27 @@ class WebCallEngine(EngineBase):
             self.tickets.clear()
         for ticket in pending:
             ticket.answer_all(UnitError(EngineStopped(f"{self.name} stopped")))
-        with contextlib.suppress(RuntimeError):
-            self.loop.call_soon_threadsafe(self.closing.set)
-        self.thread.join(5.0)
+
+        # The loop closes through _close_now, which also covers a loop still starting
+        if self.loop is not None:
+            with contextlib.suppress(RuntimeError):
+                self.loop.call_soon_threadsafe(self._close_now)
+        if self.thread is not None:
+            self.thread.join(5.0)
 
     def ready(self) -> bool:
+        """Up and past any block; with ``health_path``, an unhealthy unit (after a
+        ``UnitError``) also needs a health GET to succeed. A healthy unit is never probed."""
         with self.lock:
             if self.state != EngineState.UP or time.monotonic() < self.blocked_until:
                 return False
-            if self.health_path is None:
+            if self.health_path is None or self.healthy:
                 return True
-            healthy = self.healthy
             kick = not self.health_pending
             self.health_pending = True
         if kick:
             asyncio.run_coroutine_threadsafe(self._health(), self.loop)
-        return healthy
+        return False
 
     async def _health(self) -> None:
         ok = False
@@ -408,14 +417,17 @@ class WebCallEngine(EngineBase):
         if ticket.answered:
             return Cancelled()
         item = ticket.items[0]
+
+        # The rate token first, so a request waiting for one holds no connection
+        if self.bucket is not None:
+            await self.bucket.acquire()
+            with self.lock:
+                self.unpaced.discard(ticket.id)
+            if ticket.answered:
+                return Cancelled()
+
         pool = self._acquire()
         try:
-            if self.bucket is not None:
-                await self.bucket.acquire()
-                with self.lock:
-                    self.unpaced.discard(ticket.id)
-                if ticket.answered:
-                    return Cancelled()
             request = item.payload()
             response = await pool.client.request(
                 request.method,

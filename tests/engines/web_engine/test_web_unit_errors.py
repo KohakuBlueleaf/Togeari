@@ -16,6 +16,13 @@ from togeari.engines.web import WebCallEngine
 HOLD_S = 10.0
 
 
+def until(cond, timeout=10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while not cond() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return cond()
+
+
 class HoldServer(ThreadingHTTPServer):
     """A listen backlog for every request the tests hold at once."""
 
@@ -116,19 +123,21 @@ def test_cancel_mode_answers_every_request_in_flight_at_once(held_server):
         assert all(isinstance(r, UnitError) for _, r in got.values())
         assert {str(r.error) for _, r in got.values()} == {str(got[7][1].error)}
 
-        # The slots are free again and the counters show the spread
+        # The held requests still run and hold their slots; the counters show the spread
         load = engine.load()
-        assert load.running == 0
+        assert load.running == 7
         assert load.extra["unit_errors"] == 1
         assert load.extra["unit_error_items"] == 7
-        assert engine.capacity() == 16
+
+        # Released, they end, free their slots, and answer nothing a second time
+        release.set()
+        assert until(lambda: engine.load().running == 0)
+        time.sleep(0.2)
+        assert len(got) == 8
+        assert all(isinstance(r, UnitError) for _, r in got.values())
     finally:
         release.set()
         engine.stop()
-
-    # A released held request does not answer a second time
-    time.sleep(0.2)
-    assert len(got) == 8
 
 
 def test_block_mode_lets_running_requests_finish_and_takes_no_new_work(held_server):

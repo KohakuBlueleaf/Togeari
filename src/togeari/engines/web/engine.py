@@ -57,8 +57,9 @@ class WebCallEngine(EngineBase):
     until its ``retry_after`` has passed and, with ``health_path`` set, until a
     background GET of that path succeeds. ``on_unit_error`` sets what happens to
     the other requests in flight: ``"block"`` (default) lets them finish and
-    answer normally; ``"cancel"`` answers each with the same ``UnitError`` and
-    cancels its running request.
+    answer normally; ``"cancel"`` answers each with the same ``UnitError`` at once.
+    A running request is never aborted (cancel or unit error): it runs to its end with
+    its answer dropped, and its slot frees then.
 
     Connections are split over clients of at most ``pool_size`` connections
     each; a request goes to the client with the most free connections.
@@ -321,11 +322,12 @@ class WebCallEngine(EngineBase):
         return ticket
 
     def cancel(self, ticket: Any) -> None:
+        """Answer ``Cancelled`` now; a request not yet sent is never sent, one already sent runs
+        to its end with its answer dropped (its slot frees then)."""
         if not isinstance(ticket, Ticket) or not ticket.answer_all(Cancelled()):
             return
         with self.lock:
             self.counts["cancelled"] += 1
-        self._post(self._cancel, ticket)
 
     def _post(self, fn: Callable, ticket: Ticket) -> None:
         """Queue ``fn(ticket)`` for the I/O loop; one wake-up serves every queued call."""
@@ -358,10 +360,6 @@ class WebCallEngine(EngineBase):
             return
         ticket.handle = asyncio.get_running_loop().create_task(self._run(ticket))
 
-    def _cancel(self, ticket: Ticket) -> None:
-        if ticket.handle is not None:
-            ticket.handle.cancel()
-
     async def _run(self, ticket: Ticket) -> None:
         t0 = time.perf_counter()
         try:
@@ -371,6 +369,9 @@ class WebCallEngine(EngineBase):
         self._settle(ticket, result, time.perf_counter() - t0)
 
     async def _call(self, ticket: Ticket) -> Any:
+        # An answered ticket (cancelled, or taken by a unit error) sends nothing
+        if ticket.answered:
+            return Cancelled()
         item = ticket.items[0]
         pool = self._acquire()
         try:
@@ -378,6 +379,8 @@ class WebCallEngine(EngineBase):
                 await self.bucket.acquire()
                 with self.lock:
                     self.unpaced.discard(ticket.id)
+                if ticket.answered:
+                    return Cancelled()
             request = item.payload()
             response = await pool.client.request(
                 request.method,
@@ -410,8 +413,10 @@ class WebCallEngine(EngineBase):
         """Release the ticket's slot, record the outcome, answer it.
 
         A ``UnitError`` blocks the unit; under ``on_unit_error="cancel"`` it also answers
-        every other request in flight with the same error and cancels their running
-        requests. A ticket of an earlier run (answered by ``stop``) frees no slot of this run.
+        every other request in flight with the same error. Running requests are never
+        aborted (aborting one mid-connect leaves its pooled connection stuck): each runs to
+        its end, its answer is dropped if the ticket was answered, and its slot frees then. A
+        ticket of an earlier run (answered by ``stop``) frees no slot of this run.
         """
         with self.lock:
             current = self.tickets.pop(ticket.id, None) is not None
@@ -422,15 +427,11 @@ class WebCallEngine(EngineBase):
             ticket.answer([result])
             return
 
-        # Under "cancel", a unit error takes every other request in flight with it
+        # Under "cancel", a unit error answers every other request in flight at once
         others: list[Ticket] = []
         if isinstance(result, UnitError) and self.on_unit_error == "cancel":
             with self.lock:
-                others = list(self.tickets.values())
-                self.tickets.clear()
-                self.inflight -= len(others)
-                self.unpaced.clear()
-                self.counts["unit_error_items"] += len(others)
+                others = [t for t in self.tickets.values() if not t.answered]
 
         with self.lock:
             match result:
@@ -450,7 +451,8 @@ class WebCallEngine(EngineBase):
                     self.healthy = False
         ticket.answer([result])
 
-        # The other requests get the same error; their running work is cancelled
-        for other in others:
-            other.answer_all(result)
-            self._post(self._cancel, other)
+        # The other requests get the same error; their running work finishes unseen
+        spread = sum(other.answer_all(result) for other in others)
+        if spread:
+            with self.lock:
+                self.counts["unit_error_items"] += spread

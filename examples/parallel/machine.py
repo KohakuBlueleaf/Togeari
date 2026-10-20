@@ -5,7 +5,8 @@ that is still being decided, one strand per `each` item) fetch ahead, and every
 ready call is issued to the lane, which keeps all eight workers busy.
 
 Run it with ``python examples/parallel/machine.py``. Part 1 runs one city and
-draws when each call ran; part 2 runs four cities together.
+draws when each call ran; part 2 runs four cities together. It exits nonzero when a job
+fails or does not match the reference interpreter.
 """
 
 import sys
@@ -65,9 +66,20 @@ def draw(t0: float) -> None:
         print(f"  {label:<7} {node:<17} |{bar:<{width}}| {start - t0:5.2f}s")
 
 
-def run(cities: list) -> tuple[list, float, float, float]:
-    """Run ``cities``; returns the records, the run's start, its elapsed time and the summed
-    call time."""
+def verify(job_program, records: list, cities: list) -> list[str]:
+    """Jobs that failed or do not match the reference interpreter."""
+    by_city = {c["city"]: c for c in cities}
+    problems = []
+    for rec in records:
+        verdict = conform(job_program, rec, by_city[rec.key])
+        if not rec.ok or not verdict.ok:
+            problems.append(f"{rec.key}: {rec.failure or verdict.reason}")
+    return problems
+
+
+def run(cities: list, problems: list) -> tuple[list, float, float, float]:
+    """Run ``cities``, adding to ``problems``; returns the records, the run's start, its
+    elapsed time and the summed call time."""
     machine, _, sink = build()
     nodes.TIMELINE.clear()
     with machine:
@@ -78,17 +90,20 @@ def run(cities: list) -> tuple[list, float, float, float]:
         job_program = machine.code.entries["report"].region.job
 
     # Every job against the reference interpreter
-    by_city = {c["city"]: c for c in cities}
-    verdicts = [conform(job_program, r, by_city[r.key]) for r in sink.records]
-    print(f"  conformance: {sum(v.ok for v in verdicts)}/{len(verdicts)} jobs match the reference")
+    found = verify(job_program, sink.records, cities)
+    n = len(sink.records)
+    print(f"  conformance: {n - len(found)}/{n} jobs match the reference")
+    problems.extend(found)
     calls = sum(stop - start for _, _, start, stop in nodes.TIMELINE)
     return sink.records, t0, elapsed, calls
 
 
 def main() -> None:
+    problems: list[str] = []
+
     # Part 1: one job
     print("part 1: one city, one job")
-    records, t0, elapsed, calls = run(CITIES[:1])
+    records, t0, elapsed, calls = run(CITIES[:1], problems)
     draw(t0)
     rec = records[0]
     print(f"  summary: {rec.outputs['summary']}")
@@ -99,10 +114,14 @@ def main() -> None:
 
     # Part 2: four jobs together
     print("\npart 2: four cities, four jobs at once")
-    records, _, elapsed, calls = run(CITIES)
+    records, _, elapsed, calls = run(CITIES, problems)
     for rec in sorted(records, key=lambda r: r.key):
         print(f"  {rec.key:<7} {rec.outputs['summary']}")
     print(f"  four jobs: {elapsed:.2f}s; the same calls one after another: {calls:.2f}s")
+    for p in problems:
+        print("  ", p)
+    if problems:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

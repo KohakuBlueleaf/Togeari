@@ -3,14 +3,17 @@
 Shows the three lane kinds side by side: ``fetch`` on a stream lane (the engine
 queues), ``parse`` on a call lane (four workers), ``score`` on a batch lane
 (batches formed by the machine). Run it with ``python examples/trace_replay/machine.py``.
+It exits nonzero when a job fails or does not match the reference interpreter.
 """
 
 import json
+import sys
 from pathlib import Path
 
 from kohakunode import NodeLibrary
 
 from togeari import Inline, Lane, Machine, Use
+from togeari.conformance import conform
 from togeari.io import Iterable, Memory
 from togeari.policies import SizeOrWait, TargetLoad
 from togeari.testing import SimBatch, SimCall, SimStream
@@ -50,6 +53,7 @@ URLS = [{"url": f"site{i}/page{i * 7 % 13}"} for i in range(60)]
 
 
 def build():
+    """The machine, its source and its sink (the CLI's machine-module contract)."""
     fetcher = Lane([SimStream(name="fetcher", samples_ms=SAMPLES["fetch"])], name="fetch")
     parser = Lane([SimCall(name="parser", samples_ms=SAMPLES["parse"], capacity=4)], name="parse")
     scorer = Lane(
@@ -70,14 +74,27 @@ def build():
             "kir.std.*": Inline(),
         },
         admission=TargetLoad(fetcher, waiting=24),
+        record=1.0,
     )
     return machine, Iterable(URLS, key="url"), Memory()
+
+
+def verify(job_program, records: list) -> list[str]:
+    """Jobs that failed or do not match the reference interpreter."""
+    inputs = {u["url"]: u for u in URLS}
+    problems = []
+    for rec in records:
+        verdict = conform(job_program, rec, inputs[rec.key])
+        if not rec.ok or not verdict.ok:
+            problems.append(f"{rec.key}: {rec.failure or verdict.reason}")
+    return problems
 
 
 def main() -> None:
     machine, source, sink = build()
     with machine:
         summary = machine.run(source, sink)
+        job_program = machine.code.entries["review"].region.job
     kept = sum(1 for r in sink.records if r.outputs.get("keep"))
     print(f"{summary['jobs']} documents in {summary['seconds']:.2f}s, kept {kept}")
 
@@ -96,6 +113,15 @@ def main() -> None:
         print(
             f"  lane {name:<6} submitted {lane['submitted']:>4}  batch sizes {lane['batch_sizes']}"
         )
+
+    # Every job against the reference interpreter
+    problems = verify(job_program, sink.records)
+    n = len(sink.records)
+    print(f"conformance: {n - len(problems)}/{n} jobs match the reference")
+    for p in problems:
+        print("  ", p)
+    if problems:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -12,7 +12,8 @@ jobs) and the survey log go to ``runs/mixed/``; afterwards
 ``togeari conform runs/mixed/report`` (with ``examples/mixed`` on ``PYTHONPATH``)
 replays every job through the reference interpreter, and
 ``--reexecute features --reexecute classify --reexecute majority`` also runs those
-nodes again.
+nodes again. ``python examples/mixed/machine.py 12`` runs 12 stations instead of 120. It exits
+nonzero when a job fails, does not match the reference interpreter, or the log is out of order.
 """
 
 import math
@@ -152,13 +153,13 @@ def check_log(path: Path, records: dict) -> list[str]:
     return problems
 
 
-def main() -> None:
+def main(stations: int = N_STATIONS) -> None:
     shutil.rmtree(OUT, ignore_errors=True)
     OUT.mkdir(parents=True)
     nodes.LOG["path"] = OUT / "survey.log"
 
-    machine, source, sink = build()
-    stations = {s["station"]: s for s in source.items}
+    machine, source, sink = build(stations)
+    inputs = {s["station"]: s for s in source.items}
     with machine:
         summary = machine.run(source, sink)
         job_program = machine.code.entries["survey"].region.job
@@ -171,12 +172,14 @@ def main() -> None:
     print(f"... {len(records)} stations, {sum(not r.ok for r in records.values())} failed")
 
     # Every job against the reference interpreter, and the ordered log
-    verdicts = [conform(job_program, rec, stations[rec.key]) for rec in records.values()]
+    verdicts = [conform(job_program, rec, inputs[rec.key]) for rec in records.values()]
     print(f"conformance: {sum(v.ok for v in verdicts)}/{len(verdicts)} jobs match the reference")
     problems = check_log(OUT / "survey.log", records)
     print(f"ordered log: {len(problems)} problem(s)")
     for p in problems[:5]:
         print("  ", p)
+    failed = [key for key, rec in records.items() if not rec.ok]
+    mismatched = [rec.key for rec, v in zip(records.values(), verdicts, strict=True) if not v.ok]
 
     # Where the time went
     print(f"{summary['jobs']} jobs, {summary['calls']} node calls in {summary['seconds']:.2f}s")
@@ -185,7 +188,10 @@ def main() -> None:
             f"  lane {name:<9} submitted {lane['submitted']:>5}  batch sizes {lane['batch_sizes']}"
         )
     print(f"report: {OUT / 'report'}")
+    if failed or mismatched or problems:
+        print(f"failed {failed}, not matching the reference {mismatched}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    main()
+    main(int(sys.argv[1]) if len(sys.argv) > 1 else N_STATIONS)

@@ -55,13 +55,16 @@ def replay_dir(
     runs: list[str] | None = None,
     reexecute: list[str] | None = None,
     step_budget: int = STEP_BUDGET,
+    engine_errors: bool = True,
 ) -> Iterator[Replayed]:
     """Every recorded job of a directory (or of ``runs``), replayed against the program it ran.
 
     Before a run's first job, the run's digest providers are imported, so input
     digests are computed as in the run. With ``reexecute`` (node names), those
     nodes run again and must give their recorded results; every other node
-    replays its record. ``step_budget`` bounds the reference's instructions per job.
+    replays its record. ``engine_errors``: a recorded failure of a re-executed
+    node that the node itself does not raise counts as an engine failure (True)
+    or a mismatch (False). ``step_budget`` bounds the reference's instructions per job.
     """
     mode = "reexecute" if reexecute else "replay"
     pure = set(reexecute or ())
@@ -107,6 +110,7 @@ def replay_dir(
             job["inputs"] or {},
             mode=mode,
             pure=pure,
+            engine_errors=engine_errors,
             step_budget=step_budget,
         )
         yield Replayed(job["key"], name, verdict, job["weak"], run, weak_digests)

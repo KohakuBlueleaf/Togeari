@@ -7,8 +7,9 @@
   env.json           interpreter, OS, package versions, unit specs
   metrics.jsonl      one counters snapshot per interval
   events.jsonl[.zst] every bus event the plugin receives (zstd when zstandard is installed)
-  programs.json      programs of the recorded jobs, by semantic hash
-  runs/<run>/        conformance records of the recorded jobs (record.kv, or record.pkl)
+  programs/<hash>.json  programs of the recorded jobs, one file per semantic hash
+  runs/<run>/        run.json and the conformance records of the recorded jobs (record.kv,
+                     or record.pkl)
   summary.json       totals, throughput, slowest lanes, top waits, plugin hook time, weak
                      digests and weak values, records written and tasks dropped by full
                      writer queues
@@ -19,9 +20,10 @@ thread whose queue holds at most ``queue_size`` tasks; tasks past it are dropped
 and counted. The summary does not queue: each counters snapshot replaces one
 pending summary, which the writer writes before its next task or when idle, so
 an event flood never drops it. ``summary.json`` is written as a temporary file,
-then replaced (retried while a reader holds it open), by one writer at a time; at
-unload the writer is stopped within ``close_s`` before the files close and the
-last summary is written.
+then replaced (retried while a reader holds it open), by one writer at a time. At
+stop the plugin unloads by one deadline, ``close_s`` from the start of its unload,
+shared by the delivery of its queued events, the recorder's drain and the writer's
+drain; then the files close and the last summary is written.
 """
 
 import json
@@ -34,7 +36,7 @@ from typing import Any
 from togeari.core.contracts.io import JobRecord
 from togeari.core.plugin.base import BasePlugin, PluginContext
 from togeari.plugins.common.machine import dumps, plain
-from togeari.plugins.common.worker import Worker
+from togeari.plugins.common.worker import Worker, left
 from togeari.plugins.metrics.counters import Counters
 from togeari.plugins.record.recorder import Recorder
 from togeari.plugins.report.env import environment
@@ -133,6 +135,7 @@ class RunReport(BasePlugin):
         self.recorder.on_load(ctx)
 
     def on_unload(self) -> None:
+        deadline = self.unload_by()
         if self.counters is not None:
             if self._on_counters in self.counters.watchers:
                 self.counters.watchers.remove(self._on_counters)
@@ -140,14 +143,18 @@ class RunReport(BasePlugin):
                 self.counters.on_unload()
             self.counters = None
 
-        # Drain the recorder and the writer, each within close_s
+        # Drain the recorder and the writer, both by the unload's one deadline
         archive = self.recorder.writer
-        self.recorder.on_unload()
+        self.recorder.unload_deadline = deadline
+        try:
+            self.recorder.on_unload()
+        finally:
+            self.recorder.unload_deadline = None
         records = self._records(archive)
         worker, self.worker = self.worker, None
         overran = False
         if worker is not None:
-            worker.close(timeout=self.close_s)
+            worker.close(timeout=left(deadline, self.close_s))
             records["writer_dropped"] = worker.dropped
             overran = worker.thread.is_alive()
             if overran:
@@ -169,7 +176,7 @@ class RunReport(BasePlugin):
 
         # An overrun writer skips its remaining tasks, then ends
         if overran:
-            worker.close(timeout=self.close_s)
+            worker.close(timeout=left(deadline, 0.0))
 
     def contribute_queries(self) -> dict:
         return {"run_report": lambda m: self.status()}
@@ -280,12 +287,15 @@ class RunReport(BasePlugin):
         totals = ctx.summary(seconds)
         stats = ctx.stats()
         weak = stats.get("weak_digests", {})
+
+        # Lanes by their p90 wait, and each unit's busy share
         lanes = (self.last or {}).get("lanes", {})
         waits = sorted(
             ((name, ln.get("wait_ms_p90")) for name, ln in lanes.items()),
             key=lambda x: -(x[1] or 0.0),
         )
         busy = {u["name"]: u["busy_s"] / seconds if seconds > 0 else 0.0 for u in ctx.units()}
+
         return {
             **totals,
             "slowest_lanes": [name for name, _ in waits],

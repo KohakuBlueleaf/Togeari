@@ -18,6 +18,8 @@ def add(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--lib", action="append", default=[], help="node libraries as module:attr")
     p.add_argument("--max-fail", type=int, default=20, help="print at most N failures")
     p.add_argument("--run", action="append", default=[], help="replay only these run ids")
+
+    # What the replay re-executes, and how it counts engine failures
     p.add_argument(
         "--reexecute",
         action="append",
@@ -25,6 +27,15 @@ def add(sub: argparse._SubParsersAction) -> None:
         metavar="NODE",
         help="run this node again and compare with its record (repeatable)",
     )
+    p.add_argument(
+        "--engine-errors",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="a recorded failure of a re-executed node that the node does not raise is an"
+        " engine failure (default), or with --no-engine-errors a mismatch",
+    )
+
+    # The reference's per-job instruction bound
     p.add_argument(
         "--step-budget",
         type=int,
@@ -44,7 +55,12 @@ def run(args: argparse.Namespace, out: TextIO) -> int:
 
     # Replay every recorded job
     replayed = replay_dir(
-        args.dir, args.lib, args.run or None, args.reexecute or None, args.step_budget
+        args.dir,
+        args.lib,
+        args.run or None,
+        args.reexecute or None,
+        args.step_budget,
+        args.engine_errors,
     )
     for r in replayed:
         n_weak = sum(r.weak_digests.values())

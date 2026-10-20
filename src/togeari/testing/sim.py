@@ -105,6 +105,7 @@ class SimEngine(EngineBase):
         self.tail = tail
         self.cap = capacity
         self.max_batch = max_batch
+
         # One seeded generator per thread: delays on the submitting thread, injected
         # failures on the timer thread
         self.rng_delay = random.Random(f"{seed}/delay")
@@ -114,6 +115,8 @@ class SimEngine(EngineBase):
         self.outages = outages or []
         self.speed = speed
         self.samples = [s / 1000.0 for s in samples_ms] if samples_ms else None
+
+        # The timer clock, and inflight tickets and counts under ``lock``
         self.clock: _Clock | None = None
         self.t0 = 0.0
         self.inflight = 0

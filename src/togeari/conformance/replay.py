@@ -223,6 +223,8 @@ def conform(
     if rec is None:
         return Verdict(False, "job was not recorded")
     status, ref, notes = replay(job_program, rec, inputs, mode, pure, engine_errors, step_budget)
+
+    # A replay mismatch, or both sides failing
     match status:
         case "mismatch":
             return Verdict(False, ref, details=notes)
@@ -236,6 +238,8 @@ def conform(
             ):
                 return Verdict(False, "failures differ", ref, mine, notes)
             return Verdict(True, "both failed alike", ref, mine, notes)
+
+    # The reference succeeded: the machine must have, with the same outputs
     if not job_record.ok:
         reason = "machine failed, reference succeeded"
         return Verdict(False, reason, ref, job_record.failure, notes)

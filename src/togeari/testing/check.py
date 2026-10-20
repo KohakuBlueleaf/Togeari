@@ -13,6 +13,9 @@ from one. Samples must succeed; ``failing_items`` must fail with
 waits up to ``kill_wait_s`` for ``ready()`` False or ``capacity()`` 0, and the
 next submit must give ``UnitError``.
 
+B8 (equal payloads are separate requests) is not checked: the engine interface
+does not show how many backend requests an engine makes.
+
 B3 instruments the engine: every ``submit``, ``cancel``, ``capacity``,
 ``load``, ``key`` and ``wake_at`` call is recorded with its thread, and a
 heavy adapter's ``prepare`` (``light`` False) with its thread. A probe holds
@@ -100,7 +103,9 @@ def same(a: Any, b: Any, tolerance: Any = None) -> bool:
     if callable(tolerance):
         return bool(tolerance(a, b))
     tol = float(tolerance or 0.0)
+
     match a:
+        # Containers: element by element
         case dict():
             return (
                 isinstance(b, dict)
@@ -113,10 +118,14 @@ def same(a: Any, b: Any, tolerance: Any = None) -> bool:
                 and len(a) == len(b)
                 and all(same(x, y, tol) for x, y in zip(a, b))
             )
+
+        # Scalars: bools exact, numbers within the tolerance
         case bool():
             return a == b
         case int() | float():
             return isinstance(b, (int, float)) and abs(a - b) <= tol * max(1.0, abs(b))
+
+        # Arrays as lists; anything else by ==
         case _ if hasattr(a, "tolist") and hasattr(b, "tolist"):
             return same(a.tolist(), b.tolist(), tol)
         case _:

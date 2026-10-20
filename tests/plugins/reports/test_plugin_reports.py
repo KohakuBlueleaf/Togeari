@@ -8,6 +8,7 @@ from kohakunode.testing import LIB
 from plugin_programs import PROGRAM, jobs, read_jsonl
 
 from conftest import build, run_jobs
+from togeari.cli import replay as replay_module
 from togeari.cli.loading import resolve
 from togeari.cli.replay import replay_dir
 from togeari.plugins import Archive, Counters, Perfetto, Recorder, RunReport
@@ -172,6 +173,28 @@ def test_recorder_keeps_each_run_with_its_own_program(tmp_path):
     # One run alone
     first = archive.runs()[0]
     assert len([r for r in replay_dir(out, runs=[first])]) == 6
+
+
+@pytest.mark.parametrize("engine_errors", [True, False])
+def test_replay_dir_passes_engine_errors_to_every_job(tmp_path, monkeypatch, engine_errors):
+    out = tmp_path / "rec"
+    m = build(PROGRAM, "main", plugins=[Recorder(out)])
+    try:
+        run_jobs(m, jobs(3))
+    finally:
+        m.stop()
+
+    seen = []
+    real = replay_module.conform
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs["engine_errors"])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(replay_module, "conform", spy)
+    verdicts = [r.verdict for r in replay_dir(out, engine_errors=engine_errors)]
+    assert all(v.ok for v in verdicts), verdicts
+    assert seen == [engine_errors] * 3
 
 
 def test_two_writers_of_one_directory_keep_every_program(tmp_path):

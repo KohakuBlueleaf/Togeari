@@ -1,4 +1,5 @@
-"""togeari run stops the machine when adding its report fails; conform takes a step budget."""
+"""togeari run stops the machine when adding its report fails; conform takes a step budget and
+the engine-errors choice."""
 
 import argparse
 import io
@@ -30,19 +31,27 @@ def test_run_stops_the_machine_when_adding_the_report_fails(monkeypatch, tmp_pat
     assert machine.stopped
 
 
-def test_conform_passes_its_step_budget_through(monkeypatch):
+def conform_with(monkeypatch, *argv: str) -> dict:
+    """What `togeari conform records ARGV` passes to ``replay_dir``."""
     seen = {}
 
-    def fake_replay_dir(path, libs, runs, reexecute, step_budget):
-        seen["budget"] = step_budget
+    def fake_replay_dir(path, libs, runs, reexecute, step_budget, engine_errors=None):
+        seen.update(budget=step_budget, engine_errors=engine_errors)
         return iter(())
 
     monkeypatch.setattr(conform, "replay_dir", fake_replay_dir)
     parser = argparse.ArgumentParser()
     conform.add(parser.add_subparsers())
-    args = parser.parse_args(["conform", "records", "--step-budget", "5000"])
-    conform.run(args, io.StringIO())
-    assert seen["budget"] == 5000
+    conform.run(parser.parse_args(["conform", "records", *argv]), io.StringIO())
+    return seen
 
-    default = parser.parse_args(["conform", "records"])
-    assert default.step_budget == STEP_BUDGET
+
+def test_conform_passes_its_step_budget_through(monkeypatch):
+    assert conform_with(monkeypatch, "--step-budget", "5000")["budget"] == 5000
+    assert conform_with(monkeypatch)["budget"] == STEP_BUDGET
+
+
+def test_conform_passes_engine_errors_through(monkeypatch):
+    assert conform_with(monkeypatch)["engine_errors"] is True
+    assert conform_with(monkeypatch, "--engine-errors")["engine_errors"] is True
+    assert conform_with(monkeypatch, "--no-engine-errors")["engine_errors"] is False

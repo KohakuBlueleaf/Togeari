@@ -13,6 +13,7 @@ from pathlib import Path
 from togeari.core.contracts.digest import digest_providers
 from togeari.core.contracts.io import JobRecord
 from togeari.core.plugin.base import BasePlugin, PluginContext
+from togeari.plugins.common.worker import left
 from togeari.plugins.record.archive import ArchiveWriter, library_refs, program_info
 
 
@@ -20,8 +21,8 @@ class Recorder(BasePlugin):
     """Writes the conformance records of every job the machine records into ``path``.
 
     At most ``queue_size`` records wait for the writer; records past it are
-    dropped and counted (``recorder`` query, ``dropped``). At unload the writer drains
-    within about ``close_s`` (twice it at most); records still queued then are dropped.
+    dropped and counted (``recorder`` query, ``dropped``). At unload the writer drains and
+    ends by the unload's deadline (``close_s``); records still queued then are dropped.
     """
 
     name = "recorder"
@@ -55,7 +56,7 @@ class Recorder(BasePlugin):
 
     def on_unload(self) -> None:
         if self.writer is not None:
-            self.writer.close(timeout=self.close_s)
+            self.writer.close(timeout=left(self.unload_by(), self.close_s))
             self.writer = None
 
     def contribute_queries(self) -> dict:

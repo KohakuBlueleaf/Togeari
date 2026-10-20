@@ -13,10 +13,12 @@ Tracks:
 The file is a JSON array written as events arrive; the closing bracket is
 written at unload, and trace viewers also load the file without it. The
 writer holds at most ``queue_size`` tasks; tasks past it are dropped and
-counted (``perfetto`` query). At unload the writer drains within about ``close_s``
-(twice it at most); then the file closes and tasks still queued write nothing.
+counted (``perfetto`` query). At stop the plugin unloads by one deadline, ``close_s``
+from the start of its unload, shared by the delivery of its queued events and the writer's
+drain; then the file closes and tasks still queued write nothing.
 """
 
+import functools
 import json
 import logging
 import threading
@@ -26,7 +28,7 @@ from typing import Any
 
 from togeari.core.plugin.base import BasePlugin, PluginContext
 from togeari.plugins.common.machine import json_default
-from togeari.plugins.common.worker import Worker
+from togeari.plugins.common.worker import Worker, left
 from togeari.plugins.metrics.counters import Counters
 
 PIDS = {"dispatcher": 1, "lanes": 2, "units": 3, "jobs": 4}
@@ -53,21 +55,31 @@ class Perfetto(BasePlugin):
         self.written = 0
         self.dropped = 0
 
-        # Every file write holds this lock; once closed, a task writes nothing
+        # Every file write holds this lock; once closed, or from an earlier load, a task
+        # writes nothing
         self._io = threading.Lock()
         self._closed = False
+        self._gen = 0
 
     # ------------------------------------------------------------ lifecycle
     def on_load(self, ctx: PluginContext) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.t0 = time.time()
         self.tids.clear()
-        self._closed = False
-        self._f = self.path.open("w", encoding="utf-8")
-        self._f.write("[\n")
-        self._first = True
+
+        # A new generation: a writer of an earlier load writes nothing into this file
+        with self._io:
+            self._gen += 1
+            self._closed = False
+            self._f = self.path.open("w", encoding="utf-8")
+            self._f.write("[\n")
+            self._first = True
+        gen = self._gen
         self.worker = Worker(
-            f"togeari-{self.name}", self._handle, self._flush, maxsize=self.queue_size
+            f"togeari-{self.name}",
+            functools.partial(self._handle, gen),
+            functools.partial(self._flush, gen),
+            maxsize=self.queue_size,
         )
 
         # Process names
@@ -86,12 +98,13 @@ class Perfetto(BasePlugin):
             self.counters.on_machine_stop()
 
     def on_unload(self) -> None:
+        deadline = self.unload_by()
         if self.counters is not None:
             self.counters.on_unload()
             self.counters = None
         worker, self.worker = self.worker, None
         if worker is not None:
-            worker.close(timeout=self.close_s)
+            worker.close(timeout=left(deadline, self.close_s))
             self.dropped = worker.dropped
 
         # The array closes; a writer still running skips its remaining tasks
@@ -103,7 +116,7 @@ class Perfetto(BasePlugin):
             log.warning(
                 "perfetto writer did not finish in %ss; queued events dropped", self.close_s
             )
-            worker.close(timeout=self.close_s)
+            worker.close(timeout=left(deadline, 0.0))
 
     def contribute_queries(self) -> dict:
         return {"perfetto": lambda m: self.status()}
@@ -131,9 +144,9 @@ class Perfetto(BasePlugin):
         self._f.write(sep + json.dumps(ev, default=json_default))
         self.written += 1
 
-    def _flush(self) -> None:
+    def _flush(self, gen: int) -> None:
         with self._io:
-            if not self._closed:
+            if gen == self._gen and not self._closed:
                 self._f.flush()
 
     def _unit_tid(self, unit: str) -> int:
@@ -156,9 +169,9 @@ class Perfetto(BasePlugin):
             {"ph": "C", "name": name, "pid": PIDS[process], "tid": 0, "ts": ts, "args": args}
         )
 
-    def _handle(self, task: tuple) -> None:
+    def _handle(self, gen: int, task: tuple) -> None:
         with self._io:
-            if not self._closed:
+            if gen == self._gen and not self._closed:
                 self._write_task(task)
 
     def _write_task(self, task: tuple) -> None:
@@ -195,7 +208,10 @@ class Perfetto(BasePlugin):
         ts = self._ts(ev.t)
         f = ev.fields
         kind = ev.kind
+
+        # One trace record per event family
         match kind.split(".")[0]:
+            # Job begin / end as an async slice
             case "job":
                 ph = "b" if kind == "job.admit" else "e"
                 self._write(
@@ -210,6 +226,8 @@ class Perfetto(BasePlugin):
                         "args": {k: v for k, v in f.items() if k != "stats"},
                     }
                 )
+
+            # Statement and fault events as instants on the job's slice
             case "stmt" | "fault" if f.get("job") is not None:
                 self._write(
                     {
@@ -223,6 +241,8 @@ class Perfetto(BasePlugin):
                         "args": f,
                     }
                 )
+
+            # A unit's service time as a complete slice on its track
             case "lane" if kind == "lane.result" and f.get("service_s") is not None:
                 self._write(
                     {
@@ -235,6 +255,8 @@ class Perfetto(BasePlugin):
                         "args": f,
                     }
                 )
+
+            # Other lane and unit events as instants on the unit's track
             case "lane" | "unit" if f.get("unit") is not None:
                 self._write(
                     {
@@ -247,6 +269,8 @@ class Perfetto(BasePlugin):
                         "args": f,
                     }
                 )
+
+            # Machine events as global instants
             case "machine":
                 self._write(
                     {

@@ -34,6 +34,8 @@ def machine_spec(ctx: PluginContext) -> dict:
     code = ctx.code
     built = ctx.construction()
     knobs = ctx.knobs
+
+    # Every loaded program region
     regions = {
         r.index: {
             "source": r.job.source,
@@ -48,6 +50,7 @@ def machine_spec(ctx: PluginContext) -> dict:
         }
         for r in code.regions
     }
+
     return {
         "programs": regions,
         "entries": {

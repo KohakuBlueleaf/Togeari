@@ -31,3 +31,22 @@ def test_unload_stops_a_slow_writer_within_close_s(tmp_path):
     assert text.rstrip().endswith("]")
     time.sleep(0.3)
     assert path.read_text(encoding="utf-8") == text
+
+
+def test_a_writer_of_an_earlier_load_writes_nothing_into_the_next_file(tmp_path):
+    path = tmp_path / "trace.json"
+    trace = Perfetto(path, sample_s=10.0, close_s=0.2)
+    m = build(PROGRAM, "main", plugins=[trace])
+    run_jobs(m, jobs(1))
+    old = trace.worker
+    m.stop()
+
+    # Loaded again (a new machine), then the first load's writer runs a late task
+    m2 = build(PROGRAM, "main", plugins=[trace])
+    try:
+        time.sleep(0.3)
+        before = path.read_text(encoding="utf-8")
+        old.handle(("raw", {"ph": "M", "name": "late"}))
+        assert path.read_text(encoding="utf-8") == before
+    finally:
+        m2.stop()

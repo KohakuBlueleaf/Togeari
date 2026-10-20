@@ -3,6 +3,7 @@
 import logging
 import queue
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -69,10 +70,18 @@ class Worker:
             log.warning("plugin worker task failed", exc_info=True)
 
     def close(self, timeout: float = 10.0) -> None:
-        """Finish the queued tasks, then stop."""
+        """Finish the queued tasks, then stop, all within ``timeout``."""
+        deadline = time.monotonic() + timeout
         try:
-            self.q.put(_STOP, timeout=timeout)
+            self.q.put(_STOP, timeout=max(0.0, timeout))
         except queue.Full:
             log.warning("plugin worker %s did not drain in %ss", self.thread.name, timeout)
             return
-        self.thread.join(timeout=timeout)
+        self.thread.join(timeout=left(deadline))
+
+
+def left(deadline: float | None, default: float = 10.0) -> float:
+    """Seconds until ``deadline`` (monotonic), at least 0; ``default`` when there is none."""
+    if deadline is None:
+        return default
+    return max(0.0, deadline - time.monotonic())

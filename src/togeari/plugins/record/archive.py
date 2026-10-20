@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from togeari.core.contracts.digest import digest_providers
-from togeari.plugins.common.worker import Worker
+from togeari.plugins.common.worker import Worker, left
 
 log = logging.getLogger("togeari.plugins")
 
@@ -249,6 +249,9 @@ class ArchiveWriter:
                     self.weak_values += len(weak)
 
     def close(self, timeout: float = 10.0) -> None:
+        """Drain the writer, close the record files, and end the writer, all within
+        ``timeout``."""
+        deadline = time.monotonic() + timeout
         self.worker.close(timeout=timeout)
 
         # The record files close; a writer still running skips its remaining tasks
@@ -259,7 +262,7 @@ class ArchiveWriter:
                 self.records = None
         if self.worker.thread.is_alive():
             log.warning("archive writer did not finish in %ss; queued records dropped", timeout)
-            self.worker.close(timeout=timeout)
+            self.worker.close(timeout=left(deadline))
 
 
 class Archive:

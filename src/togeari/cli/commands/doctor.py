@@ -4,6 +4,7 @@ earlier runs.
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from typing import TextIO
@@ -33,6 +34,7 @@ else:
 """
 
 WINDOWS_PROCESSES = (
+    "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
     "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine } | "
     'ForEach-Object { "$($_.ProcessId)`t$($_.CommandLine)" }'
 )
@@ -46,7 +48,11 @@ def devices(timeout: float = 120.0) -> dict:
     """Devices as torch sees them, asked in a child interpreter."""
     try:
         res = subprocess.run(
-            [sys.executable, "-c", DEVICES], capture_output=True, text=True, timeout=timeout
+            [sys.executable, "-c", DEVICES],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
         )
     except subprocess.TimeoutExpired:
         return {"error": f"no answer in {timeout}s"}
@@ -56,15 +62,19 @@ def devices(timeout: float = 120.0) -> dict:
 
 
 def processes() -> dict[int, str] | None:
-    """pid -> command line of every process the OS lists; None when the listing failed."""
+    """pid -> command line of every process the OS lists; None when the listing failed (an
+    error, a nonzero exit, or a listing without this process itself)."""
     match sys.platform:
         case "win32":
             cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_PROCESSES]
         case _:
             # Unlimited width: ps cuts lines at 80 columns when not writing to a terminal
             cmd = ["ps", "-eww", "-o", "pid=,args="]
+    # UTF-8 on both ends; a command line in any other encoding is kept with replacements
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        res = subprocess.run(
+            cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=60
+        )
     except (OSError, subprocess.TimeoutExpired):
         return None
     if res.returncode != 0:
@@ -74,7 +84,9 @@ def processes() -> dict[int, str] | None:
         pid, _, cmdline = line.strip().replace("\t", " ", 1).partition(" ")
         if pid.isdigit():
             found[int(pid)] = cmdline.strip()
-    return found
+
+    # A listing that misses this process is empty or garbled: not trusted
+    return found if os.getpid() in found else None
 
 
 def worker_processes(procs: dict[int, str] | None) -> tuple[list[dict], list[dict]]:

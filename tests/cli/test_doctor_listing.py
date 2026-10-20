@@ -32,6 +32,18 @@ def test_a_failed_listing_forgets_no_worker_and_the_command_fails(tmp_path, monk
     assert (tmp_path / "4242.json").exists()
 
 
+def test_a_listing_without_this_process_is_a_failed_listing(tmp_path, monkeypatch):
+    def empty(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 0, stdout="", stderr="")
+
+    monkeypatch.setattr(registry, "REGISTRY", tmp_path)
+    monkeypatch.setattr(doctor.subprocess, "run", empty)
+    _register(4242, 1)
+    assert doctor.processes() is None
+    doctor.worker_processes(doctor.processes())
+    assert (tmp_path / "4242.json").exists()
+
+
 def test_a_listing_that_raises_is_a_failed_listing(monkeypatch):
     def raising(*args, **kwargs):
         raise OSError("no ps")

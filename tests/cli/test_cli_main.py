@@ -5,6 +5,7 @@ import io
 import json
 import multiprocessing
 import os
+import subprocess
 import sys
 import textwrap
 import time
@@ -210,6 +211,18 @@ def test_doctor_lists_a_spawned_child_with_its_command_line():
         assert "multiprocessing" in procs.get(child.pid, ""), procs.get(child.pid)
     finally:
         child.kill()
+
+
+def test_doctor_lists_a_non_ascii_command_line_as_written():
+    marker = "togeari-doctor-ü-テスト-é"
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", marker])
+    try:
+        procs = doctor.processes()
+        assert procs is not None
+        assert marker in procs.get(child.pid, ""), procs.get(child.pid)
+    finally:
+        child.kill()
+        child.wait()
 
 
 def test_doctor_worker_entries_are_the_child_modules():

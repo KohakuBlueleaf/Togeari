@@ -31,7 +31,8 @@ def test_run_report_writes_every_file(tmp_path, shared_counters):
     plugins = [RunReport(out, compress=False, interval_s=0.05)]
     if shared_counters:
         plugins.append(Counters(interval_s=0.05))
-    m = build(PROGRAM, "main", n_units=2, latency_ms=1.0, plugins=plugins, events="all")
+    # Calls of 10 ms keep the run many snapshot intervals long on any runner
+    m = build(PROGRAM, "main", n_units=2, latency_ms=10.0, plugins=plugins, events="all")
     try:
         run_jobs(m, jobs(25))
         calls = m.dispatcher.stats["calls"]

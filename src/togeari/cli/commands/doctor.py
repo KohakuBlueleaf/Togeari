@@ -61,7 +61,8 @@ def processes() -> dict[int, str]:
         case "win32":
             cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_PROCESSES]
         case _:
-            cmd = ["ps", "-eo", "pid=,args="]
+            # Unlimited width: ps cuts lines at 80 columns when not writing to a terminal
+            cmd = ["ps", "-eww", "-o", "pid=,args="]
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired):

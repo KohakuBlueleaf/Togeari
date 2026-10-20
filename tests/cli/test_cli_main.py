@@ -5,7 +5,6 @@ import io
 import json
 import multiprocessing
 import os
-import subprocess
 import sys
 import textwrap
 import time
@@ -165,47 +164,52 @@ def test_doctor_reports_versions():
     assert "kohakunode" in out and "devices" in out and "leftover togeari worker" in out
 
 
-def _exited_pid() -> int:
-    proc = subprocess.Popen([sys.executable, "-c", "pass"])
-    proc.wait(60)
-    return proc.pid
-
-
 def _register(pid: int, parent: int, entry: str = doctor.WORKER_ENTRIES[0]) -> None:
     info = {"pid": pid, "parent": parent, "entry": entry, "started": time.time()}
     (registry.REGISTRY / f"{pid}.json").write_text(json.dumps(info), encoding="utf-8")
 
 
+SPAWNED = (
+    "python -c from multiprocessing.spawn import spawn_main; spawn_main() --multiprocessing-fork"
+)
+
+
 def test_doctor_flags_only_leftover_worker_processes(tmp_path, monkeypatch):
     monkeypatch.setattr(registry, "REGISTRY", tmp_path)
-    spawn = multiprocessing.get_context("spawn")
-    gone = _exited_pid()
+    parent, leftover, live, stranger, plain, gone = 100, 201, 202, 203, 204, 205
 
-    # Not workers: a process whose arguments mention togeari, a registered spawn child of
-    # an unknown entry point
-    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "togeari"])
-    stranger = spawn.Process(target=time.sleep, args=(60,), daemon=True)
+    # The process table: a running parent and four children; the leftover's parent is gone
+    procs = {
+        parent: "python -m pytest",
+        leftover: SPAWNED,
+        live: SPAWNED,
+        stranger: SPAWNED,
+        plain: "python -c import time; time.sleep(60) togeari",
+    }
+    _register(leftover, 999)
+    _register(live, parent)
+    _register(stranger, 999, entry="somebody.else.child")
+    _register(plain, 999)
+    _register(gone, parent)
 
-    # Workers: one whose parent exited (leftover), one whose parent runs (live), one dead
-    leftover = spawn.Process(target=time.sleep, args=(60,), daemon=True)
-    live = spawn.Process(target=time.sleep, args=(60,), daemon=True)
-    procs = [stranger, leftover, live]
-    for p in procs:
-        p.start()
+    found, running = doctor.worker_processes(procs)
+    assert [w["pid"] for w in found] == [leftover]
+    assert [w["pid"] for w in running] == [live]
+
+    # A registered pid the table lacks has its file removed; the others keep theirs
+    assert not (tmp_path / f"{gone}.json").exists()
+    assert (tmp_path / f"{leftover}.json").exists()
+
+
+def test_doctor_lists_a_spawned_child_with_its_command_line():
+    child = multiprocessing.get_context("spawn").Process(target=time.sleep, args=(60,), daemon=True)
+    child.start()
     try:
-        _register(stranger.pid, gone, entry="somebody.else.child")
-        _register(leftover.pid, gone)
-        _register(live.pid, os.getpid())
-        _register(gone, os.getpid())
-
-        found, running = doctor.worker_processes(doctor.processes())
-        assert [w["pid"] for w in found] == [leftover.pid]
-        assert [w["pid"] for w in running] == [live.pid]
-        assert not (tmp_path / f"{gone}.json").exists()
+        procs = doctor.processes()
+        assert os.getpid() in procs
+        assert "multiprocessing" in procs.get(child.pid, ""), procs.get(child.pid)
     finally:
-        other.kill()
-        for p in procs:
-            p.kill()
+        child.kill()
 
 
 def test_doctor_worker_entries_are_the_child_modules():

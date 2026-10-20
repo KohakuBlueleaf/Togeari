@@ -108,15 +108,18 @@ class Perfetto(BasePlugin):
             self.dropped = worker.dropped
 
         # The array closes; a writer still running skips its remaining tasks
+        overran = worker is not None and worker.thread.is_alive()
+        if worker is not None:
+            worker.abandon()
         with self._io:
             self._closed = True
             self._f.write("\n]\n")
             self._f.close()
-        if worker is not None and worker.thread.is_alive():
+        if overran:
             log.warning(
                 "perfetto writer did not finish in %ss; queued events dropped", self.close_s
             )
-            worker.close(timeout=left(deadline, 0.0))
+            worker.thread.join(timeout=left(deadline, 0.0))
 
     def contribute_queries(self) -> dict:
         return {"perfetto": lambda m: self.status()}

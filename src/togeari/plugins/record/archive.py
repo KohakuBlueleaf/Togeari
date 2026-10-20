@@ -255,14 +255,16 @@ class ArchiveWriter:
         self.worker.close(timeout=timeout)
 
         # The record files close; a writer still running skips its remaining tasks
+        overran = self.worker.thread.is_alive()
+        self.worker.abandon()
         with self._io:
             self._closed = True
             if self.records is not None:
                 self.records.close()
                 self.records = None
-        if self.worker.thread.is_alive():
+        if overran:
             log.warning("archive writer did not finish in %ss; queued records dropped", timeout)
-            self.worker.close(timeout=left(deadline))
+            self.worker.thread.join(timeout=left(deadline))
 
 
 class Archive:

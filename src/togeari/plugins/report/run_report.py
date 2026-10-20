@@ -157,6 +157,7 @@ class RunReport(BasePlugin):
             worker.close(timeout=left(deadline, self.close_s))
             records["writer_dropped"] = worker.dropped
             overran = worker.thread.is_alive()
+            worker.abandon()
             if overran:
                 log.warning(
                     "run_report writer did not finish in %ss; %d tasks left unwritten",
@@ -176,7 +177,7 @@ class RunReport(BasePlugin):
 
         # An overrun writer skips its remaining tasks, then ends
         if overran:
-            worker.close(timeout=left(deadline, 0.0))
+            worker.thread.join(timeout=left(deadline, 0.0))
 
     def contribute_queries(self) -> dict:
         return {"run_report": lambda m: self.status()}

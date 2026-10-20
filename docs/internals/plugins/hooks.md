@@ -11,7 +11,7 @@
 | `add(plugin)` | appends; renames a duplicate name to `name#<n>`; sorts by `priority` (lower first); creates its `PluginContext` |
 | `collect_policies()` | every plugin's `contribute_policies()` merged by name; called by `Machine` before any program is bound, so lanes, `admission=`, `issue=` and `set_knob` may name them |
 | `load(plugin)` | `on_load(ctx)`; when it raises, the plugin's `on_unload` runs (releasing what `on_load` took), the plugin stays disabled and `load` returns `False`; otherwise enabled, `contribute_queries()`, `contribute_commands()`, `runtime_services()` merged into the machine's tables, a bus subscription when it has `events` and `on_event`, `rebuild()` |
-| `enable(name)` / `disable(name)` | `load` again / remove from the hook lists, unsubscribe without waiting (queued events dropped), `on_unload` |
+| `enable(name)` / `disable(name)` | `load` again (contributions and, when missing, policies added again) / remove from the hook lists, `withdraw` its contributions (queries, commands, services, policies recorded at load in `contributed`; an entry replaced since stays), unsubscribe without waiting (queued events dropped), `on_unload` |
 | `unload_all()` | every enabled plugin: unsubscribe, `on_unload` |
 | `rebuild()` | `by_hook[hook]` = enabled plugins, in priority order, whose class overrides `hook` |
 

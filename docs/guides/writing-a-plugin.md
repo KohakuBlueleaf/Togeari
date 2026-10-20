@@ -64,7 +64,9 @@ print(plugin.kinds["job.end"], "job.end events")
 
 Load a plugin with `Machine(plugins=[...])`, or while running with
 `machine.command("plugin_add", plugin=...)`. `plugin_enable` / `plugin_disable` (by name) turn
-it on and off; enabling runs `on_load` again.
+it on and off. Disabling also removes the queries, commands, services and policies it
+contributed (an entry another plugin replaced since stays); enabling runs `on_load` and
+contributes them again.
 
 ## Hooks
 
@@ -171,8 +173,8 @@ The `lanes` query and `ctx.lanes()` have different shapes:
 |---|---|
 | `Counters(interval_s=1.0)` | per-interval counters of the dispatcher, lanes, units, jobs (resident jobs by state: `executing`, `queued`, `waiting`, `parked`, and `job_seconds` per state: pool-wide, each sampled count times the interval) and work; the `counters` query and event |
 | `RunReport(path)` | `spec.json`, `env.json`, `metrics.jsonl`, `events.jsonl[.zst]`, conformance records, `summary.json` (rewritten with every counters snapshot, never dropped under an event flood, and at unload after the writer stops within `close_s`; with weak digests by type, `weak_digest_count`, `store_weak`, and `weak_jobs` / `weak_values` of the records) |
-| `Perfetto(path, sample_s=0.25)` | a trace file with tracks per dispatcher phase, lane queue, unit and job |
-| `Recorder(path)` | conformance records of recorded jobs, for `togeari conform` |
+| `Perfetto(path, sample_s=0.25, close_s=10.0)` | a trace file with tracks per dispatcher phase, lane queue, unit and job; at unload the writer drains within about `close_s`, then the array closes |
+| `Recorder(path, close_s=10.0)` | conformance records of recorded jobs, for `togeari conform`; at unload the writer drains within about `close_s`, then the record files close |
 | `Inspector(host="127.0.0.1", port=0, token=<random>, allowed_hosts=())` | HTTP: `GET /queries/<name>`, `POST /commands/<name>`, `GET /events` (server-sent events) |
 | `Budget(max_jobs=, max_calls_per_node=, walltime_s=)` | stops admitting and rejects items past its caps; blocks submits past a node's call cap |
 

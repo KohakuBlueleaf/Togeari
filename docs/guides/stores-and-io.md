@@ -66,7 +66,7 @@ for run in range(2):
 | Store | Keeps |
 |---|---|
 | `MemoryStore()` (`togeari.stores`) | a dict in memory; copies in and out (`__togeari_copy__` or a deep copy) |
-| `VaultStore(path)` (`togeari.stores.vault`, extra `[vault]`) | a KohakuVault database on disk, kept across runs; values pickled, every `get` unpickles a fresh copy |
+| `VaultStore(path)` (`togeari.stores.vault`, extra `[vault]`) | a KohakuVault database on disk, kept across runs; values pickled, every `get` unpickles a fresh copy; the caller closes it (`close()` or `with VaultStore(path) as store:`) after the machines using it stop |
 
 A store of your own needs only the three methods:
 

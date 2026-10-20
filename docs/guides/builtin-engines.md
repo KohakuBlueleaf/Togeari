@@ -135,7 +135,8 @@ server.shutdown()
 | `headers` | `{}` | sent with every request |
 | `timeout_s` | 600 | per request |
 | `connect_timeout_s` | 10 | opening a connection; past it the request is a `UnitError` (`ConnectTimeout`) |
-| `health_path`, `health_timeout_s` | `None`, 2 | after a `UnitError`, `ready()` stays false until a GET of this path succeeds |
+| `health_path`, `health_timeout_s` | `None`, 2 | after a `UnitError`, `ready()` stays false until a GET of this path succeeds (sent on its own connection) |
+| `max_retry_after_s` | 3600 | the longest block a `Retry-After` sets |
 | `classify` | `default_classify` | outcome (response or exception) → `ItemError`, `UnitError` or `None` (decode it) |
 | `load_probe`, `probe_interval_s` | `None`, 1 | a function polled in the background; its dict appears in `load().extra["probe"]` |
 | `on_unit_error` | `"block"` | the other requests in flight after a `UnitError`: `"block"` lets them finish; `"cancel"` answers them with the same error at once |
@@ -150,7 +151,12 @@ saw the error gets the `UnitError`. With `on_unit_error="block"` (the default), 
 requests in flight finish and answer normally. With `"cancel"`, each of them is answered with
 the same error at once (`load().extra["unit_error_items"]` counts them). A running request is
 never aborted, by a cancel or a unit error: it runs to its end, its late answer is dropped, and
-its slot frees then. A cancelled request not yet sent is never sent.
+its slot frees then (the engine wakes its lanes, so queued work takes the slot). A cancelled
+request not yet sent is never sent.
+
+`spec()` (the engine's identity in content-store keys) holds the base URL, `max_inflight`,
+`rate` and `timeout_s`; `headers`, `pool_size`, `connect_timeout_s`, `on_unit_error` and the
+other arguments are not part of it.
 
 `wake_at()` tells the lane when the token bucket next allows a request or a `Retry-After`
 block ends, so a rate-limited unit is pumped exactly when it can take work.
@@ -258,7 +264,9 @@ At the engine start every module is loaded, warmed up on its
 `example()` batch and measured; the footprint (weights, peak, load and warm-up time) is in each
 unit's `load().extra["footprint"]` and in `engine.stats()`. `spec()` is identity only, the
 same before and after start. The engine wakes its lanes after a cancelled batch's reply and
-after a device process restarts.
+after a device process restarts. A start that fails partway stops every device it already
+started (their weights leave the device). `stop()` moves the weights to the CPU only once the
+device's workers have ended; a forward still running after the join keeps them where they are.
 
 `TorchModule(module, collate=stack, split=rows, max_batch=32, key=shape_key, example=(),
 name=None, stages=None)` wraps a plain module: `collate` builds the batch, `forward` runs it on

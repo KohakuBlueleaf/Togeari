@@ -6,6 +6,11 @@ Each example is a machine module under `examples/`: a `.kir` program, its nodes,
 `togeari run examples/<name>/machine.py` (prints the summary), `togeari check ...` (build and
 check only), `togeari units ...` (engine checks, where the module gives samples).
 
+Every example records every job, checks each one against the reference interpreter
+(`conformance: N/N jobs match the reference`) and exits nonzero when a job fails or does not
+match. `tests/examples` runs them that way: the four CPU examples always, `mixed` (12 stations,
+`python examples/mixed/machine.py 12`) under the `gpu` marker.
+
 | Example | Engines | Shows |
 |---|---|---|
 | `hello` | `SimCall` | `each`, `switch`, `@try`, a slow service, conformance |
@@ -32,8 +37,10 @@ conformance: 5/5 jobs match the reference
 
 `squares` sums the squares of a list on a `work` lane of three units (speed 1, 2, 4) chosen by
 `Throughput`; the fastest unit is down from 0.3 s to 0.8 s after start. The script checks
-every job's result and prints the run time with the keys of any wrong results (`none` when every
-job is right), the lane's retries, failovers and recoveries, and how many items each unit took: the faster units take more, and the outage costs one retry, no job error.
+every job's sum against a plain Python sum and the reference interpreter, and prints the run
+time with the keys of any wrong results (`none` when every job is right), the lane's retries,
+failovers and recoveries, and how many items each unit took: the faster units take more, and
+the outage costs one retry, no job error.
 
 ## trace_replay
 
@@ -41,7 +48,8 @@ job is right), the lane's retries, failovers and recoveries, and how many items 
 workers) and scores the parts (batch lane, `SizeOrWait(32, wait_ms=10)`), then keeps the
 document when its best score passes a bar. The simulated units replay latency samples from
 `latencies.json`; admission is `TargetLoad(fetcher, waiting=24)`. The script prints the run time
-against the time the same calls take one after another, and the batch sizes the lane formed.
+against the time the same calls take one after another, the batch sizes the lane formed, and
+the conformance of every job.
 
 ## parallel
 

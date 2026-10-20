@@ -61,7 +61,7 @@ replacements opened for an old epoch exit at once.
 | the worker process dies under an item | `ItemError(WorkerDied)`; the slot respawns its process (`respawn`); a slot that cannot respawn leaves the engine (`slot_lost`) |
 | a worker process exits while its slot is idle | the slot leaves the engine (`idle_death`); a taken ticket is handed back to the front of `pending` |
 | the last slot leaves | the engine goes `DOWN`; pending tickets get `UnitError`; new submits get `UnitError` |
-| a slot left while others remain | a replacement starts in the background (`_revive`) |
+| a slot left while others remain | a replacement starts in the background (`_revive`); `_revive` counts the missing slots again after each round, so slots lost while it runs are replaced in the same revive |
 
 `ready()` is true while up; while down it starts the replacements in the background once and
 returns false, so the lane's health polls bring the unit back.

@@ -16,14 +16,21 @@ example `JsonHttp`) builds the request and decodes the response.
 | `connect_timeout_s` | 10 | the connect part of `httpx.Timeout`; `ConnectTimeout` classifies as `UnitError` |
 | `load_probe` | `None` | a function polled every `probe_interval_s` (default 1) in a thread; its dict is reported in `load()` |
 | `classify` | `default_classify` | outcome to result class |
-| `health_path`, `health_timeout_s` | `None`, 2 | a GET that must succeed before `ready()` is true again after a `UnitError` |
-| `start_timeout_s` | 10 | the I/O loop's start |
+| `health_path`, `health_timeout_s` | `None`, 2 | a GET that must succeed before `ready()` is true again after a `UnitError`; it goes through its own one-connection client |
+| `start_timeout_s` | 10 | the I/O loop's start; past it the loop is told to close and `start` raises |
 | `pool_size` | 2 | connections per `httpx` client |
 | `on_unit_error` | `"block"` | `UNIT_ERROR_MODES`: what a `UnitError` does to the other requests in flight |
+| `max_retry_after_s` | 3600 | the longest block a `Retry-After` sets; an infinite or larger value blocks this long |
 | `name` | `"web"` | |
 
 `kind = "call"`, `protocol = "http"`, `shares_memory = False`. `spec()` is the identity:
-engine, name, base URL, `max_inflight`, `rate`, `timeout_s`.
+engine, name, base URL, `max_inflight`, `rate`, `timeout_s`. The other arguments (`headers`,
+`connect_timeout_s`, `pool_size`, `on_unit_error`, ...) are not identity: two engines that
+differ only in them share content-store keys.
+
+`start()` moves the state `STOPPED` → `STARTING` → `UP` under the lock, so a second `start`
+while one runs does nothing and one I/O loop exists per start. It clears a pending health probe
+left by the previous run.
 
 ## Request path
 
@@ -63,10 +70,13 @@ clients sharing `max_inflight` connections as evenly as possible.
 | `load()` | `running` (in flight), and in `extra` the counters, `latency_ms`, errors by kind, the last probe |
 | `ready()` | false while stopped or before `blocked_until`; with `health_path`, the last health result, a new GET started in the background when none is pending |
 
-The engine inherits `add_wake` / `wake` from `EngineBase` but never calls `wake()`: its capacity
-rises only through completions (`done`) or at a known time (`wake_at()`).
+Capacity rises through completions (`done`), at a known time (`wake_at()`), or when `_settle`
+frees the slot of a ticket already answered (cancelled, or answered by a unit error under
+`"cancel"`): no `done` reaches the lane then, so `_settle` calls `wake()` (`EngineBase`).
 
-A `UnitError` sets `blocked_until = now + retry_after` and marks the service unhealthy. The lane
+A `UnitError` sets `blocked_until = now + min(retry_after, max_retry_after_s)` and marks the
+service unhealthy. The health probe clears its pending flag in a `finally`, so a probe cancelled
+by `stop` does not keep later probes from starting. The lane
 reads `wake_at()` while it has queued work for the unit ([lane](../lanes/lane.md)), so a rate
 limit refilling wakes the dispatcher without polling. `TokenBucket`
 (`engines/web/limiter.py`) is shared by the dispatcher thread (`available`, `due`) and the loop

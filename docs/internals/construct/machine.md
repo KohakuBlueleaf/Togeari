@@ -71,11 +71,14 @@ A load never becomes visible half done.
 
 1. `_stage`; a program staged by another load in progress is loaded again once that load ends
    (`_load_after`).
-2. Problems raise `ConstructionError`.
+2. Problems raise `ConstructionError`, after `_discard` drops the load's new regions from code
+   memory (`CodeMemory.discard`: a region never committed leaves when its instructions are the
+   tail of memory, newest first).
 3. Without new units (or units not started) the load commits at once.
 4. Otherwise its programs (`_loading`, by semantic hash) and entry names (`_loading_names`) are
    held, the new units start off the dispatcher thread, and on the dispatcher the load commits
-   (or the units stop and the `Future` fails); the holds are released either way.
+   (or the units stop, the new regions are discarded and the `Future` fails); the holds are
+   released either way.
 
 `Machine.load` waits `start_timeout_s + REPLY_SLACK_S` (30 s) for the reply.
 

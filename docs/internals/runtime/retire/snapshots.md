@@ -41,8 +41,9 @@ The state is `pickle.dumps` (protocol 5) of:
 
 | Key | Content |
 |---|---|
+| `version` | the layout (`VERSION`, 1) |
 | `pc`, `prefix`, `counter` | where the strand continues |
-| `frames` | per frame: `reconv`, `saved`, `branch`, `kind`, `each`, `items`, `i`, `base` |
+| `frames` | per frame: `reconv`, `saved`, `branch`, `kind`, `each`, `items`, `i`, `base`, and `joined` (it had a join) |
 | `values` | `{name: value}` |
 | `stats`, `steps` | the job's stats and executed-instruction count |
 | `record` | the job's conformance record (or `None`) |
@@ -53,9 +54,15 @@ continues and takes no more snapshots.
 
 ## Restore
 
-`restore(job, blob)`:
+`restore(job, blob, code)`:
 
-- frames are rebuilt (`Frame(**d)`) without joins;
+- a state of another `version` (or none) is no snapshot: a warning, and the job starts from its
+  entry;
+- frames are rebuilt (`Frame(**d)`) without joins; an iteration frame that had one (the last
+  `each` iteration running alone after the strand past the loop ended) gets the `each`'s
+  reconvergence point from `code.tables(each).reconv` as its `reconv`, as a taken fault's
+  handler does, so the restored strand runs its `ITER_END` and leaves the loop itself;
+- the undefined value (`UNDEF`) pickles as itself, so a name no path wrote stays undefined;
 - every value becomes `const(value)` in a fresh `NameMap`; unpickled values belong to this job
   alone, so they are not copied;
 - the job's strands are ended and one strand is added at the stored `pc`, `prefix`, `counter`;

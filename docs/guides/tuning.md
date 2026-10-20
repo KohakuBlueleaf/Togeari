@@ -78,6 +78,7 @@ raises `ValueError` and keeps the old policy.
 | Knob | Default | Trades |
 |---|---|---|
 | `squash_reuse` | 1024 | results kept per job when a fault squashes completed calls: a refetched call with the same inputs takes its result instead of running again; 0 keeps none (every refetched call runs again) |
+| `squash_reuse_bytes` | 64 MiB | bytes of kept results per job: past it the oldest go first, and a single result larger than the cap is not kept; `None` sets no byte cap |
 
 Calls with `ordered` or `mutates`, and calls bound with `store="positional"`, always run again.
 Kept results count toward the job's bytes until they are used or the job ends. Watch job

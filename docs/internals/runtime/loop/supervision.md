@@ -18,8 +18,8 @@ An error is contained to the smallest thing it belongs to. Code: `LoopStage.loop
 | the source or the sink | `run.source_error` / `run.sink_error`, raised by `run` after the run ends |
 | `issue.order` | `policy_failed`: `machine_errors` and `policy_errors` counted, logged at the 1st, 2nd, 4th ... error; the batch issues in arrival order |
 | `admission.allows` | `policy_failed`; no job is admitted this cycle (with no job resident, admission is not consulted) |
-| a lane's `select.order`, `select.admits`, `former.take` (in `pump`) | the lane's `stats["policy_errors"]`, logged at the 1st, 2nd, 4th ... error; the units up in their own order, every item admitted, the batch limit taken |
-| `issue.priority` (called per statement inside `issue_one`) | `job_error` for that statement's job |
+| a lane's `select.order`, `select.admits`, `former.take` (in `pump`) | the lane's `stats["policy_errors"]`, logged at the 1st, 2nd, 4th ... error; the units up in their own order, every item admitted, the batch limit taken; items a `take` names twice or that are not in its bucket are skipped |
+| `issue.priority` (per statement, `issue_priority`) | `policy_failed`; the statement's lane priority is 0 |
 | anything else in the cycle | the dispatcher dies |
 
 ## Death
@@ -30,7 +30,9 @@ An error is contained to the smallest thing it belongs to. Code: `LoopStage.loop
 1. `dead = exc`, `running = False`; a `machine.error` event with the error.
 2. Every resident job is marked ended and answered with a failed `JobRecord` of kind
    `DispatcherDied`, to its handle or the sink queue.
-3. `refuse_inbox()` answers every posted event: a submit with a `DispatcherDied` record, a query,
+3. The run in progress gets `stopped` and `done` set, so `Machine.run` returns even while the
+   loop thread is still stuck (under `abandon`).
+4. `refuse_inbox()` answers every posted event: a submit with a `DispatcherDied` record, a query,
    command or stop with the `DispatcherDied` error, a `run` by setting its `done`.
 
 The `finally` of `loop` lets the source buffer go and sets `run.done`. `Machine.run` then keeps

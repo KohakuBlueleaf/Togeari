@@ -189,6 +189,7 @@ conformance: 5/5 jobs match the reference
 
 $ python examples/multi_unit/machine.py
 40 jobs in 2.06s, wrong results: none
+conformance: 40/40 jobs match the reference
 lane work: retries 1, units down 1, back up 1
   unit slow    state up    items   90  errors {}
   unit medium  state up    items  179  errors {}
@@ -200,6 +201,7 @@ one job at a time, one call at a time: about 40.4s
   lane fetch  submitted   60  batch sizes {}
   lane score  submitted  243  batch sizes {7: 10, 5: 3, 6: 10, 4: 5, 3: 3, 8: 4, 9: 2, 12: 1, 2: 2, 1: 3}
   lane parse  submitted  243  batch sizes {}
+conformance: 60/60 jobs match the reference
 
 $ python examples/mixed/machine.py          # an HTTP registry, 8 worker processes, a network on cuda:0
 st003: calm/strong    ['calm/strong', 'calm/strong', 'calm/strong', 'calm/strong', 'calm/strong', 'pulse/strong', 'calm/strong']
@@ -226,7 +228,7 @@ while the windows themselves are computed out of order.
 | Engine | Kind | For |
 |---|---|---|
 | `PythonCallEngine(workers, mode="thread" \| "process", transport="pickle" \| "shm", imports=)` | call | node functions off the dispatcher; process workers import node libraries at start, restart after a crash, and are killed and replaced when a cancelled item hangs |
-| `WebCallEngine(base_url, max_inflight, rate, pool_size, health_path)` | call | any HTTP service through an adapter (`JsonHttp`); `Retry-After`, 429 / 503 as unit errors, a token bucket |
+| `WebCallEngine(base_url, max_inflight, rate, pool_size, health_path, connect_timeout_s, on_unit_error)` | call | any HTTP service through an adapter (`JsonHttp`); `Retry-After`, 429 / 503 and connections that do not open as unit errors; `on_unit_error` lets the other requests finish (`"block"`) or answers them at once (`"cancel"`); a token bucket |
 | `TorchEngine(devices, memory_cap_gb, schedule, isolation)` | batch, one unit per model | models sharing devices: `co_resident`, `swappable`, `priority_streams`; thread or process isolation; allocator cap set before weights load |
 | `SimCall` / `SimBatch` / `SimStream` | any | simulated engines with latency models, item errors and outages |
 
@@ -262,6 +264,7 @@ The main knobs (the full table, with the debug knobs and the `Machine` arguments
 | `plugin_errors` | `"disable"` | or `"log"` |
 | `gc_threshold` | `(50000, 20, 100)` | the process collector threshold while running; None keeps the process's own |
 | `squash_reuse` | 1024 | results kept per job after a taken fault, reused when the refetched call's inputs match; 0 re-sends |
+| `squash_reuse_bytes` | 64 MiB | bytes of those results kept per job; None: no byte cap |
 
 Every knob can change while the machine runs (`machine.command("set_knob", ...)`).
 

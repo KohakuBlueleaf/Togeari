@@ -70,8 +70,10 @@ with order `(FRONT, -seq)`, ahead of everything queued.
 `pump(now)` (`Pump`):
 
 1. Clears `_pump_needed`, records `_pumped_at`.
-2. No unit up: start `no_unit_since`, return. Otherwise add the no-unit time to
-   `stats["no_unit_s"]`. Nothing queued: return.
+2. No unit up: start `no_unit_since` (the dead-lane clock) if it is not running, add the time
+   since the last pump to `stats["no_unit_s"]` (`no_unit_counted`), so the count grows while the
+   lane stays down, and return. Otherwise add the rest of the no-unit time and stop the clock.
+   Nothing queued: return.
 3. Early forming: items in the shared queue (queued while no unit was up) are spread to the unit
    queues (`_spread`).
 4. For each unit in `select.order(units_up, lane)` with work in its queue (the shared queue under
@@ -88,7 +90,8 @@ The selector and former calls of the pump go through `_order`, `_admits` and `_c
 selector's order keeps only units up, each once; a call that raises counts
 `stats["policy_errors"]` (a log line at the 1st, 2nd, 4th ... error) and falls back to the units
 up in their own order, admitting every item, or taking the batch limit, so queued items still
-leave the lane.
+leave the lane. A `take` that names items (a list) gets each queued item of its bucket once:
+items named twice, or not queued in that bucket, are skipped and count `policy_errors` too.
 
 `_submit(unit, items, now)`:
 

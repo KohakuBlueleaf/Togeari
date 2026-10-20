@@ -12,7 +12,8 @@ records to handles or the sink.
    `Blocked`.
 3. A key already resident (`Dispatcher.keys`) is rejected as `DuplicateKey`.
 4. Entry = `item.entry` or `machine.default_entry`; an unknown entry is rejected.
-5. For a `@def` entry, inputs that are not parameters are rejected. Each parameter binds to
+5. Inputs that are not parameters are rejected (`KirRuntimeError`); the top level has no
+   parameters, so any input to it is rejected ("the top level: unknown inputs"). Each parameter binds to
    `const(input)`, or `const(fresh(default))`; a missing required input is rejected.
 6. `Job(key, entry, inputs)` with the handle, `auto_key`, `stats["program"]` (the region's
    semantic hash).

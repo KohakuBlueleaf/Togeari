@@ -101,6 +101,7 @@ recorder), and only for the jobs the machine's `record` knob samples.
 | `--run ID` | replay only these runs (repeatable); default: every run in the folder |
 | `--reexecute NODE` | run this node again and compare with its record (repeatable) |
 | `--max-fail N` | print at most N failures (20) |
+| `--step-budget N` | instructions the reference may execute per job (1 000 000) |
 
 A program file names each node library as `module:attr`, preferring a module that can be
 imported later (a machine module run by `togeari run` is also registered under its file name).
@@ -172,8 +173,8 @@ dependencies and the optional extras that are installed, the devices the device 
 with their free memory, and the engine worker processes still running: the builtin engines'
 worker and device processes register themselves while they run, and doctor lists the ones
 whose parent has exited (left over from an earlier run) and removes the entries of processes
-that no longer exist. Run it first when a machine behaves differently on two
-hosts.
+that no longer exist. When the OS process listing fails, it says so, removes nothing and exits
+1. Run it first when a machine behaves differently on two hosts.
 
 The test suite runs the same check on generated programs under many machine configurations
 (see [generated programs](../internals/verification/generated-programs.md)).

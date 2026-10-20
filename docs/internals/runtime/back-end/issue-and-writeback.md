@@ -48,7 +48,7 @@ in `job.held` until `resume_job`). An exception in `issue_one` is `job_error`
 |---|---|
 | `Inline` | calls `fn(**values)` now; `Ok(result, finished=True)` or `ItemError(exc)`; `note_inline`; `job.issue`; `complete` |
 | store mode set and a store given | `store_key(inf)`; a hit (`store_get` not `MISS`) sets `hit`, counts `store_hits`, completes at once with `Ok(hit, True)`; a miss counts `store_misses` |
-| lane | `WorkItem(node, values, adapter, protocol=defaults.protocol, priority=issue.priority(ReadyView(inf)), owner=inf)`; `deadline = now + @hint timeout_s` when the hint is set; `ext["job_key"]`, `ext["hint"]`; `ext["ordered_once"]` for an `ordered` node not `idempotent`; `job.issue`; `lane.enqueue(item, now)`; `stmt.issue`, `lane.enqueue` |
+| lane | `WorkItem(node, values, adapter, protocol=defaults.protocol, priority=issue_priority(inf), owner=inf)` (the policy's `priority(ReadyView(inf))`, 0 when it raises); `deadline = now + @hint timeout_s` when the hint is set; `ext["job_key"]`, `ext["hint"]`; `ext["ordered_once"]` for an `ordered` node not `idempotent`; `job.issue`; `lane.enqueue(item, now)`; `stmt.issue`, `lane.enqueue` |
 
 `note_inline` keeps an `InlineStat` per node (last 1000 times, count, total). At the 32nd call
 and every 1024th it logs one warning when the median exceeds `Inline.warn_us`, else

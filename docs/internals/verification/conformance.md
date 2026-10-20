@@ -35,13 +35,20 @@ different values feed the same bytes.
 
 | Value | Fed as (tag) |
 |---|---|
+Rows are tried in order:
+
+| Value | Fed as (tag) |
+|---|---|
 | `None`, `bool`, `int`, `float`, `complex` | type name and repr (`v`) |
 | `str` (`s`), bytes-like (`b`) | the raw bytes |
 | has `__togeari_digest__` | its returned bytes (`d`) |
-| `list`, `tuple`, `dict`, `set`, `frozenset` | type, length, items recursively (dict keys and set items sorted by repr) |
-| a type registered with `register_digest(cls, fn)` (or a subclass) | the bytes `fn(value)` returns (`r`); an engine package registers its own array type this way |
+| a type registered with `register_digest(cls, fn)` (or a subclass, a list or dict subclass included) | the bytes `fn(value)` returns (`r`); an engine package registers its own array type this way |
+| `list`, `tuple`, `dict`, `set`, `frozenset` | type, length, items recursively (dict keys and set items sorted by `_order`: strings by value, others by their digest); a container met again inside itself is weak (`w`) |
 | array-like (`shape`, `dtype`, `tobytes`) | shape and dtype (`a`), bytes (`A`) |
-| anything else | pickle (`p`); on failure the type name (`w`), reported as weak |
+| anything else | pickle (`p`), with every set or frozenset inside pickled with its members in `_order` (`_OrderedSetPickler`), so equal objects pickle alike in every process; on failure the type name (`w`), reported as weak |
+
+The type cache of registered functions is filled under the registration lock, so a fill never
+caches a lookup that a concurrent `register_digest` has made stale.
 
 `register_digest` remembers, per registered type, the modules behind it (the caller and the
 function's module); `unregister_digest(cls)` drops a type with its modules; `digest_providers()`
@@ -50,8 +57,9 @@ import them first. Weak digests are counted per job (`stats["weak_digests"]`) an
 
 ## Replay
 
-`replay(job_program, record, inputs, mode="replay", pure=None, engine_errors=True)` runs
-`Interpreter(job_program.written, job_program.env, hook=_Hook(...), step_budget=1_000_000)`, then
+`replay(job_program, record, inputs, mode="replay", pure=None, engine_errors=True,
+step_budget=STEP_BUDGET)` runs `Interpreter(job_program.written, job_program.env,
+hook=_Hook(...), step_budget=step_budget)` (`STEP_BUDGET` = 1 000 000), then
 `interp.call(entry, inputs)` (or `run()` and `source_values()` for the top level), and returns
 `(status, value, notes)`:
 
@@ -96,7 +104,8 @@ cannot see.
 
 ## Verdict
 
-`conform(job_program, job_record, inputs, mode="replay", pure=None, engine_errors=True)` replays
+`conform(job_program, job_record, inputs, mode="replay", pure=None, engine_errors=True,
+step_budget=STEP_BUDGET)` replays
 `job_record.record` and returns `Verdict(ok, reason, reference, machine, details)`; `details`
 holds the hook's notes.
 
@@ -114,10 +123,13 @@ machine are checked independently.
 
 ## Record directories
 
-`Recorder(path, libraries=None, queue_size=100_000)` (`plugins/record/recorder.py`) keeps each
-job's admitted inputs while `record` is set (`on_job_start`) and, at `on_job_end` of a job with a
-record, hands it to an `ArchiveWriter` (its own thread; tasks past `queue_size` are dropped and
-counted). Each run writes its own folder:
+`Recorder(path, libraries=None, queue_size=100_000, close_s=10.0)` (`plugins/record/recorder.py`)
+keeps each job's admitted inputs while `record` is set (`on_job_start`) and, at `on_job_end` of a
+job with a record, hands it to an `ArchiveWriter` (its own thread; tasks past `queue_size` are
+dropped and counted). At unload, `ArchiveWriter.close(timeout=close_s)` drains for at most about
+twice `close_s`; then, under the writer's lock, the record files close, and tasks still queued
+write nothing. `RunReport` passes its own `close_s` to its embedded recorder. Each run writes its
+own folder:
 
 | Path | Content |
 |---|---|
@@ -135,7 +147,8 @@ the path, run, written and dropped counts. `RunReport` writes the same files thr
 `Archive(path, runs=None)` reads a record folder back: `programs` (by hash), `runs()`,
 `run_info(run)` and `jobs()`.
 
-`togeari conform DIR [--lib module:attr] [--run ID] [--reexecute NODE]` (`replay_dir`) reads
+`togeari conform DIR [--lib module:attr] [--run ID] [--reexecute NODE] [--step-budget N]`
+(`replay_dir`) reads
 every run (or the named ones). Before a run's first job it imports the run's digest providers
 (`import_providers`; a failure stops with a message naming them). It rebuilds each program by
 hash with `build_job_programs` (the semantic hash must match; libraries that cannot be imported

@@ -144,6 +144,7 @@ Every other keyword is a knob. Knobs are validated at construction and by `set_k
 | `plugin_errors` | `"disable"` | `"log"` keeps a plugin enabled after its error |
 | `gc_threshold` | `(50000, 20, 100)` | the process collector threshold while the machine runs; `None` keeps the process's own |
 | `squash_reuse` | 1024 | completed results kept per job when a fault squashes them; a refetched call with the same inputs reuses one instead of running again; 0 turns it off |
+| `squash_reuse_bytes` | 64 MiB | bytes of kept results per job; past it the oldest go first, a larger single result is not kept; `None` sets no byte cap |
 
 ## 5. Running
 

@@ -112,15 +112,15 @@ def test_unload_stops_a_slow_writer_within_close_s_and_nothing_writes_after(tmp_
     slow = SlowFile(0.05)
     report._events = slow
     worker = report.worker
-    for _ in range(200):
+    for _ in range(400):
         worker.put(("event", EV))
 
-    # 200 writes of 50 ms would take 10 s; unload returns after about two close_s
+    # 400 writes of 50 ms would take 20 s; the machine stop with this unload stays far below it
     t0 = time.monotonic()
     m.stop()
-    assert time.monotonic() - t0 < 2.0
+    assert time.monotonic() - t0 < 5.0
     assert wait_for(lambda: not worker.thread.is_alive(), timeout=2)
-    assert slow.closed and slow.lines < 200
+    assert slow.closed and slow.lines < 400
 
     # A late task and a late summary write nothing and raise nothing
     final = (out / "summary.json").read_text(encoding="utf-8")

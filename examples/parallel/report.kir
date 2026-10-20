@@ -1,0 +1,24 @@
+## One city report, written as a plain sequential program.
+## The machine overlaps everything the sequential run cannot tell apart:
+## - the two `parallel` arms and the independent `traffic` lookup;
+## - the district surveys, which do not wait for the storm branch to resolve;
+## - one survey per district, all at once.
+@def (city: str, districts: list)report(summary, scores):
+    ()parallel(`a`, `b`)
+    a:
+        (city)weather(sky)
+    b:
+        (city)events(n_events)
+    (city)traffic(jam)
+    (sky)is_stormy(storm)
+    (storm)branch(`warn`, `calm`)
+    warn:
+        (city)alert(note)
+    calm:
+        note = "clear"
+    scores = []
+    (districts)each(district, `one`)
+    one:
+        (city, district)survey(score)
+        (scores, score)append(scores)
+    (sky, n_events, jam, note, scores)compose(summary)

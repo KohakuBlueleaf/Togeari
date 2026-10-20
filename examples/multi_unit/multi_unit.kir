@@ -1,0 +1,7 @@
+## Square every number of a list on a "work" service, then sum the squares.
+@def (numbers: list)squares(total):
+    total = 0
+    (numbers)each(n, `one`)
+    one:
+        (n)square(sq)
+        (total, sq)add(total)

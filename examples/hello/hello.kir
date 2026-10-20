@@ -1,0 +1,20 @@
+## One greeting card per language for one person.
+## `en` and `ja` are known; any other language asks the (slow) translation service.
+## A language the service does not know becomes a "?" card instead of failing the job.
+@def (name: str, langs: list)greet(cards, count):
+    cards = []
+    (langs)each(lang, `one`)
+    one:
+        (lang)switch("en"=>`en`, "ja"=>`ja`, _=>`other`)
+        en:
+            word = "Hello"
+        ja:
+            word = "Konnichiwa"
+        other:
+            @try:
+                (lang)translate(word)
+            @except err:
+                word = "?"
+        (word, name)compose(card)
+        (cards, card)append(cards)
+    (cards)len(count)

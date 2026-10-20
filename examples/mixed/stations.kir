@@ -1,0 +1,17 @@
+## Survey one station: look up its gain, score every signal window, log the results in order.
+## A station the registry does not know keeps gain 1.0 instead of failing the job.
+@def (station: str, windows: list)survey(labels, verdict):
+    @try:
+        (station)lookup(gain)
+    @except err:
+        gain = 1.0
+    labels = []
+    (windows)each(window, `one`)
+    one:
+        (window)features(feats)
+        (feats)embed(scores)
+        (scores, gain)classify(label)
+        (station, window, label)note(line)
+        (labels, label)append(labels)
+    (labels)majority(verdict)
+    (station, verdict)close(summary)

@@ -1,0 +1,14 @@
+## A document pipeline: fetch a document, split it, parse every part, score the
+## parsed parts in batches, keep the document when its best score passes a bar.
+@def (url: str, bar: float = 0.5)review(keep, best, parts):
+    (url)fetch(doc)
+    (doc)split(chunks)
+    scores = []
+    (chunks)each(chunk, `one`)
+    one:
+        (chunk)parse(parsed)
+        (parsed)score(s)
+        (scores, s)append(scores)
+    (scores)best_of(best)
+    (chunks)len(parts)
+    (best, bar)greater(keep)

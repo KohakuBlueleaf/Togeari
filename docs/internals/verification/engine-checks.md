@@ -18,7 +18,7 @@ report.raise_if_failed()
 | `failing_items` | `()` | templates that must give `ItemError` |
 | `kill` | `None` | kills the backend the way a crash does; the next submit must give `UnitError` |
 | `tolerance` | `None` | relative tolerance, or `fn(a, b) -> bool`, for output comparisons |
-| `submit_bound_ms`, `submit_quantile`, `submit_max_ms` | 2.0, 0.99, 50.0 | B1 limits |
+| `submit_bound_ms`, `submit_quantile`, `submit_max_ms` | 2.0, 0.99, 50.0 | B1 limits; the quantile bound applies from `ceil(1 / (1 − quantile))` submits (100 for 0.99), below that only the max bound |
 | `rounds`, `cancel_rate` | 200, 0.25 | submits of the B2 / B5 phase; the share cancelled |
 | `timeout_s`, `grace_s`, `seed` | 30, 0.2, 0 | answer wait, late-duplicate grace, RNG seed |
 | `kill_wait_s` | 2.0 | after `kill()`, the wait for `ready()` false or `capacity()` 0 |

@@ -22,6 +22,7 @@ returned.
 """
 
 import itertools
+import math
 import random
 import threading
 import time
@@ -597,12 +598,18 @@ def _b1(d: _Driver, rules: dict, limit: _SubmitBound) -> None:
         f"q{limit.quantile:g} {at * 1e3:.3f} ms (bound {limit.bound_s * 1e3:g} ms), "
         f"max {times[-1] * 1e3:.3f} ms (bound {limit.max_s * 1e3:g} ms)"
     ]
-    if at > limit.bound_s:
+
+    # The quantile bound applies once there are enough submits to tell it from the max
+    needed = math.ceil(1.0 / (1.0 - limit.quantile)) if limit.quantile < 1.0 else 1
+    quantile_ok = at <= limit.bound_s or len(times) < needed
+    if len(times) < needed:
+        b1.append(f"q{limit.quantile:g} needs {needed} submits; only the max bound applies")
+    elif at > limit.bound_s:
         b1.append(f"the q{limit.quantile:g} submit time exceeded its bound")
     if times[-1] > limit.max_s:
         b1.append("a submit exceeded the max bound")
     b1.append(f"{d.inline_ok} Ok results delivered inside submit (must be 0)")
-    within = at <= limit.bound_s and times[-1] <= limit.max_s
+    within = quantile_ok and times[-1] <= limit.max_s
     rules["B1"] = _Verdict("B1", within and not d.inline_ok, b1)
 
 

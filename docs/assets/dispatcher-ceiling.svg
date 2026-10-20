@@ -1,0 +1,18 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='1000' height='246' viewBox='0 0 1000 246' font-family='ui-sans-serif, -apple-system, Segoe UI, Helvetica, Arial' font-size='13'>
+<text x='10.0' y='22.0' fill='#8b949e' text-anchor='start'>dispatcher ceiling: thousand node calls per second</text>
+<text x='220.0' y='69.0' fill='#8b949e' text-anchor='end'>chain of inline nodes</text>
+<rect x='230.0' y='44.0' width='590.0' height='18.0' rx='3' fill='#2f81f7'/>
+<text x='826.0' y='58.0' fill='#8b949e' text-anchor='start'>78.99 k/s  default</text>
+<rect x='230.0' y='70.0' width='519.5' height='18.0' rx='3' fill='#d29922'/>
+<text x='755.5' y='84.0' fill='#8b949e' text-anchor='start'>69.55 k/s  gc_threshold=None</text>
+<text x='220.0' y='131.0' fill='#8b949e' text-anchor='end'>chain of lane calls</text>
+<rect x='230.0' y='106.0' width='214.4' height='18.0' rx='3' fill='#2f81f7'/>
+<text x='450.4' y='120.0' fill='#8b949e' text-anchor='start'>28.70 k/s  default</text>
+<rect x='230.0' y='132.0' width='200.7' height='18.0' rx='3' fill='#d29922'/>
+<text x='436.7' y='146.0' fill='#8b949e' text-anchor='start'>26.87 k/s  gc_threshold=None</text>
+<text x='220.0' y='193.0' fill='#8b949e' text-anchor='end'>each with batched calls</text>
+<rect x='230.0' y='168.0' width='296.8' height='18.0' rx='3' fill='#2f81f7'/>
+<text x='532.8' y='182.0' fill='#8b949e' text-anchor='start'>39.73 k/s  default</text>
+<rect x='230.0' y='194.0' width='279.3' height='18.0' rx='3' fill='#d29922'/>
+<text x='515.3' y='208.0' fill='#8b949e' text-anchor='start'>37.39 k/s  gc_threshold=None</text>
+</svg>

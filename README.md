@@ -1,5 +1,7 @@
 # Togeari
 
+![Togeari: many sequential KIR jobs, one out-of-order machine, pluggable engines, every result checkable against the reference](docs/assets/teaser.svg)
+
 A machine that runs thousands of [KIR](https://github.com/KohakuBlueleaf/KohakuNodeIR) jobs at
 once, out of order, on pluggable engines, and checks recorded runs against the reference
 interpreter.

@@ -1,0 +1,1 @@
+"""The ``togeari`` command line."""

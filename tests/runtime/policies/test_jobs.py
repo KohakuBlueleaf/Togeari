@@ -216,10 +216,14 @@ def test_an_idle_machine_waiting_on_its_source_does_not_poll():
         yield {"x": 2}
 
     m = machine()
+    sink = Memory()
     try:
-        t = threading.Thread(target=lambda: m.run(source(), Memory()), daemon=True)
+        t = threading.Thread(target=lambda: m.run(source(), sink), daemon=True)
         t.start()
-        time.sleep(0.3)
+
+        # Counting starts once the first job is done and the source blocks
+        assert wait_for(lambda: len(sink.records) == 1)
+        time.sleep(0.05)
         c0 = m.dispatcher.stats["cycles"]
         time.sleep(0.5)
         assert m.dispatcher.stats["cycles"] - c0 <= 2

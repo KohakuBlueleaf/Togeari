@@ -140,12 +140,14 @@ def test_summary_json_is_written_while_jobs_are_resident(tmp_path):
         assert m.inspect("stats").result(5)["jobs_ok"] == 0
         early = json.loads((out / "summary.json").read_text(encoding="utf-8"))
         assert early["jobs"] == 0 and early["seconds"] > 0
-        assert not list(out.glob("*.tmp"))
         assert [h.result(10).ok for h in handles] == [True] * 4
     finally:
         m.stop()
+
+    # After stop: the final summary is whole and no temporary file is left
     final = json.loads((out / "summary.json").read_text(encoding="utf-8"))
     assert final["jobs"] == 4 and final["seconds"] >= early["seconds"]
+    assert not list(out.glob("*.tmp"))
 
 
 def test_summary_counts_weak_digests_and_weak_values(tmp_path):

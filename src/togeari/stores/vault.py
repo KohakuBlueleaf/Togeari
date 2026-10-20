@@ -11,7 +11,11 @@ from togeari.core.contracts.io import MISS
 
 
 class VaultStore:
-    """Pickled outputs by store key, kept across runs; every get unpickles a fresh copy."""
+    """Pickled outputs by store key, kept across runs; every get unpickles a fresh copy.
+
+    The caller that opens the store closes it (``close()``, or ``with VaultStore(...)``),
+    after the machines using it have stopped; a machine never closes a store it was given.
+    """
 
     def __init__(self, path: str | Path):
         self.path = Path(path)
@@ -41,4 +45,12 @@ class VaultStore:
 
     def close(self) -> None:
         with self.lock:
-            self.kv.close()
+            if self.kv is not None:
+                self.kv.close()
+                self.kv = None
+
+    def __enter__(self) -> "VaultStore":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()

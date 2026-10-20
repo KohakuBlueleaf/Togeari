@@ -23,10 +23,12 @@ hash, so a job replays against the program it ran.
 
 import importlib
 import json
+import logging
 import os
 import pickle
 import secrets
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -34,6 +36,8 @@ from typing import Any
 
 from togeari.core.contracts.digest import digest_providers
 from togeari.plugins.common.worker import Worker
+
+log = logging.getLogger("togeari.plugins")
 
 try:
     from kohakuvault import KVault
@@ -182,7 +186,8 @@ class ArchiveWriter:
 
     The writer's queue holds at most ``queue_size`` tasks; tasks past it are
     dropped and counted in ``dropped``. ``weak_jobs`` counts written jobs with weak
-    values, ``weak_values`` those values.
+    values, ``weak_values`` those values. ``close(timeout)`` drains for at most about
+    twice ``timeout``; after it the files are closed and tasks still queued write nothing.
     """
 
     def __init__(self, path: str | Path, queue_size: int = 100_000):
@@ -197,6 +202,10 @@ class ArchiveWriter:
         self.written = 0
         self.weak_jobs = 0
         self.weak_values = 0
+
+        # Writes and close take this lock; once closed, a task writes nothing
+        self._io = threading.Lock()
+        self._closed = False
         self.worker = Worker(f"togeari-archive-{self.run}", self._handle, maxsize=queue_size)
 
     @property
@@ -218,6 +227,11 @@ class ArchiveWriter:
         self.worker.put(("job", record, inputs, program))
 
     def _handle(self, task: tuple) -> None:
+        with self._io:
+            if not self._closed:
+                self._write(task)
+
+    def _write(self, task: tuple) -> None:
         match task:
             case ("program", info):
                 _write_json(self.path / PROGRAMS / f"{info['hash']}.json", info, self.run)
@@ -234,11 +248,18 @@ class ArchiveWriter:
                     self.weak_jobs += 1
                     self.weak_values += len(weak)
 
-    def close(self) -> None:
-        self.worker.close()
-        if self.records is not None:
-            self.records.close()
-            self.records = None
+    def close(self, timeout: float = 10.0) -> None:
+        self.worker.close(timeout=timeout)
+
+        # The record files close; a writer still running skips its remaining tasks
+        with self._io:
+            self._closed = True
+            if self.records is not None:
+                self.records.close()
+                self.records = None
+        if self.worker.thread.is_alive():
+            log.warning("archive writer did not finish in %ss; queued records dropped", timeout)
+            self.worker.close(timeout=timeout)
 
 
 class Archive:

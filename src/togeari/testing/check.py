@@ -600,7 +600,7 @@ def _b1(d: _Driver, rules: dict, limit: _SubmitBound) -> None:
     ]
 
     # The quantile bound applies once there are enough submits to tell it from the max
-    needed = math.ceil(1.0 / (1.0 - limit.quantile)) if limit.quantile < 1.0 else 1
+    needed = math.ceil(round(1.0 / (1.0 - limit.quantile), 9)) if limit.quantile < 1.0 else 1
     quantile_ok = at <= limit.bound_s or len(times) < needed
     if len(times) < needed:
         b1.append(f"q{limit.quantile:g} needs {needed} submits; only the max bound applies")

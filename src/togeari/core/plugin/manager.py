@@ -47,6 +47,9 @@ class PluginManager:
         self.timing: dict[str, dict[str, float]] = {}
         self.errors: dict[str, int] = {}
 
+        # What each plugin put into the machine's tables: (table, key, value)
+        self.contributed: dict[str, list[tuple[dict, Any, Any]]] = {}
+
     # ------------------------------------------------------------ registry
     def add(self, plugin: BasePlugin) -> None:
         name = getattr(plugin, "name", type(plugin).__name__)
@@ -61,14 +64,23 @@ class PluginManager:
         """Every plugin's ``contribute_policies()``, by name (read before programs are bound)."""
         out: dict = {}
         for p in self.plugins:
-            if getattr(p, "contribute_policies", None) is None:
-                continue
-            ok, got = self.call(p, "contribute_policies")
-            if ok and isinstance(got, dict):
-                out.update(got)
-            elif ok and got is not None:
-                self.failed(p, "contribute_policies", TypeError(f"returned {type(got).__name__}"))
+            got = self._policies(p)
+            out.update(got)
+            self.contributed.setdefault(p.name, []).extend(
+                (out, key, value) for key, value in got.items()
+            )
         return out
+
+    def _policies(self, p: BasePlugin) -> dict:
+        """The plugin's ``contribute_policies()``; empty when it has none or it failed."""
+        if getattr(p, "contribute_policies", None) is None:
+            return {}
+        ok, got = self.call(p, "contribute_policies")
+        if ok and isinstance(got, dict):
+            return got
+        if ok and got is not None:
+            self.failed(p, "contribute_policies", TypeError(f"returned {type(got).__name__}"))
+        return {}
 
     def load(self, plugin: BasePlugin) -> bool:
         """``on_load``, contributions, the bus subscription; False when ``on_load`` failed (after
@@ -81,7 +93,8 @@ class PluginManager:
             return False
         self.enabled.add(plugin.name)
 
-        # Contributions: queries, commands, services
+        # Contributions: queries, commands, services; each recorded for disable
+        added = self.contributed.setdefault(plugin.name, [])
         for hook, table in (
             ("contribute_queries", self.m.queries),
             ("contribute_commands", self.m.commands),
@@ -92,6 +105,14 @@ class PluginManager:
             ok, got = self.call(plugin, hook)
             if ok and isinstance(got, dict):
                 table.update(got)
+                added.extend((table, key, value) for key, value in got.items())
+
+        # Policies again on a re-enable (the first ones are collected before binding)
+        policies = getattr(self.m, "contributed_policies", None)
+        if policies is not None and not any(t is policies for t, _, _ in added):
+            got = self._policies(plugin)
+            policies.update(got)
+            added.extend((policies, key, value) for key, value in got.items())
         if getattr(plugin, "events", None) and hasattr(plugin, "on_event"):
             self.m.bus.subscribe(plugin)
         self.rebuild()
@@ -114,9 +135,16 @@ class PluginManager:
             return False
         self.enabled.discard(name)
         self.rebuild()
+        self.withdraw(name)
         self.m.bus.unsubscribe(p, wait=False)
         self.call(p, "on_unload")
         return True
+
+    def withdraw(self, name: str) -> None:
+        """Remove what the plugin contributed: entries another plugin replaced since stay."""
+        for table, key, value in self.contributed.pop(name, []):
+            if table.get(key) is value:
+                del table[key]
 
     def get(self, name: str) -> BasePlugin | None:
         return next((p for p in self.plugins if p.name == name), None)

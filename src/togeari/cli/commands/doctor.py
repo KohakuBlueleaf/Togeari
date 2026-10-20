@@ -55,8 +55,8 @@ def devices(timeout: float = 120.0) -> dict:
     return json.loads(res.stdout.strip().splitlines()[-1])
 
 
-def processes() -> dict[int, str]:
-    """pid -> command line of every process the OS lists."""
+def processes() -> dict[int, str] | None:
+    """pid -> command line of every process the OS lists; None when the listing failed."""
     match sys.platform:
         case "win32":
             cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_PROCESSES]
@@ -66,7 +66,9 @@ def processes() -> dict[int, str]:
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired):
-        return {}
+        return None
+    if res.returncode != 0:
+        return None
     found = {}
     for line in res.stdout.splitlines():
         pid, _, cmdline = line.strip().replace("\t", " ", 1).partition(" ")
@@ -75,15 +77,18 @@ def processes() -> dict[int, str]:
     return found
 
 
-def worker_processes(procs: dict[int, str]) -> tuple[list[dict], list[dict]]:
+def worker_processes(procs: dict[int, str] | None) -> tuple[list[dict], list[dict]]:
     """Registered engine workers that still run: (leftover, live).
 
     A worker counts when its pid runs a spawned child process and its registry
     entry names a builtin worker entry point (``WORKER_ENTRIES``); it is
     leftover when its parent process has exited, live otherwise. Registry files
-    of processes that no longer exist are removed.
+    of processes that no longer exist are removed. Without a process listing
+    (``procs`` None) nothing is classified and no file is removed.
     """
     leftover, live = [], []
+    if procs is None:
+        return leftover, live
     for info in registry.workers():
         pid = info.get("pid")
         cmdline = procs.get(pid)
@@ -121,7 +126,11 @@ def run(args: argparse.Namespace, out: TextIO) -> int:
                 )
 
     # Engine worker processes: leftover ones (parent exited) are listed
-    leftover, live = worker_processes(processes())
+    procs = processes()
+    if procs is None:
+        print("workers  the process listing failed; worker processes not checked", file=out)
+        return 1
+    leftover, live = worker_processes(procs)
     print(
         f"workers  {len(leftover)} leftover togeari worker process(es);"
         f" {len(live)} of running machines",

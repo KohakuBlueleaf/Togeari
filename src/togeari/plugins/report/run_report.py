@@ -75,7 +75,7 @@ class RunReport(BasePlugin):
         self.interval_s = interval_s
         self.flush_s = flush_s
         self.close_s = close_s
-        self.recorder = Recorder(self.path, queue_size=self.queue_size)
+        self.recorder = Recorder(self.path, queue_size=self.queue_size, close_s=close_s)
 
         # The pending summary (latest only) and the lock every file write holds
         self._pending: dict | None = None

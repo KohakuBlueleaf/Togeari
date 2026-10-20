@@ -9,6 +9,7 @@ import argparse
 from typing import TextIO
 
 from togeari.cli.replay import replay_dir
+from togeari.conformance.replay import STEP_BUDGET
 
 
 def add(sub: argparse._SubParsersAction) -> None:
@@ -24,6 +25,12 @@ def add(sub: argparse._SubParsersAction) -> None:
         metavar="NODE",
         help="run this node again and compare with its record (repeatable)",
     )
+    p.add_argument(
+        "--step-budget",
+        type=int,
+        default=STEP_BUDGET,
+        help=f"instructions the reference may execute per job (default {STEP_BUDGET:_})",
+    )
 
 
 def _weak_text(weak: dict) -> str:
@@ -36,7 +43,10 @@ def run(args: argparse.Namespace, out: TextIO) -> int:
     runs: dict[str, dict] = {}
 
     # Replay every recorded job
-    for r in replay_dir(args.dir, args.lib, args.run or None, args.reexecute or None):
+    replayed = replay_dir(
+        args.dir, args.lib, args.run or None, args.reexecute or None, args.step_budget
+    )
+    for r in replayed:
         n_weak = sum(r.weak_digests.values())
         per = runs.setdefault(r.run, {"jobs": 0, "ok": 0, "weak": 0, "digests": 0})
         total += 1

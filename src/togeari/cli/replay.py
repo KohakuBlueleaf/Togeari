@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from togeari.cli.loading import resolve
-from togeari.conformance.replay import Verdict, conform
+from togeari.conformance.replay import STEP_BUDGET, Verdict, conform
 from togeari.core.construct.errors import Problems
 from togeari.core.contracts.io import JobRecord
 from togeari.core.program.job import JobProgram, build_job_programs
@@ -54,13 +54,14 @@ def replay_dir(
     libs: list[str] | None = None,
     runs: list[str] | None = None,
     reexecute: list[str] | None = None,
+    step_budget: int = STEP_BUDGET,
 ) -> Iterator[Replayed]:
     """Every recorded job of a directory (or of ``runs``), replayed against the program it ran.
 
     Before a run's first job, the run's digest providers are imported, so input
     digests are computed as in the run. With ``reexecute`` (node names), those
     nodes run again and must give their recorded results; every other node
-    replays its record.
+    replays its record. ``step_budget`` bounds the reference's instructions per job.
     """
     mode = "reexecute" if reexecute else "replay"
     pure = set(reexecute or ())
@@ -100,5 +101,12 @@ def replay_dir(
             job["missing"],
             record=job["record"],
         )
-        verdict = conform(programs[program], rec, job["inputs"] or {}, mode=mode, pure=pure)
+        verdict = conform(
+            programs[program],
+            rec,
+            job["inputs"] or {},
+            mode=mode,
+            pure=pure,
+            step_budget=step_budget,
+        )
         yield Replayed(job["key"], name, verdict, job["weak"], run, weak_digests)

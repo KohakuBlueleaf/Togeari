@@ -20,18 +20,24 @@ class Recorder(BasePlugin):
     """Writes the conformance records of every job the machine records into ``path``.
 
     At most ``queue_size`` records wait for the writer; records past it are
-    dropped and counted (``recorder`` query, ``dropped``).
+    dropped and counted (``recorder`` query, ``dropped``). At unload the writer drains
+    within about ``close_s`` (twice it at most); records still queued then are dropped.
     """
 
     name = "recorder"
     priority = 900
 
     def __init__(
-        self, path: str | Path, libraries: list[str] | None = None, queue_size: int = 100_000
+        self,
+        path: str | Path,
+        libraries: list[str] | None = None,
+        queue_size: int = 100_000,
+        close_s: float = 10.0,
     ):
         self.path = Path(path)
         self.libraries = libraries
         self.queue_size = queue_size
+        self.close_s = close_s
         self.ctx: PluginContext | None = None
         self.writer: ArchiveWriter | None = None
         self.inputs: dict[str, bytes | None] = {}
@@ -49,7 +55,7 @@ class Recorder(BasePlugin):
 
     def on_unload(self) -> None:
         if self.writer is not None:
-            self.writer.close()
+            self.writer.close(timeout=self.close_s)
             self.writer = None
 
     def contribute_queries(self) -> dict:

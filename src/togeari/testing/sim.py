@@ -9,6 +9,7 @@ differ by input; a seed shuffles completion order; ``item_error_rate`` injects
 import hashlib
 import heapq
 import itertools
+import logging
 import random
 import threading
 import time
@@ -17,6 +18,8 @@ from typing import Any
 from togeari.core.contracts.engine import EngineBase, Load
 from togeari.core.contracts.results import Cancelled, ItemError, Ok, UnitError
 from togeari.engines.common.errors import EngineStopped
+
+log = logging.getLogger("togeari.testing")
 
 
 class SimError(RuntimeError):
@@ -68,7 +71,12 @@ class _Clock(threading.Thread):
                 if n not in self.pending:
                     continue
                 self.pending.discard(n)
-            fn()
+
+            # A raising callback is logged; the clock keeps delivering the others
+            try:
+                fn()
+            except Exception:
+                log.warning("sim clock %s: a delivery raised", self.name, exc_info=True)
 
     def stop(self) -> None:
         with self.cv:

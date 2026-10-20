@@ -24,6 +24,9 @@ from togeari.core.contracts.io import copy_value
 
 MODES = ("replay", "reexecute")
 
+# Instructions the reference interpreter may execute per job, by default
+STEP_BUDGET = 1_000_000
+
 
 @dataclass
 class Verdict:
@@ -166,13 +169,15 @@ def replay(
     mode: str = "replay",
     pure: Callable[[str], bool] | Collection[str] | None = None,
     engine_errors: bool = True,
+    step_budget: int = STEP_BUDGET,
 ) -> tuple[str, Any, list[str]]:
     """Run the reference over one job's record.
 
     ``mode``: ``replay`` or ``reexecute`` (``pure`` names the nodes run again).
     ``engine_errors``: under ``reexecute``, a recorded failure of a pure node the node
     itself does not raise is kept as an engine failure (an injected or engine-side
-    error); False makes it a mismatch.
+    error); False makes it a mismatch. ``step_budget``: instructions the reference may
+    execute before it fails.
 
     Returns ``("ok", outputs, notes)``, ``("error", {kind, node}, notes)`` or
     ``("mismatch", reason, notes)``.
@@ -184,7 +189,7 @@ def replay(
             raise ValueError(f"mode must be one of {MODES}, not {mode!r}")
     hook = _Hook(record, mode == "reexecute", pure_test(pure), engine_errors)
 
-    interp = Interpreter(job_program.written, job_program.env, hook=hook, step_budget=1_000_000)
+    interp = Interpreter(job_program.written, job_program.env, hook=hook, step_budget=step_budget)
     try:
         if job_program.entry is None:
             interp.run()
@@ -211,12 +216,13 @@ def conform(
     mode: str = "replay",
     pure: Callable[[str], bool] | Collection[str] | None = None,
     engine_errors: bool = True,
+    step_budget: int = STEP_BUDGET,
 ) -> Verdict:
     """Compare one machine job record (with its ``record``) against the reference."""
     rec = job_record.record
     if rec is None:
         return Verdict(False, "job was not recorded")
-    status, ref, notes = replay(job_program, rec, inputs, mode, pure, engine_errors)
+    status, ref, notes = replay(job_program, rec, inputs, mode, pure, engine_errors, step_budget)
     match status:
         case "mismatch":
             return Verdict(False, ref, details=notes)

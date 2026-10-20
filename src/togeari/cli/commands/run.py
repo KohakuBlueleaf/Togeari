@@ -27,11 +27,10 @@ def run(args: argparse.Namespace, out: TextIO) -> int:
         print("the machine module gives no source or no sink", file=out)
         return 1
 
-    # The run report joins the machine's plugins before the run starts
-    if args.report:
-        machine.command("plugin_add", plugin=RunReport(args.report)).result()
-
+    # The run report joins the machine's plugins before the run starts; the machine stops either way
     try:
+        if args.report:
+            machine.command("plugin_add", plugin=RunReport(args.report)).result()
         summary = machine.run(source, sink, limit=args.limit)
     finally:
         machine.stop()

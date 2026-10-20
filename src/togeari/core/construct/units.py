@@ -15,12 +15,14 @@ def start_all(units: list, timeout: float) -> list[tuple[Any, str]]:
     """Start every unit on its own thread and wait at most ``timeout``; (unit, problem) per failure.
 
     A unit whose ``start()`` hangs is reported as timed out and left to its
-    (daemon) thread.
+    (daemon) thread; if it finishes starting later, that thread stops it.
     """
     units = list({id(u): u for u in units}.values())
     if not units:
         return []
     results: dict[int, str | None] = {}
+    lock = threading.Lock()
+    given_up: set[int] = set()
 
     def start(u: Any) -> None:
         try:
@@ -30,9 +32,17 @@ def start_all(units: list, timeout: float) -> list[tuple[Any, str]]:
                 if time.monotonic() > deadline:
                     raise TimeoutError(f"not ready after {timeout}s")
                 time.sleep(READY_POLL_S)
-            results[id(u)] = None
+            outcome = None
         except Exception as exc:  # noqa: BLE001
-            results[id(u)] = f"start() failed: {exc}"
+            outcome = f"start() failed: {exc}"
+
+        # A unit reported as timed out is stopped once its start returns
+        with lock:
+            results[id(u)] = outcome
+            late = id(u) in given_up
+        if late:
+            log.warning("unit %s started after its start timed out; stopping it", u.name)
+            stop_all([u])
 
     threads = [
         threading.Thread(target=start, args=(u,), name=f"togeari-start-{u.name}", daemon=True)
@@ -45,11 +55,13 @@ def start_all(units: list, timeout: float) -> list[tuple[Any, str]]:
         t.join(max(0.0, end - time.monotonic()))
 
     failures = []
-    for u in units:
-        if id(u) not in results:
-            failures.append((u, f"start() timed out after {timeout}s"))
-        elif results[id(u)] is not None:
-            failures.append((u, results[id(u)]))
+    with lock:
+        for u in units:
+            if id(u) not in results:
+                given_up.add(id(u))
+                failures.append((u, f"start() timed out after {timeout}s"))
+            elif results[id(u)] is not None:
+                failures.append((u, results[id(u)]))
     return failures
 
 

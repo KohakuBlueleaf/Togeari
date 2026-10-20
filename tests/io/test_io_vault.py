@@ -3,16 +3,19 @@ through a db."""
 
 import pickle
 
-from kohakunode.testing import LIB
-from kohakunode.testing.progen import inc, mix
-from kohakuvault import KVault
+import pytest
 
-from conftest import build, run_jobs
-from togeari import Inline, Lane, Machine, Use
-from togeari.core.contracts.io import MISS
-from togeari.io.vault import Vault
-from togeari.stores.vault import VaultStore
-from togeari.testing import SimCall
+KVault = pytest.importorskip("kohakuvault").KVault
+
+from kohakunode.testing import LIB  # noqa: E402
+from kohakunode.testing.progen import inc, mix  # noqa: E402
+
+from conftest import build, run_jobs  # noqa: E402
+from togeari import Inline, Lane, Machine, Use  # noqa: E402
+from togeari.core.contracts.io import MISS  # noqa: E402
+from togeari.io.vault import Vault  # noqa: E402
+from togeari.stores.vault import VaultStore  # noqa: E402
+from togeari.testing import SimCall  # noqa: E402
 
 PROGRAM = """
 @def (a: int)main(result):

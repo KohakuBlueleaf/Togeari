@@ -23,7 +23,7 @@ KNOB_DEFAULTS: dict[str, Any] = {
     "gc_threshold": (50_000, 20, 100),
     "squash_reuse": 1024,
     "squash_reuse_bytes": 64 << 20,
-    "release_gil": True,
+    "gil_offer_us": 0,
 }
 POLICY_KNOBS = ("admission", "issue")
 MUTATES_MODES = ("copy-if-speculative", "wait", "copy-always")
@@ -35,7 +35,14 @@ def _int(v: Any) -> bool:
 
 
 def _num(v: Any) -> bool:
-    return isinstance(v, Real) and not isinstance(v, bool)
+    """A real number the cores can read as a float (an int past the float range is not)."""
+    if not isinstance(v, Real) or isinstance(v, bool):
+        return False
+    try:
+        float(v)
+    except OverflowError:
+        return False
+    return True
 
 
 def _problem(name: str, v: Any) -> str | None:
@@ -47,7 +54,7 @@ def _problem(name: str, v: Any) -> str | None:
         case "snapshot_every" | "step_budget" | "record_limit":
             ok = v is None or (_int(v) and v >= 1)
             want = "None or an int >= 1"
-        case "run_ahead" | "fingerprint_inputs" | "assert_alias" | "release_gil":
+        case "run_ahead" | "fingerprint_inputs" | "assert_alias":
             ok = isinstance(v, bool)
             want = "a bool"
 
@@ -69,9 +76,9 @@ def _problem(name: str, v: Any) -> str | None:
         case "squash_reuse_bytes":
             ok = v is None or (_int(v) and v >= 0)
             want = "None (no byte cap) or an int >= 0"
-        case "inline_warn_us":
+        case "inline_warn_us" | "gil_offer_us":
             ok = v is None or (_num(v) and v >= 0)
-            want = "None or a number >= 0"
+            want = "None or a number >= 0 within the float range (inf included)"
         case "record":
             ok = v is None or (_num(v) and 0 <= v <= 1)
             want = "None or a rate in [0, 1]"

@@ -373,13 +373,18 @@ impl PyCore {
         Ok(out)
     }
 
-    /// GIL-free work so far: ``regions``, ``free_steps``, ``gil_steps``, ``free_orders``,
-    /// ``gil_orders``, ``free_retires``, ``gil_retires``; and the live Rust objects.
+    /// Region work and GIL offers so far: ``regions`` (``regions_released`` +
+    /// ``regions_held``), ``offers`` (released regions + ``pure_offers``), ``free_steps``,
+    /// ``gil_steps``, ``free_orders``, ``gil_orders``, ``free_retires``, ``gil_retires``.
     fn native_stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         self.c().outside_region(py);
         let r = self.c().regions.get();
         let d = PyDict::new(py);
         d.set_item("regions", r.regions)?;
+        d.set_item("regions_released", r.regions_released)?;
+        d.set_item("regions_held", r.regions_held)?;
+        d.set_item("offers", r.offers)?;
+        d.set_item("pure_offers", r.pure_offers)?;
         d.set_item("free_steps", r.free_steps)?;
         d.set_item("gil_steps", r.gil_steps)?;
         d.set_item("free_orders", r.free_orders)?;

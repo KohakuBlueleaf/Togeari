@@ -207,14 +207,69 @@ impl Core {
         Ok(())
     }
 
-    /// Whether this cycle may release the GIL: the knob is on and no bus listener acts on events
-    /// as they come (a passive one receives them when the region ends).
+    /// This cycle's offer interval (``gil_offer_us`` in seconds; None: no offers), and whether it
+    /// runs regions: offers are on and no bus listener acts on events as they come (a passive one
+    /// receives them when the region ends).
     fn regions_ok(&self, py: Python<'_>) -> PyResult<bool> {
-        if !self.h.knob(py, K::ReleaseGil)?.is_truthy()? {
+        let us = self.h.knob_f64(py, K::GilOfferUs)?;
+        self.offer_s.set(us.map(|u| u / 1e6));
+        if us.is_none() {
             return Ok(false);
         }
         let acting = self.h.bus.bind(py).getattr(intern!(py, "acting"))?;
         Ok(!acting.is_truthy()?)
+    }
+
+    /// Whether a GIL offer is due: offers are on and ``gil_offer_us`` passed on the core's clock
+    /// (wall time, Python callbacks of the cycle included) since the last offer or wait.
+    fn offer_due(&self) -> bool {
+        self.offer_s
+            .get()
+            .is_some_and(|s| self.perf() - self.last_offer.get() >= s)
+    }
+
+    fn note_offer(&self) {
+        self.last_offer.set(self.perf());
+        self.offered.set(true);
+    }
+
+    /// Run a region's work: with the GIL released when an offer is due, else with it held (the
+    /// same code, so the same decisions). Only a released region sets the gate: with the GIL
+    /// held no other thread reads the core, and a finalizer run inside the work could otherwise
+    /// wait on the dispatcher's own gate.
+    fn region<T: Send>(&self, py: Python<'_>, work: impl FnOnce() -> T + Send) -> T {
+        if !self.offer_due() {
+            self.count_region(|r| {
+                r.regions += 1;
+                r.regions_held += 1;
+            });
+            return work();
+        }
+        self.count_region(|r| {
+            r.regions += 1;
+            r.regions_released += 1;
+            r.offers += 1;
+        });
+        self.gate.enter();
+        let out = py.detach(work);
+        self.gate.leave();
+        self.note_offer();
+        out
+    }
+
+    /// A pure GIL offer at the end of a cycle when one is due and no region of the cycle made
+    /// one: neighbours get the GIL with acting listeners, Python issue policies and cycles that
+    /// run no region too.
+    fn offer_at_end(&self, py: Python<'_>) {
+        if self.offered.get() || !self.offer_due() {
+            return;
+        }
+        self.count_region(|r| {
+            r.pure_offers += 1;
+            r.offers += 1;
+        });
+        py.detach(|| {});
+        self.note_offer();
     }
 
     // ------------------------------------------------------------ the cycle
@@ -223,6 +278,7 @@ impl Core {
         self.apply_collector(py, &shell)?;
 
         // Inbox: wait for the first event (idle time), then drain the rest in batches
+        self.offered.set(false);
         let t0 = self.perf();
         let timeout = self.next_timeout(py)?;
         let busy = self.perf() - t0;
@@ -233,7 +289,12 @@ impl Core {
                 rest = inbox.get().take_all();
                 rest.pop_front()
             }
-            t => inbox.get().wait(py, t)?,
+            t => {
+                // Waiting releases the GIL: an offer, so no pure offer follows this cycle
+                let got = inbox.get().wait(py, t)?;
+                self.note_offer();
+                got
+            }
         };
         let t_cycle = self.perf();
         if let Some(ev) = first {
@@ -341,6 +402,14 @@ impl Core {
         self.add_phase("admit", t6 - t5);
         self.sweep_owned();
 
+        // A pure offer, timed as its own phase: the time a neighbour holds the GIL is busy time
+        self.offer_at_end(py);
+        let t6 = {
+            let t = self.perf();
+            self.add_phase("offer", t - t6);
+            t
+        };
+
         // Cycle totals and time histogram: bucket = bit length of the cycle's microseconds
         let dt = t6 - t_cycle;
         let cycles = {
@@ -411,10 +480,8 @@ impl Core {
             let me = Unshared(self);
             let rest = Unshared(&ids[i..]);
             let caps_ref = Unshared(&caps);
-            self.gate.enter();
-            self.count_region(|r| r.regions += 1);
-            let (out, ordered) = py
-                .detach(move || {
+            let (out, ordered) = self
+                .region(py, move || {
                     let (me, rest, caps) = (me, rest, caps_ref);
                     for (k, jid) in rest.0.iter().enumerate() {
                         let Some(job) = me.0.job(*jid) else { continue };
@@ -433,7 +500,6 @@ impl Core {
                     Unshared((Ok(None), plan.and_then(|p| me.0.take_order(p))))
                 })
                 .0;
-            self.gate.leave();
             self.flush(py)?;
             match out {
                 Ok(None) => {
@@ -488,10 +554,8 @@ impl Core {
             let me = Unshared(self);
             let rest = Unshared(&ids[i..]);
             let caps_ref = Unshared(&caps);
-            self.gate.enter();
-            self.count_region(|r| r.regions += 1);
-            let out = py
-                .detach(move || {
+            let out = self
+                .region(py, move || {
                     let (me, rest, caps) = (me, rest, caps_ref);
                     for (k, jid) in rest.0.iter().enumerate() {
                         let Some(job) = me.0.job(*jid) else { continue };
@@ -508,7 +572,6 @@ impl Core {
                     Unshared(Ok(None))
                 })
                 .0;
-            self.gate.leave();
             self.flush(py)?;
             match out {
                 Ok(None) => break,

@@ -71,11 +71,16 @@ pub struct Stats {
     pub extra: IndexMap<&'static str, i64>,
 }
 
-/// GIL-free work so far: fetch regions, steps fetched in them and left for the GIL, issue
-/// orderings and retires done in a region and left for the GIL.
+/// Region work so far: regions (each released or held, by the offer clock), steps fetched in
+/// them and left for the GIL path, issue orderings and retires done in a region and left for the
+/// GIL path; GIL offers (released regions and pure offers at a cycle's end).
 #[derive(Default, Clone, Copy)]
 pub struct RegionCounts {
     pub regions: u64,
+    pub regions_released: u64,
+    pub regions_held: u64,
+    pub pure_offers: u64,
+    pub offers: u64,
     pub free_steps: u64,
     pub gil_steps: u64,
     pub free_orders: u64,
@@ -121,6 +126,12 @@ pub struct Core {
     pub bus_quiet: Cell<bool>,
     pub gate: Arc<Gate>,
     pub regions: Cell<RegionCounts>,
+
+    // GIL offers: this cycle's least time between two (None: none), the last one's ``perf``
+    // time, and whether this cycle made one
+    pub offer_s: Cell<Option<f64>>,
+    pub last_offer: Cell<f64>,
+    pub offered: Cell<bool>,
 }
 
 /// A lane object the core met, and its native state when the machine adopted it.
@@ -173,6 +184,9 @@ impl Core {
             bus_quiet: Cell::new(false),
             gate: Arc::new(Gate::default()),
             regions: Cell::new(RegionCounts::default()),
+            offer_s: Cell::new(None),
+            last_offer: Cell::new(0.0),
+            offered: Cell::new(false),
         })
     }
 

@@ -70,8 +70,9 @@ class Core:
     def window_total(self) -> int: ...
     def drain_dead(self) -> list[tuple[Any, str, list, Any]]: ...
     def native_stats(self) -> dict[str, int]:
-        """GIL-free work: ``regions``, ``free_steps``, ``gil_steps``, ``free_orders``,
-        ``gil_orders``, ``free_retires``, ``gil_retires``."""
+        """Regions and GIL offers: ``regions`` (``regions_released`` + ``regions_held``),
+        ``offers`` (released regions + ``pure_offers``), ``free_steps``, ``gil_steps``,
+        ``free_orders``, ``gil_orders``, ``free_retires``, ``gil_retires``."""
 
     def inline_totals(self) -> dict[str, float]: ...
     @property

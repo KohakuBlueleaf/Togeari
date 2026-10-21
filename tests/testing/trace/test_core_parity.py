@@ -15,6 +15,8 @@ import math
 import random
 import re
 import sys
+import threading
+import time
 import types
 import weakref
 from collections import OrderedDict
@@ -27,6 +29,8 @@ from trace_machines import CAPACITY, LANE_OF, generated
 
 from togeari import Inline, Lane, Machine, Retry, Use
 from togeari.core.construct.core import rust_available
+from togeari.core.construct.errors import ConstructionError
+from togeari.core.construct.knobs import checked
 from togeari.core.contracts.digest import digest_with_weak
 from togeari.core.contracts.io import SourceItem
 from togeari.core.contracts.results import UnitError
@@ -73,7 +77,9 @@ CONFIGS = {
     "not_recorded": {"record": None},
     "debug_checks": {"assert_alias": True, "fingerprint_inputs": True},
     "admission_mix": {"admission": All(Fixed(4), MemoryBound(1 << 30), TargetLoad("call", 64))},
-    "gil_held": {"release_gil": False},
+    "offer_0": {"gil_offer_us": 0},
+    "offer_100": {"gil_offer_us": 100},
+    "offer_inf": {"gil_offer_us": math.inf},
     "affinity": {"lane_kw": {"select": Affinity}},
     "affinity_early": {"lane_kw": {"select": Affinity, "forming": "early"}},
     "round_robin_greedy": {
@@ -662,10 +668,104 @@ def test_a_bus_listener_is_passive_only_while_every_registration_is(steps, actin
                 m.bus.unlisten(fn)
     assert m.bus.acting - before == acting
 
-    # An acting listener keeps every cycle under the GIL; a passive one lets regions run
+    # An acting listener keeps every cycle on the GIL path; a passive one lets regions run
     t = run_trace(lambda: m, p.inputs, seed=7)
     regions = t.machine.dispatcher.native_stats()["regions"]
     assert (regions == 0) == (m.bus.acting > 0), (regions, m.bus.acting)
+
+
+@pytest.mark.parametrize("acting", [False, True])
+@pytest.mark.parametrize("offer_us", [0, 100, math.inf, None])
+def test_gil_offers_follow_the_knob_with_or_without_acting_listeners(offer_us, acting):
+    """``gil_offer_us`` sets the GIL offers: at most one per interval on the core's clock, none
+    for inf and None, and pure offers at a cycle's end when no region made one (an acting
+    listener runs no region). Inf runs every region held; 0 releases every one."""
+    p = entry_program(0, jobs=16)
+    m = gen_make(p, gil_offer_us=offer_us)("rust")
+    if acting:
+        m.bus.listen(listener())
+    t0 = time.perf_counter()
+    t = run_trace(lambda: m, p.inputs, seed=7)
+    wall = time.perf_counter() - t0
+    s = t.machine.dispatcher.native_stats()
+    assert s["regions"] == s["regions_released"] + s["regions_held"]
+    assert s["offers"] == s["regions_released"] + s["pure_offers"]
+    match offer_us, acting:
+        case None, _:
+            assert s["offers"] == 0 and s["regions"] == 0, s
+        case math.inf, False:
+            assert s["offers"] == 0 and s["regions"] == s["regions_held"] > 0, s
+        case math.inf, True:
+            assert s["offers"] == 0 and s["regions"] == 0, s
+        case _, True:
+            assert s["regions"] == 0 and s["offers"] == s["pure_offers"] > 0, s
+        case 0, False:
+            assert s["regions_held"] == 0 and s["regions_released"] > 0, s
+        case _:
+            assert s["regions"] > 0, s
+    if offer_us:
+        assert s["offers"] <= wall / (offer_us * 1e-6) + 1, (s, wall)
+
+
+class Neighbour(threading.Thread):
+    """A Python thread that counts its turns, giving the GIL back after each: with a long
+    switch interval it runs only when the dispatcher thread really lets go of the GIL."""
+
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.turns = 0
+        self.stop = threading.Event()
+
+    def run(self):
+        while not self.stop.is_set():
+            self.turns += 1
+            time.sleep(0)
+
+
+def neighbour_turns(offer_us) -> tuple[int, dict]:
+    """The neighbour's turns during one traced run at ``offer_us``, and the core's counts."""
+    p = entry_program(0, jobs=16)
+    m = gen_make(p, gil_offer_us=offer_us)("rust")
+    old = sys.getswitchinterval()
+    sys.setswitchinterval(1.0)
+    n = Neighbour()
+    try:
+        n.start()
+        while n.turns == 0:
+            time.sleep(0.001)
+        start = n.turns
+        t = run_trace(lambda: m, p.inputs, seed=7)
+        turns = n.turns - start
+    finally:
+        n.stop.set()
+        sys.setswitchinterval(old)
+        n.join()
+    return turns, t.machine.dispatcher.native_stats()
+
+
+def test_an_offer_really_lets_a_waiting_thread_run():
+    """Offers are real GIL releases: a neighbour thread gets far more turns at 0 (every region
+    released) than at inf (every region held, no offer), whatever the counters say."""
+    every, s0 = neighbour_turns(0)
+    never, sinf = neighbour_turns(math.inf)
+    assert s0["offers"] > 0 and sinf["offers"] == 0
+    assert every > 4 * never + 20, (every, never, s0, sinf)
+
+
+@pytest.mark.parametrize("core", ["python", "rust"])
+@pytest.mark.parametrize("name", ["gil_offer_us", "inline_warn_us"])
+def test_a_number_knob_past_the_float_range_is_refused(name, core):
+    """An int too large for a float is refused by the knob check, at construction and when set,
+    instead of stopping the dispatcher later."""
+    p = entry_program(0, jobs=4)
+    with pytest.raises(ConstructionError, match=name):
+        gen_make(p, **{name: 10**400})(core)
+    m = gen_make(p, **{name: math.inf})(core)
+    value, problem = checked(name, 10**400, {})
+    assert problem is not None and name in problem
+    assert checked(name, math.inf, {})[1] is None
+    t = run_trace(lambda: m, p.inputs, seed=7)
+    assert len(t.records) == len(p.inputs)
 
 
 # ------------------------------------------------------------ changes made mid-run

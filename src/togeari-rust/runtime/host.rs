@@ -28,7 +28,7 @@ pub enum K {
     SquashReuseBytes,
     InlineWarnUs,
     GcThreshold,
-    ReleaseGil,
+    GilOfferUs,
     Issue,
     Admission,
 }
@@ -49,7 +49,7 @@ const KNOBS: [&str; 18] = [
     "squash_reuse_bytes",
     "inline_warn_us",
     "gc_threshold",
-    "release_gil",
+    "gil_offer_us",
     "issue",
     "admission",
 ];

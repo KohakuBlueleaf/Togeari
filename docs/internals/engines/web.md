@@ -52,7 +52,9 @@ nothing while the loop has not made its closing event yet.
    normally.
 
 Connections are split by `pool_sizes(max_inflight, pool_size)`: `ceil(max_inflight / pool_size)`
-clients sharing `max_inflight` connections as evenly as possible.
+clients sharing `max_inflight` connections as evenly as possible. Every client of one start,
+the health client included, shares one TLS context (`httpx.create_ssl_context()`, built once
+per start): building a context loads the CA store, tens of milliseconds each.
 
 `default_classify` (`engines/web/classify.py`):
 

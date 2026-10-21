@@ -203,11 +203,14 @@ class WebCallEngine(EngineBase):
             loop.close()
 
     async def _main(self, started: threading.Event) -> None:
+        # One TLS context for every client: building one loads the CA store (tens of ms each)
+        tls = httpx.create_ssl_context()
         self.pools = [
             _Pool(
                 httpx.AsyncClient(
                     base_url=self.base_url,
                     headers=self.headers,
+                    verify=tls,
                     # A connection that does not open in time is a unit error, not a long wait
                     timeout=httpx.Timeout(self.timeout_s, connect=self.connect_timeout_s),
                     limits=httpx.Limits(max_connections=size, max_keepalive_connections=size),
@@ -221,6 +224,7 @@ class WebCallEngine(EngineBase):
             self.health_client = httpx.AsyncClient(
                 base_url=self.base_url,
                 headers=self.headers,
+                verify=tls,
                 timeout=httpx.Timeout(self.health_timeout_s),
                 limits=httpx.Limits(max_connections=1, max_keepalive_connections=1),
             )

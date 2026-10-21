@@ -2,6 +2,7 @@
 bounds, one I/O loop per start."""
 
 import json
+import ssl
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -229,5 +230,25 @@ def test_concurrent_starts_open_one_io_loop(server):
         assert until(engine.ready)
         loops = [t for t in threading.enumerate() if t.name == "once-io"]
         assert len(loops) == 1
+    finally:
+        engine.stop()
+
+
+def test_a_start_builds_one_tls_context_for_every_client(server, monkeypatch):
+    # Each context loads the CA store; one per client made a 64-request engine's start slow
+    url, _ = server
+    built = []
+    original = ssl.create_default_context
+
+    def counting(*args, **kwargs):
+        built.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ssl, "create_default_context", counting)
+    engine = WebCallEngine(url, max_inflight=64, pool_size=2, health_path="/health")
+    engine.start()
+    try:
+        assert len(engine.pools) == 32 and engine.health_client is not None
+        assert len(built) == 1, len(built)
     finally:
         engine.stop()

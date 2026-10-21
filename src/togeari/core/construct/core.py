@@ -1,8 +1,8 @@
 """Which core runs a machine (spec/11 §11.2).
 
-The Python runtime is the reference; the Rust core is ``togeari._rs``. ``"auto"`` takes Rust
-when the extension imports and holds the native dispatcher, else Python. ``TOGEARI_CORE`` sets
-the default for a machine built without ``core=``.
+The Python runtime is the reference; the Rust core is ``togeari._rs``. ``"auto"`` takes
+``AUTO`` (the core the measurements of spec/11 §11.6 chose). ``TOGEARI_CORE`` sets the default
+for a machine built without ``core=``.
 """
 
 import os
@@ -15,6 +15,9 @@ except ImportError:
 
 CORES = ("auto", "rust", "python")
 ENV = "TOGEARI_CORE"
+
+# The core "auto" runs: Python until the measurements decide (spec/11 §11.6)
+AUTO = "python"
 
 
 def native() -> ModuleType | None:
@@ -47,7 +50,7 @@ def resolve(core: str | None) -> tuple[str, str | None]:
         case "python":
             return "python", None
         case "auto":
-            return ("rust" if rust_available() else "python"), None
+            return ("rust" if AUTO == "rust" and rust_available() else "python"), None
         case "rust" if rust_available():
             return "rust", None
         case "rust" if _rs is None:

@@ -113,6 +113,16 @@ collector's old-generation scan share and the third is ignored. On the ceiling s
 default gives 6–14% more node calls per second (medians of five interleaved rounds) than
 Python's `(2000, 10, 10)` ([performance](../performance/README.md)).
 
+## The native core
+
+| Knob | Default | Trades |
+|---|---|---|
+| `release_gil` | `True` | the Rust core fetches, orders the ready statements and retires without the GIL (engine threads run Python meanwhile) against a handoff of the GIL per fetch and per retire phase, and one per job whose fetch or retire needs Python; a bus listener not registered `passive` keeps the GIL held; the Python core ignores it |
+
+`Machine(core="rust")` (or `TOGEARI_CORE=rust`) runs the Rust core; it takes every knob above.
+`machine.dispatcher.native_stats()` counts its GIL-free regions and the work they did
+([internals](../internals/native/gil.md)).
+
 ## Reading a run
 
 ```python

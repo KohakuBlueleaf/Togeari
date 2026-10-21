@@ -4,7 +4,7 @@
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Whether this build holds the native dispatcher; `Machine(core="rust")` needs it.
-pub const DISPATCHER: bool = false;
+pub const DISPATCHER: bool = true;
 
 /// The extension's description.
 #[derive(Debug, Clone, PartialEq, Eq)]

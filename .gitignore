@@ -10,5 +10,6 @@ dist/
 target/
 *.pyd
 *.so
+*.pdb
 .pytest_cache/
 .ruff_cache/

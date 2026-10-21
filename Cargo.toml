@@ -16,6 +16,7 @@ path = "src/togeari-rust/lib.rs"
 
 [dependencies]
 pyo3 = "0.27"
+indexmap = "2"
 
 [features]
 # A wheel build links no libpython; `cargo test --no-default-features` links it, so the

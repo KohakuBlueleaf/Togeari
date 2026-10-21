@@ -3,43 +3,15 @@
 The Python runtime under `src/togeari/core/` is the reference implementation of the machine:
 it defines every decision the dispatcher makes, every event and every hook point. The native
 core is a second implementation of the same protocol in Rust, built into the same wheel as the
-extension module `togeari._rs`.
+extension module `togeari._rs`. `Machine(core="rust")` runs it; the two cores make the same
+decisions in the same order on the same events ([parity](parity.md)).
 
-## Status
-
-The extension is built and shipped. It carries its version and `core_info()`; it holds no
-dispatcher yet (`togeari._rs.DISPATCHER` is `False`), so every machine runs the Python core.
-
-## Packaging
-
-| File | Holds |
-|---|---|
-| `Cargo.toml` | the crate `togeari`, lib `_rs` at `src/togeari-rust/lib.rs`; the package version |
-| `pyproject.toml` | the maturin build: `python-source = "src"`, `module-name = "togeari._rs"`, `dynamic = ["version"]` |
-| `rustfmt.toml` | `max_width = 100` |
-| `src/togeari/_rs.pyi` | stubs of the extension |
-| `src/togeari/py.typed` | the package is typed |
-
-The version lives in `Cargo.toml` alone; maturin writes it into the wheel's metadata in
-PEP 440 form (`0.2.0-dev0` becomes `0.2.0.dev0`), and `togeari.__version__` reads that
-metadata. `tests/machine/package/test_version.py` checks the mapping, the installed version
-and the extension's own `__version__` against `Cargo.toml`.
-
-The sdist carries only the crate (`Cargo.toml`'s `include`), the Python package, `pyproject.toml`,
-the README and the license.
-
-## Crate layout
-
-```
-src/togeari-rust/
-├── lib.rs        the #[pymodule] _rs: registers every module's bindings
-└── info/         the extension's description
-    ├── core.rs   VERSION, DISPATCHER, CoreInfo, core_info(); unit tests
-    └── python.rs __version__, DISPATCHER, core_info() -> dict
-```
-
-Modules mirror `src/togeari/core/`. Each splits pure Rust (`core.rs` and siblings, unit tests
-next to the code) from its bindings (`python.rs`, with a `register(m)` that `lib.rs` calls).
+| Page | Covers | Code |
+|---|---|---|
+| [Dispatcher core](core.md) | the state model, memory, the stages, builtin policies, digests, events, views | `src/togeari-rust/{program,runtime,contracts}/`, `core/runtime/native.py` |
+| [Native lanes](lanes.md) | adoption, settings, queues, builtin policies, callbacks | `src/togeari-rust/lanes/`, `core/lanes/native.py` |
+| [The GIL](gil.md) | the inbox, GIL-free regions, the region gate, what keeps the GIL | `runtime/{inbox,gate,cycle}.rs`, `runtime/frontend/fetch.rs`, `runtime/retire/retire.rs` |
+| [Parity](parity.md) | what both cores share, the trace checks | `tests/testing/trace/test_core_parity.py` |
 
 ## Selection
 
@@ -48,17 +20,79 @@ next to the code) from its bindings (`python.rs`, with a `register(m)` that `lib
 | Asked (`core=`, else `TOGEARI_CORE`, else `"auto"`) | Runs |
 |---|---|
 | `"python"` | the Python core |
-| `"auto"` | Rust when `togeari._rs` imports and holds the dispatcher, else Python |
-| `"rust"` | Rust; without the dispatcher, a `ConstructionError` naming `core=` or `TOGEARI_CORE=` |
+| `"auto"` | `AUTO` (`"python"`), the core the measurements of spec/11 §11.6 chose; Python when that core is not built |
+| `"rust"` | the Rust core; without the extension, or one built without the dispatcher, a `ConstructionError` naming `core=` or `TOGEARI_CORE=` |
 | anything else | a `ConstructionError` |
 
-`Machine.core` is the core that runs. `togeari doctor` prints the default machine's core and
-the extension; the run report's `spec.json` carries `core`.
+`Machine.core` is the core that runs. A Rust machine's dispatcher is a `NativeDispatcher` and
+its lanes are adopted ([lanes](lanes.md)). `togeari doctor` prints the default machine's core
+and the extension; the run report's `spec.json` carries `core`.
+
+## Packaging
+
+| File | Holds |
+|---|---|
+| `Cargo.toml` | the crate `togeari`, lib `_rs` at `src/togeari-rust/lib.rs`, deps `pyo3`, `indexmap`; the package version |
+| `pyproject.toml` | the maturin build: `python-source = "src"`, `module-name = "togeari._rs"`, `dynamic = ["version"]` |
+| `rustfmt.toml` | `max_width = 100` |
+| `src/togeari/_rs.pyi` | stubs of the extension |
+| `src/togeari/py.typed` | the package is typed |
+
+The version lives in `Cargo.toml` alone; maturin writes it into the wheel's metadata in
+PEP 440 form (`0.2.0-dev0` becomes `0.2.0.dev0`), and `togeari.__version__` reads that
+metadata. `tests/machine/package/test_version.py` checks the mapping, the installed version
+and the extension's own `__version__` against `Cargo.toml`. The sdist carries only the crate
+(`Cargo.toml`'s `include`), the Python package, `pyproject.toml`, the README and the license.
+
+## Crate layout
+
+```
+src/togeari-rust/
+├── lib.rs              the #[pymodule] _rs (gil_used): registers every module's bindings
+├── info/               the extension's description (version, DISPATCHER, core_info)
+├── contracts/          the canonical digest
+│   ├── hash.rs         SHA-256 and SHA-1
+│   ├── digest.rs       the digest feed of builtin values; other values fed by Python
+│   └── python.rs       togeari._rs.digest, digest_with_weak
+├── program/            code memory as the core reads it
+│   ├── core.rs         names, name sets, instructions, decode tables, regions, @try tables
+│   └── python.rs       import of one region from the Python code memory
+├── runtime/            the dispatcher
+│   ├── state/          keys, slots, name maps, frames, strands, inflights, window, jobs
+│   ├── frontend/       fetch and rename, control (park, joins), each
+│   ├── backend/        readiness, issue, writeback
+│   ├── retire/         retire, faults and squashes, snapshots
+│   ├── pool/           job start and end, records, admission
+│   ├── core.rs         the Core: pool, scheduling sets, counters
+│   ├── host.rs         the Python side the core calls into, the knobs it reads
+│   ├── builtins.rs     the builtin policy methods, told apart by the function they resolve to
+│   ├── events.rs       bus events, result and error kinds
+│   ├── gate.rs         the region gate
+│   ├── inbox.rs        the native inbox
+│   ├── cycle.rs        the cycle, the inbox drain, GIL-free regions
+│   ├── traverse.rs     the collector's walk over the core, its teardown
+│   └── python.rs       togeari._rs.Core, Owner, the Inbox's Python methods, live_objects
+└── lanes/              native lanes
+    ├── queue.rs        queues, buckets, ripe and time heaps (no Python call)
+    ├── lane.rs         unit states, submissions, results, timers, health, attach / detach
+    ├── pump.rs         unit order, admission, batch counts, taking, submitting
+    ├── policy.rs       a lane's former and selector as one lane operation runs them
+    └── python.rs       togeari._rs.Lane, Done, Bucket, Head
+```
+
+Modules mirror `src/togeari/core/`; each `python.rs` holds its module's Python classes and
+functions. `lanes/queue.rs`, `contracts/hash.rs`, `runtime/gate.rs`, `runtime/state/` and
+`program/core.rs` make no call into Python; the other files make the calls the Python core
+makes at the same points (engines, policies written in Python, plugins, stores, values). Unit
+tests sit next to the code (`program/core.rs`, `contracts/hash.rs`, `lanes/queue.rs`,
+`runtime/state/{key,names,slot}.rs`, `info/core.rs`); the parts that call into Python are
+checked through the Python suite and the [parity](parity.md) traces.
 
 ## Building
 
 ```
 uv pip install -e ".[dev,web,vault]"          # builds the extension into src/togeari/
+maturin develop --release                     # rebuilds it in place
 maturin build --release --out dist            # a wheel
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings

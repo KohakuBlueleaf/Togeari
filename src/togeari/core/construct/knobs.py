@@ -23,6 +23,7 @@ KNOB_DEFAULTS: dict[str, Any] = {
     "gc_threshold": (50_000, 20, 100),
     "squash_reuse": 1024,
     "squash_reuse_bytes": 64 << 20,
+    "release_gil": True,
 }
 POLICY_KNOBS = ("admission", "issue")
 MUTATES_MODES = ("copy-if-speculative", "wait", "copy-always")
@@ -46,7 +47,7 @@ def _problem(name: str, v: Any) -> str | None:
         case "snapshot_every" | "step_budget" | "record_limit":
             ok = v is None or (_int(v) and v >= 1)
             want = "None or an int >= 1"
-        case "run_ahead" | "fingerprint_inputs" | "assert_alias":
+        case "run_ahead" | "fingerprint_inputs" | "assert_alias" | "release_gil":
             ok = isinstance(v, bool)
             want = "a bool"
 

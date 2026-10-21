@@ -44,6 +44,10 @@ How the machine is built, file by file. The user-facing picture is in
 | 32 | [Engine checks](verification/engine-checks.md) | `testing/check.py` |
 | 33 | [Decision logs and traces](verification/trace.md) | `testing/trace/`, `tests/testing/trace/` |
 | 34 | [Native core](native/README.md) | `src/togeari-rust/`, `core/construct/core.py`, `Cargo.toml` |
+| 35 | [Native dispatcher](native/core.md) | `src/togeari-rust/{program,runtime,contracts}/`, `core/runtime/native.py` |
+| 36 | [Native lanes](native/lanes.md) | `src/togeari-rust/lanes/`, `core/lanes/native.py` |
+| 37 | [The GIL](native/gil.md) | `src/togeari-rust/runtime/{inbox,gate,cycle}.rs`, `core/observe/bus.py` |
+| 38 | [Parity of the cores](native/parity.md) | `tests/testing/trace/test_core_parity.py` |
 
 ## Layout
 
@@ -62,7 +66,7 @@ docs/internals/
 ├── plugins/        hooks, queries and commands, event bus, inspector
 ├── engines/        the builtin Python and web call engines
 ├── verification/   conformance replay, generated programs, engine checks, traces
-└── native/         the Rust extension togeari._rs, packaging, core selection
+└── native/         the Rust core: packaging and selection, dispatcher, lanes, the GIL, parity
 ```
 
 ## One statement, end to end

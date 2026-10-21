@@ -9,6 +9,7 @@ from typing import Any
 from togeari.core.construct.errors import ConstructionError, Problem
 from togeari.core.construct.units import start_all, stop_all
 from togeari.core.lanes.lane import Lane
+from togeari.core.lanes.native import adopt
 from togeari.core.program.bind import check_unit
 
 
@@ -109,6 +110,10 @@ class UnitStage:
         lane.hook_submit = d.before_submit
         lane.emit = functools.partial(self.lane_event, lane.name)
         lane.wants = self.bus.wants
+
+        # The native core runs its lanes' queues and issue logic too
+        if self.core == "rust":
+            adopt(lane)
 
     def lane_event(self, lane_name: str, kind: str, **fields: Any) -> None:
         """Lane events (with the lane's name) go to the bus; unit state changes also to

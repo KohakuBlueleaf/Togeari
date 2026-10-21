@@ -26,24 +26,30 @@ def no_env(monkeypatch):
 
 
 @pytest.fixture
-def with_dispatcher(monkeypatch):
-    """An extension that holds the native dispatcher, for the selection rules alone."""
+def without_dispatcher(monkeypatch):
+    """An extension built without the native dispatcher, for the selection rules alone."""
 
     class Native:
         __version__ = "0.0.0"
-        DISPATCHER = True
+        DISPATCHER = False
 
     monkeypatch.setattr(core, "_rs", Native)
 
 
-def test_the_extension_is_built_and_holds_no_dispatcher_yet():
+@pytest.fixture
+def auto_rust(monkeypatch):
+    """`"auto"` taking the Rust core, as the measurements may decide."""
+    monkeypatch.setattr(core, "AUTO", "rust")
+
+
+def test_the_extension_is_built_and_holds_the_dispatcher():
     rs = core.native()
     assert rs is not None
-    assert rs.DISPATCHER is False
+    assert rs.DISPATCHER is True
     info = rs.core_info()
-    assert (info["version"], info["dispatcher"]) == (rs.__version__, False)
+    assert (info["version"], info["dispatcher"]) == (rs.__version__, True)
     assert isinstance(info["debug"], bool)
-    assert core.rust_available() is False
+    assert core.rust_available() is True
 
 
 @pytest.mark.parametrize(
@@ -57,7 +63,17 @@ def test_auto_and_python_run_the_python_core(no_env, asked, resolved):
         m.stop()
 
 
-def test_rust_without_the_dispatcher_is_a_construction_error(no_env):
+def test_rust_runs_the_native_dispatcher(no_env):
+    m = machine(core="rust")
+    try:
+        assert m.core == "rust"
+        assert type(m.dispatcher).__name__ == "NativeDispatcher"
+        assert m.submit({"a": 1}).result(10).outputs == {"b": 2}
+    finally:
+        m.stop()
+
+
+def test_rust_without_the_dispatcher_is_a_construction_error(no_env, without_dispatcher):
     with pytest.raises(ConstructionError) as err:
         machine(core="rust")
     assert 'core="rust"' in str(err.value)
@@ -72,9 +88,17 @@ def test_an_unknown_core_is_a_construction_error(no_env):
 
 def test_the_environment_sets_the_default(monkeypatch):
     monkeypatch.setenv(core.ENV, "rust")
+    m = machine()
+    try:
+        assert m.core == "rust"
+    finally:
+        m.stop()
+
+    monkeypatch.setattr(core, "_rs", None)
     with pytest.raises(ConstructionError) as err:
         machine()
     assert 'TOGEARI_CORE="rust"' in str(err.value)
+    monkeypatch.undo()
 
     monkeypatch.setenv(core.ENV, "python")
     m = machine()
@@ -93,13 +117,19 @@ def test_core_overrides_the_environment(monkeypatch):
         m.stop()
 
 
-def test_the_rules_with_a_dispatcher(no_env, with_dispatcher, monkeypatch):
-    assert core.resolve(None) == ("rust", None)
-    assert core.resolve("auto") == ("rust", None)
+def test_the_rules_with_the_dispatcher(no_env, monkeypatch):
+    assert core.resolve(None) == (core.AUTO, None)
+    assert core.resolve("auto") == (core.AUTO, None)
     assert core.resolve("rust") == ("rust", None)
     assert core.resolve("python") == ("python", None)
     monkeypatch.setenv(core.ENV, "python")
     assert core.resolve(None) == ("python", None)
+
+
+def test_auto_takes_rust_once_chosen_and_built(no_env, auto_rust, monkeypatch):
+    assert core.resolve("auto") == ("rust", None)
+    monkeypatch.setattr(core, "_rs", None)
+    assert core.resolve("auto") == ("python", None)
 
 
 def test_the_rules_without_the_extension(no_env, monkeypatch):
@@ -117,5 +147,5 @@ def test_doctor_reports_the_core(no_env, monkeypatch):
     out = io.StringIO()
     doctor.run(None, out)
     line = next(ln for ln in out.getvalue().splitlines() if ln.startswith("core"))
-    assert line.startswith("core     python  (auto; togeari._rs ")
-    assert "dispatcher no" in line
+    assert line.startswith(f"core     {core.AUTO:<7} (auto; togeari._rs ")
+    assert "dispatcher yes" in line

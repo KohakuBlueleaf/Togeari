@@ -396,10 +396,8 @@ impl Core {
                 Core::let_go(&job);
             }
         }
-        for cell in [&self.ready] {
-            if let Ok(mut r) = cell.try_borrow_mut() {
-                r.clear();
-            }
+        if let Ok(mut r) = self.ready.try_borrow_mut() {
+            r.clear();
         }
         if let Ok(mut b) = self.blocked.try_borrow_mut() {
             b.clear();

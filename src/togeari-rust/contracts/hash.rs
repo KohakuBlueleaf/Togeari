@@ -75,8 +75,9 @@ impl Default for Sha256 {
 
 fn sha256_block(h: &mut [u32; 8], block: &[u8; 64]) {
     let mut w = [0u32; 64];
-    for (i, c) in block.chunks_exact(4).enumerate() {
-        w[i] = u32::from_be_bytes([c[0], c[1], c[2], c[3]]);
+    for (i, x) in w.iter_mut().take(16).enumerate() {
+        let c = &block[i * 4..i * 4 + 4];
+        *x = u32::from_be_bytes([c[0], c[1], c[2], c[3]]);
     }
     for i in 16..64 {
         let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
@@ -137,8 +138,9 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
 
 fn sha1_block(h: &mut [u32; 5], block: &[u8; 64]) {
     let mut w = [0u32; 80];
-    for (i, c) in block.chunks_exact(4).enumerate() {
-        w[i] = u32::from_be_bytes([c[0], c[1], c[2], c[3]]);
+    for (i, x) in w.iter_mut().take(16).enumerate() {
+        let c = &block[i * 4..i * 4 + 4];
+        *x = u32::from_be_bytes([c[0], c[1], c[2], c[3]]);
     }
     for i in 16..80 {
         w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);

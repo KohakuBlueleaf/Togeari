@@ -64,8 +64,8 @@ class Pump:
 
         # Each unit in selector order, up to its capacity
         sent = 0
-        admits = self._admits
-        for unit in self._order(up):
+        order = self._order(up)
+        for unit in order:
             st = self.state[id(unit)]
             queue = st.queue if early else self._q
             if not len(queue):
@@ -75,6 +75,10 @@ class Pump:
                 cap = unit.capacity()
             except Exception:  # noqa: BLE001
                 cap = 0
+
+            # Early forming: items of the unit's own queue it no longer admits are noted
+            refused: dict = {}
+            admits = self._admits if not early else self._noting(refused)
             while cap > 0 and self.under_cap() and st.state == State.UP:
                 items = queue.take(unit, self._count, admits, now)
                 if not items:
@@ -82,7 +86,36 @@ class Pump:
                 self._submit(unit, items, now)
                 sent += len(items)
                 cap -= 1
+            if refused:
+                self._respread(unit, refused, order, now)
         return sent
+
+    def _noting(self, refused: dict) -> Any:
+        """``_admits`` that notes each item it refuses in ``refused`` (by id, once)."""
+
+        def admits(item: Any, unit: Any) -> bool:
+            ok = self._admits(item, unit)
+            if not ok:
+                refused.setdefault(id(item), item)
+            return ok
+
+        return admits
+
+    def _respread(self, unit: Any, refused: dict, order: list, now: float) -> None:
+        """Refused items still in ``unit``'s queue move, with their order key, to the first other
+        unit in ``order`` that admits them (taken this pump, or the next); an item no other unit
+        admits stays."""
+        queue = self.state[id(unit)].queue
+        for item in refused.values():
+            e = queue.index.get(id(item))
+            if e is None:
+                continue
+            to = next((u for u in order if u is not unit and self._admits(item, u)), None)
+            if to is None:
+                continue
+            queue.remove(item, now)
+            self.state[id(to)].queue.push(item, e.order, now)
+            self._pump_needed = True
 
     # ------------------------------------------------------------ policies, contained
     def _order(self, up: list) -> list:
@@ -164,7 +197,7 @@ class Pump:
         sub = Submission(next(_sub_ids), unit, items, sent=now)
         st = self.state[id(unit)]
         self.subs[sub.id] = sub
-        st.subs.add(sub.id)
+        st.subs[sub.id] = None
         st.inflight += len(items)
         self.inflight += len(items)
         if st.busy_since is None:
@@ -239,7 +272,7 @@ class Pump:
         sub.open = False
         st = self.state[id(sub.unit)]
         self.subs.pop(sub.id, None)
-        st.subs.discard(sub.id)
+        st.subs.pop(sub.id, None)
         st.inflight -= len(sub.items)
         self.inflight -= len(sub.items)
         if not st.subs and st.busy_since is not None:

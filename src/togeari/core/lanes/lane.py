@@ -166,7 +166,7 @@ class Lane(Pump, Health):
     def _queues(self) -> list[Queue]:
         return [self._q, *(st.queue for st in self.state.values())]
 
-    def _cap(self) -> int:
+    def _cap(self) -> int | float:
         return min((max(1, getattr(u, "max_batch", 1) or 1) for u in self.units), default=1)
 
     def units_up(self) -> list:

@@ -160,9 +160,12 @@ class Bus:
         self.counts: dict[str, int] = {}
 
         # Synchronous listeners on the dispatcher thread, fn(kind, fields), cheap: of every
-        # kind (``listeners``) and of registered kinds (``by_kind``)
+        # kind (``listeners``) and of registered kinds (``by_kind``); ``passive`` holds the
+        # functions every registration of which was passive, ``acting`` counts the others
         self.listeners: list = []
         self.by_kind: dict[str, list] = {}
+        self.passive: list = []
+        self.acting = 0
 
     @property
     def level(self) -> str:
@@ -174,17 +177,30 @@ class Bus:
         return bool(self.subs or self.listeners or self.by_kind)
 
     # ------------------------------------------------------------ listeners
-    def listen(self, fn: Any, kinds: Any = None) -> None:
+    def listen(self, fn: Any, kinds: Any = None, passive: bool = False) -> None:
         """Call ``fn(kind, fields)`` for each event of ``kinds`` (an iterable of kinds; None:
-        every kind), whatever the levels."""
+        every kind), whatever the levels.
+
+        A ``passive`` listener only records what it receives (it never acts on the machine
+        from the call), so the native core may hand it the events of a GIL-free region when the
+        region ends; any other listener keeps the dispatcher from releasing the GIL.
+        """
+        known = fn in self._registered()
         if kinds is None:
             if fn not in self.listeners:
                 self.listeners.append(fn)
-            return
-        for kind in kinds:
-            fns = self.by_kind.setdefault(kind, [])
-            if fn not in fns:
-                fns.append(fn)
+        else:
+            for kind in kinds:
+                fns = self.by_kind.setdefault(kind, [])
+                if fn not in fns:
+                    fns.append(fn)
+
+        # A function is passive while every registration of it said so
+        if not passive and fn in self.passive:
+            self.passive.remove(fn)
+        elif passive and not known and fn not in self.passive:
+            self.passive.append(fn)
+        self._recount()
 
     def unlisten(self, fn: Any) -> None:
         """Remove ``fn`` from every kind it listens to."""
@@ -196,6 +212,20 @@ class Bus:
                 fns.remove(fn)
             if not fns:
                 del self.by_kind[kind]
+        if fn in self.passive:
+            self.passive.remove(fn)
+        self._recount()
+
+    def _registered(self) -> list:
+        """Every listening function, each once."""
+        out: list = []
+        for fn in [*self.listeners, *(f for fs in self.by_kind.values() for f in fs)]:
+            if fn not in out:
+                out.append(fn)
+        return out
+
+    def _recount(self) -> None:
+        self.acting = sum(fn not in self.passive for fn in self._registered())
 
     # ------------------------------------------------------------ subscribers
     def subscribe(self, plugin: Any) -> None:

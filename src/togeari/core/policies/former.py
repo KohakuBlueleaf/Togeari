@@ -29,7 +29,8 @@ class SizeOrWait(Former):
 
     Buckets are the unit's ``key()``. An item's limit is ``wait_ms``, or its
     ``@hint max_wait_ms`` when smaller. A bucket counts as full at
-    ``min(size, bucket.cap)`` items.
+    ``min(size, bucket.cap)`` items; a full or waited-out bucket gives a unit up to
+    ``min(size, unit.max_batch)`` items.
     """
 
     def __init__(self, size: int = 32, wait_ms: float = 5.0):
@@ -51,10 +52,11 @@ class SizeOrWait(Former):
         return bucket.due
 
     def take(self, bucket: Any, unit: Any, now: float) -> int:
-        limit = _batch_limit(unit, self.size)
+        # Full as ``deadline`` counts it, or waited out: up to the unit's own batch limit
         due = bucket.due
-        if len(bucket) >= limit or (due is not None and due <= now):
-            return limit
+        full = len(bucket) >= max(1, min(self.size, bucket.cap))
+        if full or (due is not None and due <= now):
+            return _batch_limit(unit, self.size)
         return 0
 
 

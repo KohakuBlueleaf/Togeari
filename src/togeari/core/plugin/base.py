@@ -175,7 +175,7 @@ class PluginContext:
 
     def resident_jobs(self) -> int:
         """Jobs resident in the pool (dispatcher thread)."""
-        return len(self._m.dispatcher.jobs)
+        return self._m.dispatcher.job_count()
 
     def job_states(self) -> dict[str, int]:
         """Resident jobs by ``JOB_STATES`` (dispatcher thread); one ``job_state`` per resident
@@ -233,11 +233,12 @@ class PluginContext:
         return [u for lane in self.lanes(loads) for u in lane["units"]]
 
     # ------------------------------------------------------------ bus listeners
-    def listen(self, fn: Any, kinds: Any = None) -> None:
+    def listen(self, fn: Any, kinds: Any = None, passive: bool = False) -> None:
         """Call ``fn(kind, fields)`` on the dispatcher thread for each event of ``kinds``
-        (None: every kind); ``fn`` must be cheap and must not keep ``fields``' objects.
+        (None: every kind); ``fn`` must be cheap and must not keep ``fields``' objects. A
+        ``passive`` listener only records (see ``Bus.listen``).
         """
-        self._m.bus.listen(fn, kinds)
+        self._m.bus.listen(fn, kinds, passive)
 
     def unlisten(self, fn: Any) -> None:
         self._m.bus.unlisten(fn)

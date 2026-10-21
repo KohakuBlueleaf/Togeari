@@ -41,7 +41,8 @@ class UnitState:
     queue: Queue
     state: str = State.UP
     inflight: int = 0
-    subs: set = field(default_factory=set)
+    # Open submission ids in submit order
+    subs: dict = field(default_factory=dict)
     # Items per second, EWMA
     rate: float = 0.0
     busy_since: float | None = None
@@ -185,6 +186,8 @@ class Health:
                     self.requeue_front(it, now)
                     requeued.append(it)
 
+        # Under early forming a re-queued item may have gone to this unit's own queue
+        self._move_to_shared(st, now)
         self.emit("unit.detach", unit=unit.name, reason="now")
         if kept:
             self._set_state(st, State.DRAINING)
@@ -250,10 +253,11 @@ class Health:
         return out
 
     def _dead(self, now: float) -> bool:
+        # The same sum ``next_deadline`` reports, so the clock reaching it makes the lane dead
         return (
             self.lane_dead_s is not None
             and self.no_unit_since is not None
-            and now - self.no_unit_since >= self.lane_dead_s
+            and now >= self.no_unit_since + self.lane_dead_s
         )
 
     def _fail_queued(self) -> list:

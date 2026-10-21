@@ -22,7 +22,7 @@ when it is set.
 | Former | `deadline` | `take` |
 |---|---|---|
 | `Greedy()` | `READY` while the bucket is non-empty | `max_batch` of the unit |
-| `SizeOrWait(size=32, wait_ms=5.0)` | `READY` at `min(size, bucket.cap)` items, else `bucket.due` | `min(size, max_batch)` once the bucket is that full or its earliest due passed, else 0 |
+| `SizeOrWait(size=32, wait_ms=5.0)` | `READY` at `min(size, bucket.cap)` items, else `bucket.due` | `min(size, max_batch)` (the unit's) once the bucket holds `min(size, bucket.cap)` items or its earliest due passed, else 0 |
 | `Bucketed(inner, key)` | `inner.deadline` | `inner.take`; buckets are `(inner.key(item, unit), key(item))` |
 
 `SizeOrWait.due(item)` is `ext["enqueued"]` plus `wait_ms`, or the item's `@hint max_wait_ms`

@@ -72,7 +72,7 @@ class DecisionLog:
     # ------------------------------------------------------------ recording
     def attach(self, machine: Any) -> "DecisionLog":
         self._machine = machine
-        machine.bus.listen(self._on_event, KINDS)
+        machine.bus.listen(self._on_event, KINDS, passive=True)
         return self
 
     def detach(self) -> None:

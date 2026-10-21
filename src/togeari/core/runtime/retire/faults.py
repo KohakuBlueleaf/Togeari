@@ -124,7 +124,8 @@ class FaultStage:
         return True
 
     def squash(self, x: Inflight) -> None:
-        """Squash one inflight: counts, its lane item, its output and version slots."""
+        """Squash one inflight: counts, its lane item, its output and version slots; it lets go
+        of its slots and values (a lane may still hold its work item)."""
         job = x.job
         if x.state in _LIVE and not x.control:
             job.unfinished -= 1
@@ -149,6 +150,8 @@ class FaultStage:
         self.stats["squashed"] += 1
         if self.bus.wants("stmt.squash", job.id):
             self.emit_stmt("stmt.squash", x)
+        x.values = x.result = x.snapshot = x.kept = x.mutated = x.versions = x.item = None
+        x.inputs = x.outs = ()
 
     def take_fault(self, job: Job, x: Inflight) -> None:
         job.window.pop_first()
@@ -168,6 +171,10 @@ class FaultStage:
                 **{f"error_{k}": v for k, v in err.items()},
             )
         names, frames, prefix, counter = x.snapshot
+
+        # The taken statement lets go of its values, work item, view and slots
+        x.values = x.result = x.snapshot = x.kept = x.mutated = x.versions = x.item = None
+        x.inputs = x.outs = ()
 
         # Inside a `@try`: continue at the handler with the faulting statement's view
         tid = x.instr.try_id

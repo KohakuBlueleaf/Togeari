@@ -67,22 +67,20 @@ def job(record: list, ok: bool = True, outputs=None, failure=None):
 def test_reexecute_catches_results_swapped_between_jobs_replay_does_not():
     lane = Lane([SimCall(name="c", latency_ms=1, capacity=8)])
     m = Machine(program=TWO, entry="main", libraries=[LIB], bind={"inc": Use(lane)}, record=1.0)
-    d = m.dispatcher
-    real = d.deliver
+    real = lane.results
     held = []
 
     # The first two results (two different jobs' first calls) trade places
-    def deliver(item, result, unit=None):
+    def results(sub, res, now):
         if len(held) < 2:
-            held.append((item, result, unit))
-            if len(held) == 2:
-                (i1, r1, u1), (i2, r2, u2) = held
-                real(i1, r2, u1)
-                real(i2, r1, u2)
-            return
-        real(item, result, unit)
+            held.append((sub, res))
+            if len(held) < 2:
+                return []
+            (s1, r1), (s2, r2) = held
+            return real(s1, r2, now) + real(s2, r1, now)
+        return real(sub, res, now)
 
-    d.deliver = deliver
+    lane.results = results
     jobs = [SourceItem(str(k), {"x": 10 * k}) for k in range(4)]
     inputs = {j.key: j.inputs for j in jobs}
     sink = Memory()

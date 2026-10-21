@@ -106,8 +106,8 @@ class JobsStage:
         job.bytes = value_bytes(item.inputs)
         if restored:
             for st in job.strands.values():
-                for name, slot in st.names.to_dict().items():
-                    if name not in params:
+                for n, slot in st.names.to_dict().items():
+                    if n not in params:
                         hold(slot, job, value_bytes(slot.value))
         job.stats["bytes_peak"] = max(job.stats.get("bytes_peak", 0), job.bytes)
         self.pool_bytes += job.bytes
@@ -224,6 +224,30 @@ class JobsStage:
     def cancel_job(self, job: Job, message: str) -> None:
         job.failure = {"kind": "Cancelled", "node": None, "message": message}
         self.end_job(job, {}, list(job.entry.outputs or []))
+
+    def pause_job(self, job: Job) -> bool:
+        """Hold the job's ready statements and stop fetching for it."""
+        job.paused = True
+        return True
+
+    def resume_job(self, job: Job) -> bool:
+        """Release the held statements and fetch again."""
+        job.paused = False
+        self.ready.extend(job.held)
+        job.held.clear()
+        self.dirty[job.id] = None
+        return True
+
+    def job_count(self) -> int:
+        return len(self.jobs)
+
+    def window_total(self) -> int:
+        """Statements in the windows of every resident job."""
+        return sum(len(j.window) for j in self.jobs.values())
+
+    def inline_totals(self) -> dict[str, float]:
+        """Seconds spent in each inline node."""
+        return {k: st.total for k, st in self.inline.items()}
 
     # ------------------------------------------------------------ records
     def emit_record(self, rec: JobRecord, handle: Any = None) -> None:

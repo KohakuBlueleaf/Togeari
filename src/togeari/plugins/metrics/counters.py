@@ -102,7 +102,7 @@ class Counters(BasePlugin):
         self.ctx = ctx
         self._reset()
         self._prev = self._totals(loads=False)
-        ctx.listen(self._listen, LISTENED)
+        ctx.listen(self._listen, LISTENED, passive=True)
 
         # The ticker posts one sampling call at a time to the dispatcher.
         self._halt.clear()

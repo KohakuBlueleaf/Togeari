@@ -66,25 +66,28 @@ def run_trace(
     jobs: Iterable,
     seed: int = 0,
     max_cycles: int = 1_000_000,
+    log: bool = True,
 ) -> Trace:
     """Run ``jobs`` on ``machine_factory()`` deterministically; the decision log and records.
 
-    The same factory, jobs and seed give the same trace in any process.
+    The same factory, jobs and seed give the same trace in any process. ``log=False`` runs with
+    no decision log on the bus (the trace's log is empty).
     """
     m = machine_factory()
-    log = DecisionLog()
+    decisions = DecisionLog()
     try:
         clock = VirtualClock()
         schedule = Schedule(clock)
         for unit in scripted_units(m):
             unit.bind(schedule, seed)
         set_clock(m, clock)
-        log.attach(m)
+        if log:
+            decisions.attach(m)
         records, cycles = _drive(m, as_items(jobs), schedule, max_cycles)
     finally:
-        log.detach()
+        decisions.detach()
         m.stop(drain=False)
-    return Trace(log, records, cycles, clock(), m)
+    return Trace(decisions, records, cycles, clock(), m)
 
 
 def _drive(

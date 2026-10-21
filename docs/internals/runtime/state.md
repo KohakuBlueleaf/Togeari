@@ -137,7 +137,7 @@ removes and returns every inflight with a larger key (binary search).
 | Method | Does |
 |---|---|
 | `add_strand(st)` | registers it, pushes it on `sheap`, updates `strands_peak`, marks it runnable |
-| `end_strand(st)` | `ENDED`, removed from `strands` (its heap entry is dropped later) |
+| `end_strand(st)` | `ENDED`, its names, frames and spawner state let go (the slots it waited on still name it as a waiter, so they free by reference count), removed from `strands` (its heap entry is dropped later) |
 | `oldest_live_key()` | the smallest `next_key()` of a live strand, from `sheap` |
 | `add(inf)` | into the window and `wheap`; updates `window_peak` |
 | `issue(inf)` | `ISSUED`, `issued += 1`, updates `inflight_peak` |

@@ -185,6 +185,26 @@ def _feed_container(h, value: Any, weak: list, inside: set[int]) -> None:
     h.update(b")")
 
 
+class _Tape:
+    """Records what ``_feed`` writes."""
+
+    __slots__ = ("parts",)
+
+    def __init__(self) -> None:
+        self.parts: list[bytes] = []
+
+    def update(self, data: bytes) -> None:
+        self.parts.append(data)
+
+
+def feed_bytes(value: Any, weak: list, open_: set[int] | None) -> bytes:
+    """The bytes ``_feed`` writes for ``value`` (the native digest's path for every value it
+    does not feed itself)."""
+    tape = _Tape()
+    _feed(tape, value, weak, open_)
+    return b"".join(tape.parts)
+
+
 def digest(value: Any) -> bytes:
     """sha256 digest of ``value``."""
     h = hashlib.sha256()

@@ -9,9 +9,6 @@ import reprlib
 from typing import Any
 
 from togeari.core.construct.knobs import checked
-from togeari.core.runtime.state import SlotState, effective
-
-_FINAL = (float("inf"),)
 
 # Input reprs of the `job` query: bounded in size and depth, whatever the value
 _repr = reprlib.Repr()
@@ -73,14 +70,7 @@ def q_job(m: Any, id: int) -> dict:
     ]
 
     # Slots bound to a name in any live strand, each counted once
-    seen: dict[int, bool] = {}
-    for s in j.strands.values():
-        if s.names is None:
-            continue
-        for slot in s.names.to_dict().values():
-            if slot.id not in seen:
-                seen[slot.id] = effective(slot, _FINAL).state == SlotState.READY
-    ready = sum(seen.values())
+    ready, pending = j.slot_counts()
     return {
         "id": j.id,
         "key": j.key,
@@ -88,7 +78,7 @@ def q_job(m: Any, id: int) -> dict:
         "inputs": {k: _repr.repr(v) for k, v in j.inputs.items()},
         "strands": strands,
         "window": window,
-        "slots": {"ready": ready, "pending": len(seen) - ready},
+        "slots": {"ready": ready, "pending": pending},
         "stats": copy.deepcopy(j.stats),
     }
 
@@ -172,7 +162,7 @@ def q_knobs(m: Any) -> dict:
 
 def q_stats(m: Any) -> dict:
     s = copy.deepcopy({k: v for k, v in m.dispatcher.stats.items() if k != "inline_s"})
-    s["inline_s"] = {k: st.total for k, st in m.dispatcher.inline.items()}
+    s["inline_s"] = m.dispatcher.inline_totals()
     return s
 
 
@@ -208,23 +198,15 @@ def c_cancel_job(m: Any, id: int) -> bool:
 
 
 def c_pause_job(m: Any, id: int) -> bool:
-    j = m.dispatcher.jobs.get(int(id))
-    if j is None:
-        return False
-    j.paused = True
-    return True
+    d = m.dispatcher
+    j = d.jobs.get(int(id))
+    return j is not None and d.pause_job(j)
 
 
 def c_resume_job(m: Any, id: int) -> bool:
     d = m.dispatcher
     j = d.jobs.get(int(id))
-    if j is None:
-        return False
-    j.paused = False
-    d.ready.extend(j.held)
-    j.held.clear()
-    d.dirty[j.id] = None
-    return True
+    return j is not None and d.resume_job(j)
 
 
 def c_set_knob(m: Any, name: str, value: Any) -> Any:

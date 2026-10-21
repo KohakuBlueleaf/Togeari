@@ -27,14 +27,14 @@ class Signals(Mapping):
     def __getitem__(self, key: str) -> Any:
         match key:
             case "jobs":
-                return len(self.d.jobs)
+                return self.d.job_count()
             case "bytes":
                 self.d.release_freed()
                 return self.d.pool_bytes
             case "window" | "lanes" | "units" if key in self._cache:
                 return self._cache[key]
             case "window":
-                v = sum(len(j.window) for j in self.d.jobs.values())
+                v = self.d.window_total()
             case "lanes":
                 v = {lane.name: lane.signals() for lane in self.d.lanes}
             case "units":

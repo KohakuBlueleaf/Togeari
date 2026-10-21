@@ -1,5 +1,7 @@
 """Machines for the trace checks: the generator's library on scripted lanes, and a tiny one."""
 
+import types
+
 from kohakunode import NodeLibrary
 from kohakunode.testing import LIB
 
@@ -29,27 +31,46 @@ def generated(
     latency_ms: float = 1.0,
     item_error_rate: float = 0.0,
     outages: list | None = None,
+    lane_kw: dict | None = None,
+    per_kind: dict | None = None,
+    lane_cls: type = Lane,
+    use_kw: dict | None = None,
+    engine_cls: type = ScriptedEngine,
     **knobs,
 ):
-    """A factory of machines running every generator node on a scripted lane of ``n_units``."""
+    """A factory of machines running every generator node on a scripted lane of ``n_units``.
+
+    ``lane_kw`` applies to every lane and ``per_kind[kind]`` (keys ``lane``, ``engine``) to one;
+    a callable ``former``, ``select`` or ``retry`` is called per lane, so lanes share no policy.
+    Units are ``engine_cls`` (a ``ScriptedEngine``).
+    """
 
     def make() -> Machine:
         lanes = {}
         for kind in ("call", "batch", "stream"):
+            mine = (per_kind or {}).get(kind, {})
+            engine = mine.get("engine", {})
             units = [
-                ScriptedEngine(
+                engine_cls(
                     kind,
                     name=f"{kind}{i}",
                     latency_ms=latency_ms,
-                    capacity=CAPACITY[kind],
+                    capacity=engine.get("capacity", CAPACITY[kind]),
+                    max_batch=engine.get("max_batch", 16),
                     item_error_rate=item_error_rate,
                     outages=outages if i == 0 else None,
                 )
                 for i in range(n_units)
             ]
-            former = SizeOrWait(8, 1) if kind == "batch" else None
-            lanes[kind] = Lane(units, former=former, name=kind)
-        bind = {name: Use(lanes[k]) for name, k in LANE_OF.items()}
+            kw = {"former": SizeOrWait(8, 1) if kind == "batch" else None}
+            kw |= {**(lane_kw or {}), **mine.get("lane", {})}
+            for k in ("former", "select", "retry"):
+                if isinstance(kw.get(k), type | types.FunctionType):
+                    kw[k] = kw[k]()
+            if kind != "batch":
+                kw["former"] = None
+            lanes[kind] = lane_cls(units, name=kind, **kw)
+        bind = {name: Use(lanes[k], **(use_kw or {})) for name, k in LANE_OF.items()}
         bind["kir.std.*"] = Inline()
         bind["f*"] = Use(lanes["call"])
         knobs.setdefault("admission", Fixed(8))

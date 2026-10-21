@@ -43,8 +43,10 @@ the strand, and faults it.
    - `final_names` / `final_key` are cleared when `final_key` is larger.
 
 `squash(x)` drops the item from its lane queue or cancels its submission
-([lane](../../lanes/lane.md)), marks `x` and its output and version slots `SQUASHED`, and counts
-`squashed`. A result that later arrives for it counts as `wasted`.
+([lane](../../lanes/lane.md)), marks `x` and its output and version slots `SQUASHED`, counts
+`squashed`, and lets go of `x`'s slots, values, view and work item as retire does, so the
+values it read are freed when nothing else holds them, whatever a lane still holds of its item.
+A result that later arrives for it counts as `wasted`.
 
 Strands with a smaller `next_key()` keep running: a parked strand still walking its arm, or an
 older strand, fetches only keys below the fault.
@@ -85,7 +87,8 @@ again.
    append `(node, dig, "error", {kind, node, message}, None)` to `job.record`.
 2. `on_fault({"job": id, "key": job key, "kind", "node", "message"})` (gate `entry`);
    `fault.taken` with `addr`, the order key, the job's squashed count and the error fields.
-3. Restore `(names, frames, prefix, counter)` from `x.snapshot`.
+3. Restore `(names, frames, prefix, counter)` from `x.snapshot`; `x` then lets go of its
+   values, view, work item and slots, as a retired statement does.
 
 **Inside a `@try`** (`catchable` and `instr.try_id` set), with `info = code.tries[try_id]`:
 

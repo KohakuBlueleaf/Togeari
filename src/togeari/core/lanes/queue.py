@@ -55,7 +55,7 @@ class Bucket:
         return self.size
 
     @property
-    def cap(self) -> int:
+    def cap(self) -> int | float:
         return self.queue.cap
 
     @property

@@ -44,7 +44,8 @@ schedules the next poll after the doubled backoff.
      `ItemError(ItemTimeout("... past its deadline while queued"))`;
    - armed at submit: `ItemError(ItemTimeout("... over Ns"))`; once every item of the submission
      has settled, `unit.cancel(ticket)` and the submission closes.
-4. Dead lane: once no unit has been up for `lane_dead_s`, every queued and held item fails with
+4. Dead lane: once the clock reaches `no_unit_since + lane_dead_s` (the time `next_deadline`
+   reports), every queued and held item fails with
    `ItemError(UnitUnavailable)`, `stats["dead_failed"]` counts them, and `lane.dead` is emitted
    with the count; items queued later fail at the next call while no unit is up.
 
@@ -71,8 +72,9 @@ for its job. The unit goes down before the retries are held, so they go to other
 - the unit's own queue moves to the shared queue;
 - `drain=True`: `draining`, `unit.detach` (reason `drain`); it becomes detached when its last
   in-flight item settles;
-- `drain=False`: every open submission is cancelled on the unit and closed, and its unsettled,
-  unsquashed items are re-queued at the front, except a submission holding an `ordered` item
+- `drain=False`: every open submission, in submit order, is cancelled on the unit and closed, and
+  its unsettled, unsquashed items are re-queued at the front, except a submission holding an
+  `ordered` item
   (`ext["ordered_once"]`), which finishes on the unit; `unit.detach` (reason `now`); detached at
   once, or `draining` while such a submission runs.
 

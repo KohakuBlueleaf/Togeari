@@ -34,7 +34,7 @@ policy leaves the old one set.
 | Field | Content |
 |---|---|
 | `_q` | the shared `Queue` |
-| `state` | `{id(unit): UnitState}`: `queue` (the unit's own `Queue`), `state`, `inflight`, `subs`, `rate` (items/s EWMA), busy time, `items_done`, `errors` by kind, `next_poll`, `backoff`, `submit_lat` |
+| `state` | `{id(unit): UnitState}`: `queue` (the unit's own `Queue`), `state`, `inflight`, `subs` (open submission ids in submit order, a dict), `rate` (items/s EWMA), busy time, `items_done`, `errors` by kind, `next_poll`, `backoff`, `submit_lat` |
 | `_held`, `_held_ids` | retries waiting for their backoff: a heap of `(ready at, seq, item)` and the live set |
 | `_timeouts` | heap of `(deadline, seq, item, submission or None)` |
 | `subs`, `inflight` | open `Submission(id, unit, items, ticket, sent, open)` by id; submitted, unsettled items |
@@ -80,6 +80,9 @@ with order `(FRONT, -seq)`, ahead of everything queued.
    late forming): `queue.promote(now)`, `cap = unit.capacity()` read once; while `cap > 0`,
    `under_cap()` and the unit is up: `queue.take(unit, _count, _admits, now)`, `_submit`,
    `cap -= 1`.
+5. Early forming: an item of the unit's own queue the unit did not admit while taking moves, with
+   its order, to the first other unit of that order that admits it (`_respread`), which takes it
+   this pump or the next; an item no other unit admits stays.
 
 `_count(bucket, unit, now)` is how many items one submit carries: 1 for call and stream units;
 for batch units `max_batch` without a former, else `former.take(bucket, unit, now)` limited to

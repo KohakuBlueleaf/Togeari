@@ -536,7 +536,12 @@ class Job:
             self.mark_runnable(st)
 
     def end_strand(self, st: Strand) -> None:
+        """End a strand: it lets go of its names, frames and spawner state, so the slots it
+        held free by reference count (a slot it waited on still names it as a waiter)."""
         st.state = StrandState.ENDED
+        st.names = None
+        st.frames = ()
+        st.spawn = None
         self.strands.pop(st.id, None)
 
     def mark_runnable(self, st: Strand) -> None:
@@ -586,3 +591,19 @@ class Job:
                 return x.key
             heapq.heappop(h)
         return None
+
+    # ------------------------------------------------------------ views
+    def slot_counts(self) -> tuple[int, int]:
+        """Slots bound to a name in any live strand, each counted once: (ready, pending)."""
+        seen: dict[int, bool] = {}
+        for s in self.strands.values():
+            if s.names is None:
+                continue
+            for slot in s.names.to_dict().values():
+                if slot.id not in seen:
+                    seen[slot.id] = effective(slot, _FINAL).state == SlotState.READY
+        ready = sum(seen.values())
+        return ready, len(seen) - ready
+
+
+_FINAL = (float("inf"),)

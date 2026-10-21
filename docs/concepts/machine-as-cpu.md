@@ -32,3 +32,8 @@ that fetches, renames, issues and retires, and a back end (the engines) that doe
 
 Only the dispatcher thread writes job state. Engine results enter through one inbox, so every
 change to a job happens in one place, in order.
+
+The dispatcher, the core of the machine, has two implementations of one protocol: the Python
+core, the reference that defines every decision, and the Rust core, which makes the same
+decisions in the same order, faster and mostly without holding the GIL. A machine runs the Rust
+core when the extension is built ([native core](../internals/native/README.md)).

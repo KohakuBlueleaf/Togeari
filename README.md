@@ -110,6 +110,10 @@ flowchart LR
 - **Proof.** Every node call of a recorded job is kept in retire order;
   `togeari conform` replays it through `kohakunode`, and `--reexecute` runs chosen nodes
   again to catch a result delivered to the wrong statement.
+- **Two cores, one protocol.** The dispatcher is written twice: in Python, the reference, and
+  in Rust (`togeari._rs`, in every wheel), which makes the same decisions in the same order
+  1.9–5.1× faster and leaves the GIL to engine threads while it waits. The Rust core runs by
+  default; `core="python"` runs the reference ([speed](#speed-the-python-and-rust-cores)).
 
 ## Install
 
@@ -122,8 +126,9 @@ pip install "togeari[report]"    # zstd-compressed run report events
 ```
 
 Wheels cover CPython 3.10–3.14 on Linux x86_64 / aarch64, Windows x64 and macOS arm64; each
-carries the native extension `togeari._rs`. From a clone (Windows PowerShell or bash), with a
-Rust toolchain (`rustup`) to build the extension:
+carries the native extension `togeari._rs`, so the Rust core runs with nothing more to install.
+Elsewhere pip builds the sdist, which needs a Rust toolchain (`rustup`). From a clone (Windows
+PowerShell or bash), also with a Rust toolchain to build the extension:
 
 ```
 git clone https://github.com/KohakuBlueleaf/Togeari && cd Togeari
@@ -134,9 +139,10 @@ togeari doctor
 
 `togeari doctor` prints versions, the core a machine runs, devices and any leftover worker
 processes. A machine runs the native Rust core when the extension is built and the Python
-core, the reference, otherwise; `Machine(core="python" | "rust")` (or `TOGEARI_CORE`) picks
-one ([native core](docs/internals/native/README.md)). Both make the same decisions in the same
-order.
+core, the reference, otherwise (`core="auto"`); `Machine(core="python" | "rust")` (or
+`TOGEARI_CORE=python|rust`) picks one, and asking for `"rust"` without the extension is a
+construction error ([native core](docs/internals/native/README.md)). Both make the same
+decisions in the same order.
 
 ## Quick start
 
@@ -223,7 +229,7 @@ togeari units   examples/hello/machine.py              # engine behaviour checks
 | [`mixed`](examples/mixed) | the builtin engines together: an HTTP registry, Python worker processes, a network on `cuda:0`, ordered log writes, every job recorded and conformed |
 
 <!-- examples-output:begin -->
-Their output on the release tree:
+Their output on the release tree (the default core, Rust):
 
 ```
 $ python examples/hello/machine.py
@@ -233,21 +239,21 @@ Chi: 1 cards ['Konnichiwa, Chi!']
 Dev: 3 cards ['Bonjour, Dev!', '?, Dev!', 'Hello, Dev!']
 Eli: 0 cards []
 conformance: 5/5 jobs match the reference
-5 jobs, 38 node calls in 1.05s
+5 jobs, 38 node calls in 1.04s
 
 $ python examples/multi_unit/machine.py
-40 jobs in 2.06s, wrong results: none
+40 jobs in 2.10s, wrong results: none
 conformance: 40/40 jobs match the reference
 lane work: retries 1, units down 1, back up 1
-  unit slow    state up    items   90  errors {}
-  unit medium  state up    items  179  errors {}
-  unit fast    state up    items  211  errors {'SimOutage': 1}
+  unit slow    state up    items   84  errors {}
+  unit medium  state up    items  171  errors {}
+  unit fast    state up    items  225  errors {'SimOutage': 1}
 
 $ python examples/trace_replay/machine.py
-60 documents in 1.70s, kept 41
+60 documents in 1.71s, kept 41
 one job at a time, one call at a time: about 40.4s
   lane fetch  submitted   60  batch sizes {}
-  lane score  submitted  243  batch sizes {7: 10, 5: 3, 6: 10, 4: 5, 3: 3, 8: 4, 9: 2, 12: 1, 2: 2, 1: 3}
+  lane score  submitted  243  batch sizes {7: 8, 5: 3, 6: 11, 4: 10, 3: 3, 10: 1, 11: 1, 8: 3, 9: 1, 2: 1, 1: 1}
   lane parse  submitted  243  batch sizes {}
 conformance: 60/60 jobs match the reference
 
@@ -258,10 +264,10 @@ st004: calm/weak      ['calm/weak', 'calm/weak', 'calm/weak', 'calm/weak', 'calm
 ... 120 stations, 0 failed
 conformance: 120/120 jobs match the reference
 ordered log: 0 problem(s)
-120 jobs, 5634 node calls in 4.07s
+120 jobs, 5634 node calls in 3.27s
 
 $ PYTHONPATH=examples/mixed togeari conform runs/mixed/report --reexecute features --reexecute classify --reexecute majority
-run 20261020-193833-105752-4c2a71: 120/120 conform; 0 with weak values; 0 weak digests
+run 20261022-014140-77768-7bd5a8: 120/120 conform; 0 with weak values; 0 weak digests
 120/120 jobs conform; 0 with weak values; 0 weak digests
 ```
 
@@ -436,8 +442,9 @@ The builtin defaults follow these numbers: `PythonCallEngine(mode="thread",
 transport="shm")` with shared memory from 1 MiB, `TorchEngine(schedule=
 "priority_streams", isolation="thread")`.
 
-**`examples/mixed`** (120 jobs, three engines, every job recorded; one run): 5,634 node
-calls in 4.07 s, 29 jobs/s; 120 / 120 jobs conform in replay and in re-execution.
+**`examples/mixed`** (120 jobs, three engines, every job recorded; one run each): 5,634 node
+calls in 4.07 s (29 jobs/s) on the Python core and 3.27 s (37 jobs/s) on the Rust core;
+120 / 120 jobs conform in replay and in re-execution.
 
 How measured:
 
@@ -471,6 +478,11 @@ flowchart LR
     conformance["conformance"] --> kohakunode["kohakunode reference"]
     program --> kohakunode
 ```
+
+`src/togeari-rust/` is the Rust core (`togeari._rs`): the dispatcher's state, stages and
+builtin policies, and native lanes, with modules mirroring `core/`. `core.construct` picks the
+core a machine runs; everything around the dispatcher (engines, plugins, stores, the CLI) is
+the same Python for both.
 
 A statement's path through the machine:
 
@@ -564,8 +576,8 @@ flowchart LR
 |---|---|
 | [docs/concepts](docs/concepts/README.md) | what the machine is: jobs as sequential runs, the CPU picture, strands, engines and lanes, plugins, the conformance proof |
 | [docs/guides](docs/guides/README.md) | writing a machine, an engine, a plugin; the builtin engines; stores, sources and sinks; tuning; conformance; the examples |
-| [docs/internals](docs/internals/README.md) | every module: program layer, runtime, lanes, plugins, engines, verification |
-| [docs/performance](docs/performance/README.md) | every measured table and how it was measured |
+| [docs/internals](docs/internals/README.md) | every module: program layer, runtime, lanes, plugins, engines, verification, the native core |
+| [docs/performance](docs/performance/README.md) | every measured table and how it was measured; [the cores compared](docs/performance/native.md) |
 
 ## Checks
 

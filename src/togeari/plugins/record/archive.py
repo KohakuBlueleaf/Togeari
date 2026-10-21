@@ -229,17 +229,24 @@ class ArchiveWriter:
     def _handle(self, task: tuple) -> None:
         if self._closed:
             return
-        # A job's entry is built outside the lock, so close never waits for it
+        # A job's entry is built, and the record files opened (seconds on a cold disk), outside
+        # the lock: close waits for a write, never for those
+        opened = None
         if task[0] == "job":
             _, record, inputs, program = task
             loaded = pickle.loads(inputs) if inputs is not None else None
             data, weak = job_entry(record, loaded, self.run, program)
             task = ("entry", record.key, data, weak)
+            if self.records is None:
+                opened = _Records(self.folder, append=True)
         with self._io:
-            if not self._closed:
-                self._write(task)
             if self._closed:
-                self._close_records()
+                if opened is not None:
+                    opened.close()
+                return
+            if opened is not None:
+                self.records = opened
+            self._write(task)
 
     def _write(self, task: tuple) -> None:
         match task:
@@ -248,39 +255,27 @@ class ArchiveWriter:
             case ("providers", providers):
                 self.set_providers(providers)
             case ("entry", key, data, weak):
-                if self.records is None:
-                    self.records = _Records(self.folder, append=True)
-                    # Opening can be slow; a close meanwhile means nothing is written
-                    if self._closed:
-                        return
                 self.records.put(key, data)
                 self.written += 1
                 if weak:
                     self.weak_jobs += 1
                     self.weak_values += len(weak)
 
-    def _close_records(self) -> None:
-        if self.records is not None:
-            self.records.close()
-            self.records = None
-
     def close(self, timeout: float = 10.0) -> None:
         """Drain the writer, close the record files, and end the writer, all within
-        ``timeout``. A task the writer is in the middle of when it ends writes nothing more;
-        when that task holds the files past the deadline, the writer closes them as it
-        finishes."""
+        ``timeout``; the task the writer is in the middle of then writes nothing (files it
+        is opening it closes itself)."""
         deadline = time.monotonic() + timeout
         self.worker.close(timeout=timeout)
 
-        # From here no task writes; the record files close now or when the running task ends
+        # The record files close; a writer still running skips its remaining tasks
         overran = self.worker.thread.is_alive()
         self.worker.abandon()
-        self._closed = True
-        if self._io.acquire(timeout=left(deadline)):
-            try:
-                self._close_records()
-            finally:
-                self._io.release()
+        with self._io:
+            self._closed = True
+            if self.records is not None:
+                self.records.close()
+                self.records = None
         if overran:
             log.warning("archive writer did not finish in %ss; queued records dropped", timeout)
             self.worker.thread.join(timeout=left(deadline))

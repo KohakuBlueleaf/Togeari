@@ -129,9 +129,8 @@ job with a record, hands it to an `ArchiveWriter` (its own thread; tasks past `q
 dropped and counted). At unload, `ArchiveWriter.close(timeout)` drains, closes the record files
 under the writer's lock, and ends the writer, all within `timeout`: the time left of the
 unload's deadline (`close_s` from the start of the unload); tasks still queued then write
-nothing. A job's entry is built outside the lock; when the writer still holds the lock at the
-deadline (opening the record files), the task it is in writes nothing and the writer closes
-the files as it leaves. `RunReport` hands its own unload deadline to its embedded recorder. Each run writes its
+nothing. A job's entry is built and the record files opened outside the lock, so close waits
+for at most one write; files the writer is opening when close comes it closes itself. `RunReport` hands its own unload deadline to its embedded recorder. Each run writes its
 own folder:
 
 | Path | Content |

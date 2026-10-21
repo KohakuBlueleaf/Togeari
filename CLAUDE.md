@@ -31,7 +31,8 @@ again. The version lives in `Cargo.toml` alone.
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test --no-default-features
-.venv\Scripts\python.exe -m pytest tests -q -m "not gpu"
+.venv\Scripts\python.exe -m pytest tests -q -m "not gpu and not serial" -n auto --maxprocesses 16 --dist worksteal
+.venv\Scripts\python.exe -m pytest tests -q -m "serial and not gpu"
 .venv\Scripts\python.exe -m pytest tests -q -m gpu
 .venv\Scripts\python.exe -m black --line-length 100 src tests examples scripts
 .venv\Scripts\python.exe -m ruff check src tests examples scripts
@@ -41,7 +42,9 @@ cargo test --no-default-features
 ```
 
 `-m "not gpu"` is the CPU-only run; tests that need a CUDA device carry the `gpu` marker and
-run on their own with `-m gpu`. `TOGEARI_SEEDS=300` widens the generated-program checks
+run on their own with `-m gpu`. The CPU run is two passes: the parallel pass (pytest-xdist)
+and the `serial` pass. A test that asserts a wall-clock bound or a scheduling outcome carries
+`@pytest.mark.serial` and runs only in the serial pass; under `-n` it fails at setup. `TOGEARI_SEEDS=300` widens the generated-program checks
 (default 20).
 
 ## Rules

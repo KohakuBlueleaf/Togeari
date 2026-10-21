@@ -122,8 +122,11 @@ to have been called, and `on_job_end` once per job.
   answers).
 - The per-test watchdog (`pytest_runtest_call` in `tests/conftest.py`): a test past its bound
   (`@pytest.mark.timeout(seconds)`, else `TOGEARI_TEST_TIMEOUT`, default 900 s) has every
-  thread's stack written to `runs/tests/watchdog.txt` and ends the session
-  (`faulthandler.dump_traceback_later(..., exit=True)`).
+  thread's stack written to `runs/tests/watchdog.txt` (`watchdog-gw0.txt`, ... per
+  pytest-xdist worker) and ends the session (`faulthandler.dump_traceback_later(..., exit=True)`).
+- The `serial` marker: a test that asserts a wall-clock bound or a scheduling outcome runs only
+  in the serial pass (`-m "serial and not gpu"`, no `-n`); `pytest_runtest_setup` in
+  `tests/conftest.py` fails it under a pytest-xdist worker.
 
 ## Scaling
 

@@ -582,7 +582,8 @@ flowchart LR
 ## Checks
 
 ```
-python -m pytest tests -q -m "not gpu"                      # CPU only (seeds default 20)
+python -m pytest tests -q -m "not gpu and not serial" -n auto --maxprocesses 16 --dist worksteal
+python -m pytest tests -q -m "serial and not gpu"           # wall-clock bounds, alone
 python -m pytest tests -q -m gpu                            # the tests on cuda:0, on their own
 TOGEARI_SEEDS=300 python -m pytest tests/machine/generated -q
 python scripts/benches/dispatcher_ceiling.py
@@ -591,6 +592,13 @@ python scripts/studies/s1/run.py --scale full               # thread vs process,
 python scripts/studies/p8/s8.py --scale full                # the cores compared, every gil_offer_us
 TOGEARI_CORE=python python -m pytest tests -q -m "not gpu"  # the suite on the reference core
 ```
+
+The CPU suite runs in two passes. The parallel pass spreads every test without the `serial`
+marker over pytest-xdist workers. The serial pass runs the tests that assert a wall-clock bound
+or a scheduling outcome (submit-time quantiles, scaling ratios, "returns within" checks, GIL
+handover), alone, so other workers cannot push them past their bounds; a `serial` test selected
+under `-n` fails at setup. `python -m pytest tests -q -m "not gpu"` without `-n` still runs
+everything in one process. Seeds default to 20.
 
 The generated suite runs programs from `kohakunode.testing.progen` (switch, parallel,
 ordered and mutates nodes with aliases, `each` with exits, `@try` around `each`, failing

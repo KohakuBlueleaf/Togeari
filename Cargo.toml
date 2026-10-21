@@ -1,7 +1,7 @@
 [package]
 name = "togeari"
 # The one version of the package; pyproject.toml reads it (dynamic = ["version"]).
-version = "0.2.0-dev0"
+version = "0.2.0"
 edition = "2021"
 description = "The native core of Togeari: a second implementation of the machine's protocol"
 license = "Apache-2.0"

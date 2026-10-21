@@ -35,3 +35,26 @@ def test_close_returns_within_its_timeout_and_nothing_writes_after(tmp_path, mon
     count = len(written)
     time.sleep(0.3)
     assert len(written) == count < 200
+
+
+def test_close_does_not_wait_for_a_slow_open_and_the_writer_closes_the_files(tmp_path, monkeypatch):
+    """Opening the record files can take seconds on a cold disk: close returns by its deadline,
+    the open's task writes nothing, and the writer closes what it opened."""
+    opened: list = []
+    real_init = archive._Records.__init__
+
+    def slow_init(self, folder, append):
+        time.sleep(1.5)
+        real_init(self, folder, append)
+        opened.append(self)
+
+    monkeypatch.setattr(archive._Records, "__init__", slow_init)
+    monkeypatch.setattr(archive, "job_entry", lambda record, inputs, run, program: (b"x", []))
+    writer = ArchiveWriter(tmp_path / "records")
+    writer.add_job(SimpleNamespace(key="k0"), None, None)
+    time.sleep(0.2)
+    t0 = time.monotonic()
+    writer.close(timeout=0.2)
+    assert time.monotonic() - t0 < 1.0
+    writer.worker.thread.join(5)
+    assert len(opened) == 1 and writer.records is None and writer.written == 0

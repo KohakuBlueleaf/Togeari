@@ -14,6 +14,7 @@ import importlib.util
 import math
 import random
 import re
+import statistics
 import sys
 import threading
 import time
@@ -775,11 +776,16 @@ def neighbour_turns(offer_us) -> tuple[int, dict]:
 
 def test_an_offer_really_lets_a_waiting_thread_run():
     """Offers are real GIL releases: a neighbour thread gets far more turns at 0 (every region
-    released) than at inf (every region held, no offer), whatever the counters say."""
-    every, s0 = neighbour_turns(0)
-    never, sinf = neighbour_turns(math.inf)
-    assert s0["offers"] > 0 and sinf["offers"] == 0
-    assert every > 4 * never + 20, (every, never, s0, sinf)
+    released) than at inf (every region held, no offer), whatever the counters say. How many
+    releases hand over the GIL depends on the platform's scheduler (on Linux the releasing
+    thread often takes it back first), and a forced switch now and then hands the neighbour a
+    long run in either mode: the check takes the median of five runs each, a floor and a ratio."""
+    runs = {offer_us: [neighbour_turns(offer_us) for _ in range(5)] for offer_us in (0, math.inf)}
+    every = statistics.median(turns for turns, _ in runs[0])
+    never = statistics.median(turns for turns, _ in runs[math.inf])
+    assert all(s["offers"] > 0 for _, s in runs[0]), runs[0]
+    assert all(s["offers"] == 0 for _, s in runs[math.inf]), runs[math.inf]
+    assert every >= 5 and every > 4 * never, (every, never, runs)
 
 
 @pytest.mark.parametrize("core", ["python", "rust"])

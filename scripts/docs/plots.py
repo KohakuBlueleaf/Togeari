@@ -52,6 +52,8 @@ def variant_label(name: str) -> str:
     value = {"none": "None", "inf": "inf"}.get(value, f"{value} µs")
     mark = " (default)" if name == DEFAULT_VARIANT else ""
     return f"rust {value}{mark}"
+
+
 SHAPE_NAMES = {
     "chain-inline": "chain of inline nodes",
     "chain-call": "chain of lane calls",

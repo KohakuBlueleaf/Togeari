@@ -30,12 +30,19 @@ jobs:
         run: |
           WHEEL=$(ls dist/*.whl)
           pip install "${WHEEL}[dev,web,vault]"
+      # Parallel passes, then the serial tests (wall-clock bounds) alone on the runner
       - name: Tests (the default core, Rust)
-        run: python -m pytest tests -q -m "not gpu"
+        run: python -m pytest tests -q -m "not gpu and not serial" -n auto --maxprocesses 16 --dist worksteal
       - name: Tests (the Python core)
         env:
           TOGEARI_CORE: python
-        run: python -m pytest tests -q -m "not gpu"
+        run: python -m pytest tests -q -m "not gpu and not serial" -n auto --maxprocesses 16 --dist worksteal
+      - name: Serial tests (the default core, Rust)
+        run: python -m pytest tests -q -m "serial and not gpu"
+      - name: Serial tests (the Python core)
+        env:
+          TOGEARI_CORE: python
+        run: python -m pytest tests -q -m "serial and not gpu"
       - name: Examples
         run: |
           python examples/hello/machine.py

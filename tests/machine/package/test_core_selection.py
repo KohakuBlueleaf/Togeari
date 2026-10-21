@@ -9,6 +9,7 @@ from kohakunode.testing import LIB
 from togeari import ConstructionError, Inline, Machine
 from togeari.cli.commands import doctor
 from togeari.core.construct import core
+from togeari.core.construct.knobs import KNOB_DEFAULTS
 
 PROGRAM = """
 @def (a)main(b):
@@ -37,9 +38,9 @@ def without_dispatcher(monkeypatch):
 
 
 @pytest.fixture
-def auto_rust(monkeypatch):
-    """`"auto"` taking the Rust core, as the measurements may decide."""
-    monkeypatch.setattr(core, "AUTO", "rust")
+def auto_python(monkeypatch):
+    """`"auto"` set to the Python core, the other value `AUTO` can take."""
+    monkeypatch.setattr(core, "AUTO", "python")
 
 
 def test_the_extension_is_built_and_holds_the_dispatcher():
@@ -52,13 +53,41 @@ def test_the_extension_is_built_and_holds_the_dispatcher():
     assert core.rust_available() is True
 
 
+def test_auto_and_the_offer_knob_are_the_measured_choices():
+    """spec/11 §11.6 chose the Rust core with ``gil_offer_us=None``."""
+    assert core.AUTO == "rust"
+    assert KNOB_DEFAULTS["gil_offer_us"] is None
+
+
 @pytest.mark.parametrize(
-    ("asked", "resolved"), [(None, "python"), ("auto", "python"), ("python", "python")]
+    ("asked", "resolved"), [(None, "rust"), ("auto", "rust"), ("python", "python")]
 )
-def test_auto_and_python_run_the_python_core(no_env, asked, resolved):
+def test_auto_runs_rust_and_python_runs_python(no_env, asked, resolved):
     m = machine(core=asked)
     try:
         assert m.core == resolved
+        native = type(m.dispatcher).__name__ == "NativeDispatcher"
+        assert native is (resolved == "rust")
+    finally:
+        m.stop()
+
+
+@pytest.mark.parametrize("asked", [None, "auto"])
+def test_auto_without_the_extension_runs_python(no_env, monkeypatch, asked):
+    monkeypatch.setattr(core, "_rs", None)
+    m = machine(core=asked)
+    try:
+        assert m.core == "python"
+        assert type(m.dispatcher).__name__ != "NativeDispatcher"
+        assert m.submit({"a": 1}).result(10).outputs == {"b": 2}
+    finally:
+        m.stop()
+
+
+def test_auto_without_the_dispatcher_runs_python(no_env, without_dispatcher):
+    m = machine()
+    try:
+        assert m.core == "python"
     finally:
         m.stop()
 
@@ -126,10 +155,15 @@ def test_the_rules_with_the_dispatcher(no_env, monkeypatch):
     assert core.resolve(None) == ("python", None)
 
 
-def test_auto_takes_rust_once_chosen_and_built(no_env, auto_rust, monkeypatch):
+def test_auto_takes_rust_only_when_built(no_env, monkeypatch):
     assert core.resolve("auto") == ("rust", None)
     monkeypatch.setattr(core, "_rs", None)
     assert core.resolve("auto") == ("python", None)
+
+
+def test_auto_follows_its_setting(no_env, auto_python):
+    assert core.resolve("auto") == ("python", None)
+    assert core.resolve("rust") == ("rust", None)
 
 
 def test_the_rules_without_the_extension(no_env, monkeypatch):
@@ -147,5 +181,5 @@ def test_doctor_reports_the_core(no_env, monkeypatch):
     out = io.StringIO()
     doctor.run(None, out)
     line = next(ln for ln in out.getvalue().splitlines() if ln.startswith("core"))
-    assert line.startswith(f"core     {core.AUTO:<7} (auto; togeari._rs ")
+    assert line.startswith(f"core     {core.AUTO}  (auto; togeari._rs ")
     assert "dispatcher yes" in line

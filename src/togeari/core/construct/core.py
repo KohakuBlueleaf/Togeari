@@ -16,8 +16,8 @@ except ImportError:
 CORES = ("auto", "rust", "python")
 ENV = "TOGEARI_CORE"
 
-# The core "auto" runs: Python until the measurements decide (spec/11 §11.6)
-AUTO = "python"
+# The core "auto" runs when it is built (spec/11 §11.6); Python otherwise
+AUTO = "rust"
 
 
 def native() -> ModuleType | None:

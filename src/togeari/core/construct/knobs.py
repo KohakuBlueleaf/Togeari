@@ -23,7 +23,7 @@ KNOB_DEFAULTS: dict[str, Any] = {
     "gc_threshold": (50_000, 20, 100),
     "squash_reuse": 1024,
     "squash_reuse_bytes": 64 << 20,
-    "gil_offer_us": 0,
+    "gil_offer_us": None,
 }
 POLICY_KNOBS = ("admission", "issue")
 MUTATES_MODES = ("copy-if-speculative", "wait", "copy-always")

@@ -30,7 +30,11 @@ jobs:
         run: |
           WHEEL=$(ls dist/*.whl)
           pip install "${WHEEL}[dev,web,vault]"
-      - name: Tests
+      - name: Tests (the default core, Rust)
+        run: python -m pytest tests -q -m "not gpu"
+      - name: Tests (the Python core)
+        env:
+          TOGEARI_CORE: python
         run: python -m pytest tests -q -m "not gpu"
       - name: Examples
         run: |

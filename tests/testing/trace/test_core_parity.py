@@ -138,11 +138,8 @@ def stats_view(m) -> dict:
     return {k: s.get(k) for k in STATS}
 
 
-def both(factory, jobs, seed: int = 7, log: bool = True):
-    """The trace of each core, checked equal; returns both."""
-    py = run_trace(lambda: factory("python"), jobs, seed=seed, log=log)
-    rs = run_trace(lambda: factory("rust"), jobs, seed=seed, log=log)
-    assert type(py.machine.dispatcher).__name__ == "Dispatcher"
+def alike(py, rs):
+    """The Rust trace ``rs`` equal to the Python trace ``py``."""
     assert type(rs.machine.dispatcher).__name__ == "NativeDispatcher"
     miss = py.log.first_mismatch(rs.log)
     assert miss is None, str(miss)
@@ -151,6 +148,32 @@ def both(factory, jobs, seed: int = 7, log: bool = True):
     assert (py.cycles, py.clock_s) == (rs.cycles, rs.clock_s)
     assert stats_view(py.machine) == stats_view(rs.machine)
     assert lanes_view(py.machine) == lanes_view(rs.machine)
+
+
+def with_regions(factory):
+    """``factory("rust")`` with ``gil_offer_us`` 0 when the machine leaves it at None: the
+    scheduling regions run at every chance, each released."""
+
+    def make():
+        m = factory("rust")
+        if m.knobs["gil_offer_us"] is None:
+            m.knobs["gil_offer_us"] = 0
+        return m
+
+    return make
+
+
+def both(factory, jobs, seed: int = 7, log: bool = True, regions: bool = True):
+    """The trace of each core, checked equal; returns both. The Rust core runs twice when the
+    machine keeps the default ``gil_offer_us`` (None, no regions): as built, and with regions
+    at every chance, so every shape checks both paths (``regions=False``: once, for machines
+    sharing state across runs, which run both paths themselves)."""
+    py = run_trace(lambda: factory("python"), jobs, seed=seed, log=log)
+    rs = run_trace(lambda: factory("rust"), jobs, seed=seed, log=log)
+    assert type(py.machine.dispatcher).__name__ == "Dispatcher"
+    alike(py, rs)
+    if regions and rs.machine.knobs["gil_offer_us"] is None:
+        alike(py, run_trace(with_regions(factory), jobs, seed=seed, log=log))
     return py, rs
 
 
@@ -187,7 +210,7 @@ def test_a_python_policy_traces_alike(gen_seed):
 def test_the_path_with_no_listener_runs_alike(gen_seed):
     """No decision log on the bus: regions keep no events; records, time and counters agree."""
     p = entry_program(gen_seed, jobs=16)
-    _, rs = both(gen_make(p, record=None), p.inputs, log=False)
+    _, rs = both(gen_make(p, record=None, gil_offer_us=0), p.inputs, log=False)
     r = rs.machine.dispatcher.native_stats()
     assert r["regions"] > 0 and r["free_steps"] + r["free_orders"] + r["free_retires"] > 0, r
 
@@ -200,7 +223,7 @@ def test_the_suite_covers_faults_squashes_and_gil_free_work():
     for g in range(4):
         p = entry_program(g, jobs=16)
         for knobs in ({}, {"record": None}):
-            _, rs = both(gen_make(p, **knobs), p.inputs)
+            _, rs = both(gen_make(p, gil_offer_us=0, **knobs), p.inputs)
             for k, n in rs.log.counts().items():
                 kinds[k] = kinds.get(k, 0) + n
             for k, n in rs.machine.dispatcher.native_stats().items():
@@ -365,15 +388,22 @@ def test_lane_methods_set_on_the_instance_are_called_as_python_calls_them(gen_se
     from the core and from inside the lane: the same calls per lane on both cores."""
     p = entry_program(gen_seed, jobs=16)
     base = gen_make(p, **LANE_CONFIGS[config])
-    calls = {"python": {}, "rust": {}}
-    both(lambda core: counting(base(core), name, calls[core]), p.inputs)
-    assert calls["python"] == calls["rust"]
+    runs = {"python": [], "rust": []}
+
+    def make(core):
+        runs[core].append({})
+        return counting(base(core), name, runs[core][-1])
+
+    both(make, p.inputs)
+    # One count per run: the Rust core runs without regions and with them
+    (calls,) = runs["python"]
+    assert runs["rust"] == [calls, calls]
 
     # Not vacuous: Throughput, LaneAware and TargetLoad call what the other configs may not
     rare = RARE_LANE_CALLS - (
         {"queued", "load_waiting", "rate"} if "throughput" in config else set()
     )
-    assert calls["python"] or name in rare, name
+    assert calls or name in rare, name
 
 
 def units_up_reversed(m):
@@ -657,7 +687,7 @@ def listener():
 def test_a_bus_listener_is_passive_only_while_every_registration_is(steps, acting):
     """Passivity is per function: one acting registration makes it acting; unlisten recounts."""
     p = entry_program(0, jobs=4)
-    m = gen_make(p)("rust")
+    m = gen_make(p, gil_offer_us=0)("rust")
     fn = listener()
     before = m.bus.acting
     for step in steps:
@@ -911,9 +941,10 @@ STORED = {
 }
 
 
+@pytest.mark.parametrize("offer_us", [None, 0])
 @pytest.mark.parametrize("case", STORED)
 @pytest.mark.parametrize("gen_seed", range(3))
-def test_snapshots_and_stores_over_two_runs_trace_alike(gen_seed, case):
+def test_snapshots_and_stores_over_two_runs_trace_alike(gen_seed, case, offer_us):
     """A first run with failures fills a store; a second run on it hits results and resumes
     snapshots. Both runs, and the stores, agree."""
     p = entry_program(gen_seed, jobs=16)
@@ -922,9 +953,9 @@ def test_snapshots_and_stores_over_two_runs_trace_alike(gen_seed, case):
 
         def make(core, rate=rate):
             kw = {"item_error_rate": rate, "store": stores[core], **STORED[case]}
-            return generated(p.text, p.entry, core=core, **kw)()
+            return generated(p.text, p.entry, core=core, gil_offer_us=offer_us, **kw)()
 
-        both(make, p.inputs)
+        both(make, p.inputs, regions=False)
     assert sorted(stores["python"].data) == sorted(stores["rust"].data)
 
 

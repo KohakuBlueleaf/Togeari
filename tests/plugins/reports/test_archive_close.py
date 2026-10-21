@@ -3,10 +3,13 @@
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from togeari.plugins.record import archive
 from togeari.plugins.record.archive import ArchiveWriter
 
 
+@pytest.mark.serial
 def test_close_returns_within_its_timeout_and_nothing_writes_after(tmp_path, monkeypatch):
     written: list[str] = []
 
@@ -37,6 +40,7 @@ def test_close_returns_within_its_timeout_and_nothing_writes_after(tmp_path, mon
     assert len(written) == count < 200
 
 
+@pytest.mark.serial
 def test_close_does_not_wait_for_a_slow_open_and_the_writer_closes_the_files(tmp_path, monkeypatch):
     """Opening the record files can take seconds on a cold disk: close returns by its deadline,
     the open's task writes nothing, and the writer closes what it opened."""

@@ -3,9 +3,12 @@
 import threading
 import time
 
+import pytest
+
 from togeari.plugins.common.worker import Worker
 
 
+@pytest.mark.serial
 def test_abandon_lets_a_closer_take_the_lock_a_busy_writer_holds_per_task():
     io = threading.Lock()
     handled: list[int] = []

@@ -50,6 +50,7 @@ def server():
     s.close()
 
 
+@pytest.mark.serial
 @pytest.mark.parametrize("mode", ["block", "cancel"])
 def test_web_engine_keeps_every_rule(server, mode):
     report = check_engine(

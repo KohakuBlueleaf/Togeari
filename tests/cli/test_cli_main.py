@@ -146,6 +146,7 @@ def test_conform_reexecute_catches_a_consistent_wrong_result(tmp_path):
     assert code == 1 and "3/4 jobs conform" in out and f"FAIL {entry['key']}" in out
 
 
+@pytest.mark.serial
 def test_units_runs_the_engine_checks(tmp_path):
     code, out = cli("units", machine_file(tmp_path), "--rounds", "40")
     assert code == 0, out

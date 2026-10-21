@@ -50,6 +50,7 @@ def kill_workers(engine):
         slot.proc.kill()
 
 
+@pytest.mark.serial
 @pytest.mark.parametrize(
     "mode, transport", [("thread", "pickle"), ("process", "pickle"), ("process", "shm")]
 )

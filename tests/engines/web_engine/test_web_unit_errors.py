@@ -91,6 +91,7 @@ def call(path, x):
     return WorkItem("svc", {"x": x}, JsonHttp(path, parse=y_of), protocol="http")
 
 
+@pytest.mark.serial
 def test_cancel_mode_answers_every_request_in_flight_at_once(held_server):
     url, release, arrived = held_server
     engine = WebCallEngine(url, max_inflight=16, on_unit_error="cancel")

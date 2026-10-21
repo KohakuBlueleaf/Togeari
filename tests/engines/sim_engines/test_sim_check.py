@@ -32,6 +32,7 @@ def outage(engine):
     engine.outages.append((0.0, 1e9))
 
 
+@pytest.mark.serial
 @pytest.mark.parametrize("make", [SimCall, SimBatch, SimStream], ids=["call", "batch", "stream"])
 def test_sim_engines_keep_every_rule(make):
     engine = make(latency_ms=0.5, seed=3)
@@ -148,6 +149,7 @@ def heavy_samples(n=4):
     return [WorkItem("triple", {"x": i}, Heavy(triple)) for i in range(n)]
 
 
+@pytest.mark.serial
 def test_b3_passes_a_well_behaved_threaded_engine():
     report = check_engine(_Threaded, samples(4), rounds=20, grace_s=0.0, probe_s=0.2)
     assert report.rule("B3").ok and report.rule("B2").ok, str(report)
@@ -159,6 +161,7 @@ def test_check_catches_threading_bugs(engine):
     assert report.rule("B3").ok is False, str(report)
 
 
+@pytest.mark.serial
 def test_check_catches_a_heavy_prepare_on_the_caller():
     report = check_engine(_KeyPrepares, heavy_samples(), rounds=20, grace_s=0.0, probe_s=0.2)
     assert report.rule("B3").ok is False, str(report)

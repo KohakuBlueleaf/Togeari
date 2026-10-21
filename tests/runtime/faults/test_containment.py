@@ -273,6 +273,7 @@ class WaitsOnDispatcher(BasePlugin):
         raise RuntimeError("plugin bug")
 
 
+@pytest.mark.serial
 def test_disabling_a_plugin_whose_event_thread_waits_on_the_dispatcher_does_not_block():
     p = WaitsOnDispatcher()
     m = machine(plugins=[p])

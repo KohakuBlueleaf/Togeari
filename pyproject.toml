@@ -38,6 +38,7 @@ report = ["zstandard>=0.22"]
 dev = [
     "maturin>=1.9,<2.0",
     "pytest>=8",
+    "pytest-xdist>=3.6",
     "ruff",
     "black",
     "httpx>=0.27",
@@ -76,5 +77,6 @@ testpaths = ["tests"]
 pythonpath = ["tests/runtime", "tests/plugins"]
 markers = [
     "gpu: needs a CUDA device (cuda:0); `-m \"not gpu\"` runs the CPU-only suite",
+    "serial: asserts a wall-clock bound or a scheduling outcome; runs in its own pass without pytest-xdist (`-m serial`), never beside other workers",
     "timeout(seconds): the watchdog bound of one test (default TOGEARI_TEST_TIMEOUT, 900 s); past it the stacks go to runs/tests/watchdog.txt and the session exits",
 ]

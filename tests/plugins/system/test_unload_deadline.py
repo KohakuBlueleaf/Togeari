@@ -3,6 +3,7 @@
 import threading
 import time
 
+import pytest
 from plugin_programs import PROGRAM, jobs
 
 from conftest import build, run_jobs
@@ -31,6 +32,7 @@ class SlowListener(BasePlugin):
         self.unloaded_at = time.monotonic()
 
 
+@pytest.mark.serial
 def test_stop_returns_within_close_s_with_a_backlog_of_slow_events():
     listener = SlowListener()
     m = build(PROGRAM, "main", plugins=[listener], events="all")

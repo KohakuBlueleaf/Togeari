@@ -3,6 +3,7 @@ job ends without waiting for the cancelled call, and a younger `ordered` effect 
 
 import time
 
+import pytest
 from kohakunode import NodeLibrary
 
 from togeari import Inline, Lane, Machine, Use
@@ -76,6 +77,7 @@ def build() -> tuple[Machine, CountingSim]:
     return m, slow_unit
 
 
+@pytest.mark.serial
 def test_a_taken_fault_squashes_and_cancels_younger_work():
     EFFECTS.clear()
     m, slow_unit = build()

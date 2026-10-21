@@ -53,10 +53,24 @@ def pure(name: str) -> bool:
 
 
 def pytest_configure(config):
-    """The watchdog's log: ``runs/tests/watchdog.txt`` under the project root."""
-    path = config.rootpath / "runs" / "tests" / "watchdog.txt"
+    """The watchdog's log: ``runs/tests/watchdog.txt`` under the project root, one file per
+    pytest-xdist worker (``watchdog-gw0.txt``, ...)."""
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    name = f"watchdog-{worker}.txt" if worker else "watchdog.txt"
+    path = config.rootpath / "runs" / "tests" / name
     path.parent.mkdir(parents=True, exist_ok=True)
     config.watchdog_log = path.open("w", encoding="utf-8")
+
+
+def pytest_runtest_setup(item):
+    """A ``serial`` test asserts a wall-clock bound or a scheduling outcome, so it never runs
+    beside other workers: under pytest-xdist it fails at setup instead of running."""
+    if os.environ.get("PYTEST_XDIST_WORKER") and item.get_closest_marker("serial"):
+        pytest.fail(
+            'a serial test under pytest-xdist: run the parallel pass with -m "not serial" '
+            "and the serial pass without -n",
+            pytrace=False,
+        )
 
 
 def pytest_unconfigure(config):

@@ -16,6 +16,9 @@ _SPEC = importlib.util.spec_from_file_location("togeari_bench_scaling", _PATH)
 scaling = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(scaling)
 
+# Wall-clock ratios: run alone, never beside other workers
+pytestmark = pytest.mark.serial
+
 # Allowed growth of the per-unit cost from N to 4N (linear-in-N costs give about 4; the sizes
 # are where such costs dominate the constant per-unit work)
 FACTOR = 2.0

@@ -774,6 +774,7 @@ def neighbour_turns(offer_us) -> tuple[int, dict]:
     return turns, t.machine.dispatcher.native_stats()
 
 
+@pytest.mark.serial
 def test_an_offer_really_lets_a_waiting_thread_run():
     """Offers are real GIL releases: a neighbour thread gets far more turns at 0 (every region
     released) than at inf (every region held, no offer), whatever the counters say. How many

@@ -1,10 +1,11 @@
 """One config of the GIL study, in its own process:
-``python -m p8.contention.child --work torch --isolation thread --scale full --out x.json``.
+``python -m p8.contention.child --work torch --isolation thread --scale full --out x.json
+[--knobs JSON] [--variant NAME]``.
 
-The machine (core from ``TOGEARI_CORE``) starts the engine; a feeder thread keeps the engine
-full directly while a chain feeder loads the dispatcher at each load of the scale. Then each
-load runs alone, so the dispatcher's own numbers at that load are known. Writes one JSON
-object: the config, the core that ran, every phase.
+The machine (core from ``TOGEARI_CORE``, ``--knobs`` on it) starts the engine; a feeder thread
+keeps the engine full directly while a chain feeder loads the dispatcher at each load of the
+scale. Then each load runs alone, so the dispatcher's own numbers at that load are known.
+Writes one JSON object: the config, the core that ran, its knobs, every phase.
 """
 
 import argparse
@@ -32,12 +33,15 @@ def _chain_inputs(i: int) -> dict:
     return {"x": i}
 
 
-def run(work: str, isolation: str, scale: Scale) -> dict:
+def run(work: str, isolation: str, scale: Scale, knobs: dict) -> dict:
     w = works.build(work, isolation, scale)
     t0 = time.perf_counter()
-    machine = dispatch.build(scale.chain_len, work=w.node, libraries=w.libraries, bind=w.bind)
+    machine = dispatch.build(
+        scale.chain_len, work=w.node, libraries=w.libraries, bind=w.bind, knobs=knobs
+    )
     start_s = time.perf_counter() - t0
-    core = getattr(machine, "core", "python")
+    core = machine.core
+    gil_offer_us = machine.knobs["gil_offer_us"]
     probes = {"work": w.probe}
     rows = []
     try:
@@ -50,9 +54,18 @@ def run(work: str, isolation: str, scale: Scale) -> dict:
             if rate != 0:
                 rows.append(_phase(f"{name} alone", scale, chain(machine, scale, rate), machine))
         spec = w.engine.spec()
+        native = machine.dispatcher.native_stats() if core == "rust" else None
     finally:
         machine.stop()
-    return {"core": core, "start_s": start_s, "guard": w.guard, "engine": spec, "phases": rows}
+    return {
+        "core": core,
+        "gil_offer_us": gil_offer_us,
+        "native_stats": native,
+        "start_s": start_s,
+        "guard": w.guard,
+        "engine": spec,
+        "phases": rows,
+    }
 
 
 def _phase(name: str, scale: Scale, feeders: list, machine, probes=None) -> dict:
@@ -68,14 +81,23 @@ def main() -> None:
     p.add_argument("--isolation", required=True)
     p.add_argument("--scale", choices=sorted(SCALES), default="small")
     p.add_argument("--out", required=True)
+    p.add_argument("--knobs", default="{}", help="JSON knobs for the machine")
+    p.add_argument("--variant", default=None)
     args = p.parse_args()
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
 
     t0 = time.perf_counter()
-    cfg = {"work": args.work, "isolation": args.isolation, "core": os.environ.get("TOGEARI_CORE")}
+    knobs = json.loads(args.knobs)
+    cfg = {
+        "work": args.work,
+        "isolation": args.isolation,
+        "core": os.environ.get("TOGEARI_CORE"),
+        "variant": args.variant,
+        "knobs": knobs,
+    }
     try:
-        result, error = run(args.work, args.isolation, SCALES[args.scale]), None
+        result, error = run(args.work, args.isolation, SCALES[args.scale], knobs), None
     except Exception:  # noqa: BLE001
         result, error = {}, traceback.format_exc()
         print(error, flush=True)

@@ -8,16 +8,21 @@ from togeari import Machine
 
 
 class Peaks:
-    """Resident jobs and pool bytes at each admission (read on the dispatcher thread)."""
+    """Resident jobs and pool bytes at each admission (read on the dispatcher thread).
+
+    A passive listener: it only records, so the native core keeps its GIL-free regions (an
+    acting listener would hold the GIL and measure a different core); the counts are read when
+    the event is delivered.
+    """
 
     def __init__(self, machine: Machine):
         self.d = machine.dispatcher
         self.jobs = 0
         self.bytes = 0
-        machine.bus.listen(self.seen, kinds=["job.admit"])
+        machine.bus.listen(self.seen, kinds=["job.admit"], passive=True)
 
     def seen(self, kind: str, fields: dict) -> None:
-        self.jobs = max(self.jobs, len(self.d.jobs))
+        self.jobs = max(self.jobs, self.d.job_count())
         self.bytes = max(self.bytes, self.d.pool_bytes)
 
 
@@ -40,8 +45,12 @@ def percentiles(times: list[float]) -> dict:
 
 
 def inline_times(machine: Machine) -> dict:
-    """Per inline node: the recorded run-time percentiles."""
-    return {node: percentiles(list(stat.times)) for node, stat in machine.dispatcher.inline.items()}
+    """Per inline node: the recorded run-time percentiles (the Python core keeps the samples;
+    the native core keeps totals only, so it reports none)."""
+    inline = getattr(machine.dispatcher, "inline", None)
+    if inline is None:
+        return {}
+    return {node: percentiles(list(stat.times)) for node, stat in inline.items()}
 
 
 def unit_busy(machine: Machine, seconds: float) -> dict:
@@ -63,12 +72,15 @@ def run(machine: Machine, source: Any, sink: Any) -> dict:
         summary = machine.run(source, sink)
         seconds = time.perf_counter() - t0
         stats = machine.inspect("stats").result(30)
+        native = machine.dispatcher.native_stats() if machine.core == "rust" else None
     finally:
         machine.stop()
     busy = unit_busy(machine, seconds)
 
     calls = stats["calls"]
     return {
+        "core": machine.core,
+        "knobs": {k: repr(v) for k, v in machine.knobs.items()},
         "seconds": seconds,
         "jobs": summary["jobs"],
         "jobs_ok": summary["jobs_ok"],
@@ -79,6 +91,7 @@ def run(machine: Machine, source: Any, sink: Any) -> dict:
         "dispatcher_busy": summary["dispatcher_busy"],
         "dispatcher_us_per_call": stats["busy_s"] / calls * 1e6 if calls else None,
         "phase_s": stats["phase_s"],
+        "native_stats": native,
         "squashed": summary["squashed"],
         "peak_jobs": peaks.jobs,
         "peak_pool_bytes": peaks.bytes,

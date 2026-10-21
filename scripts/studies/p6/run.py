@@ -5,7 +5,10 @@ Run from the repository root, one study at a time (GPU studies never run in para
     .venv/Scripts/python.exe scripts/studies/p6/run.py --study A --scale small
     .venv/Scripts/python.exe scripts/studies/p6/run.py --study all --scale full
 
-``--match TEXT`` keeps only the configurations whose name contains ``TEXT``.
+``--match TEXT`` keeps only the configurations whose name contains ``TEXT``; ``--round R`` only
+those of round ``R`` (a caller interleaving variants runs one round per process). ``--knobs JSON``
+are set on every machine a study builds, under the knobs the study itself varies; each
+configuration records them (``base_knobs``) and each result the core that ran.
 
 Output under ``runs/p6/studies/<scale>/<study>/``: ``configs/<name>.json`` per configuration
 and round, ``results.json`` with every result, ``summary.md``, and the run reports and survey
@@ -33,12 +36,17 @@ from p6.scales import SCALES  # noqa: E402
 from p6.studies import STUDIES as MODULES  # noqa: E402
 
 
-def run_study(key: str, scale_name: str, out: Path, match: str) -> None:
+def run_study(
+    key: str, scale_name: str, out: Path, match: str, knobs: dict, only_round: int | None = None
+) -> None:
     module = MODULES[key]
     scale = SCALES[scale_name]
     root = out / scale.name / key
     root.mkdir(parents=True, exist_ok=True)
-    cfgs = [c for c in module.plan(scale) if match in c["name"]]
+    (root / "results.json").unlink(missing_ok=True)
+    cfgs = [{**c, "base_knobs": knobs} for c in module.plan(scale) if match in c["name"]]
+    if only_round is not None:
+        cfgs = [c for c in cfgs if c["round"] == only_round]
     print(f"study {key}: {module.TITLE} ({len(cfgs)} runs, scale {scale.name})", flush=True)
     t0 = time.perf_counter()
 
@@ -86,11 +94,13 @@ def main() -> None:
     p.add_argument("--scale", choices=sorted(SCALES), default="small")
     p.add_argument("--out", default=str(REPO / "runs" / "p6" / "studies"))
     p.add_argument("--match", default="", help="run only configurations whose name has this")
+    p.add_argument("--knobs", default="{}", help="JSON knobs for every machine")
+    p.add_argument("--round", type=int, default=None, help="run only this round's configs")
     args = p.parse_args()
 
     keys = list(MODULES) if args.study == "all" else [args.study]
     for key in keys:
-        run_study(key, args.scale, Path(args.out), args.match)
+        run_study(key, args.scale, Path(args.out), args.match, json.loads(args.knobs), args.round)
 
 
 if __name__ == "__main__":

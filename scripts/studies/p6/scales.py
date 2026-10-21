@@ -22,6 +22,6 @@ SCALES = {
         "small", rounds=1, ceiling_share=0.1, mixed_stations=12, batch_stations=12, gpu_rounds=1
     ),
     "full": Scale(
-        "full", rounds=3, ceiling_share=1.0, mixed_stations=120, batch_stations=480, gpu_rounds=1
+        "full", rounds=3, ceiling_share=1.0, mixed_stations=120, batch_stations=480, gpu_rounds=3
     ),
 }

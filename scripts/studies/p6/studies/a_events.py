@@ -92,9 +92,8 @@ def run(cfg: dict, scale: Scale, root: Path) -> dict:
                 entry="main",
                 libraries=[ceiling.lib],
                 bind=bind(),
-                admission=Fixed(256),
                 plugins=plugins_for(cfg["plugins"], folder),
-                events=cfg["events"],
+                **{**cfg.get("base_knobs", {}), "admission": Fixed(256), "events": cfg["events"]},
             )
             jobs = ceiling_jobs(cfg["shape"], scale.ceiling_share)
             return measure.run(machine, Iterable(jobs), Memory())
@@ -108,8 +107,7 @@ def run(cfg: dict, scale: Scale, root: Path) -> dict:
                 stations=scale.mixed_stations,
                 report=folder if cfg["plugins"] == "report" else None,
                 plugins=[Counters()] if cfg["plugins"] == "counters" else [],
-                events=cfg["events"],
-                record=cfg["record"],
+                **{**cfg.get("base_knobs", {}), "events": cfg["events"], "record": cfg["record"]},
             )
             return measure.run(machine, source, sink)
 

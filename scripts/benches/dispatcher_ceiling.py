@@ -3,13 +3,18 @@
 Three shapes, each timed with every dispatcher phase: inline-only chains, the
 same chain on a zero-latency call lane, and a wide `each` on a zero-latency
 batch lane. Each round runs every shape under both collector settings (the
-``gc_threshold`` default and the process's own threshold), one after the other.
-Writes one JSON report with every run and, per shape and setting, the median,
-best and worst calls/s.
+``gc_threshold`` default and the process's own threshold), one after the other,
+for every variant. Writes one JSON report with every run and, per variant, shape
+and setting, the median, best and worst calls/s.
 
-Usage: ``python dispatcher_ceiling.py [out.json] [rounds=5]``.
+Usage: ``python dispatcher_ceiling.py [out.json] [rounds=5] [--knobs JSON]
+[--variants JSON]``. ``--knobs`` are applied to every machine (under the collector
+setting); ``--variants`` is ``{name: {"core": ..., "knobs": {...}}}``, interleaved
+inside each round so drift reaches every variant alike (default: one variant,
+``default``, on the default core).
 """
 
+import argparse
 import json
 import platform
 import statistics
@@ -66,12 +71,15 @@ def bench(name: str, program: str, bind: dict, jobs: list, **knobs) -> dict:
         summary = m.run(Iterable(jobs), sink)
         dt = time.perf_counter() - t0
         stats = m.inspect("stats").result()
+        native = m.dispatcher.native_stats() if m.core == "rust" else None
     finally:
         m.stop()
 
     calls = stats["calls"]
     return {
         "shape": name,
+        "core": m.core,
+        "knobs": {k: v for k, v in knobs.items() if k != "core"},
         "gc_threshold": m.knobs["gc_threshold"],
         "jobs": len(jobs),
         "calls": calls,
@@ -81,6 +89,7 @@ def bench(name: str, program: str, bind: dict, jobs: list, **knobs) -> dict:
         "dispatcher_busy": summary["dispatcher_busy"],
         "phase_s": stats["phase_s"],
         "cycles": stats["cycles"],
+        "native_stats": native,
         "ok": sum(r.ok for r in sink.records),
     }
 
@@ -131,45 +140,70 @@ def summarize(rows: list[dict]) -> dict:
     }
 
 
-def main(out: str, rounds: int) -> None:
-    # Rounds interleave every setting per shape, so neither setting runs on a fresher process
-    rows = []
-    for n in range(rounds):
-        for name in SHAPES:
-            for setting, knobs in SETTINGS.items():
-                rows.append({"round": n, "setting": setting, **run_shape(name, **knobs)})
-
-    summary = {
+def summary_of(rows: list[dict]) -> dict:
+    """Per shape and setting, the summary of ``rows`` (one variant's)."""
+    return {
         name: {
             setting: summarize([r for r in rows if r["shape"] == name and r["setting"] == setting])
             for setting in SETTINGS
         }
         for name in SHAPES
     }
+
+
+def main(out: str, rounds: int, knobs: dict, variants: dict) -> None:
+    # Rounds interleave every variant and setting per shape, so none runs on a fresher process;
+    # the variant order rotates by one each round, so none always runs first
+    rows = []
+    names = list(variants)
+    for n in range(rounds):
+        order = names[n % len(names) :] + names[: n % len(names)]
+        for name in SHAPES:
+            for variant in order:
+                v = variants[variant]
+                for setting, own in SETTINGS.items():
+                    run = run_shape(name, core=v["core"], **{**knobs, **v["knobs"], **own})
+                    rows.append({"round": n, "variant": variant, "setting": setting, **run})
+
+    by_variant = {v: summary_of([r for r in rows if r["variant"] == v]) for v in variants}
     report = {
         "python": sys.version,
         "machine": platform.platform(),
         "rounds": rounds,
-        "summary": summary,
+        "knobs": knobs,
+        "variants": variants,
+        "by_variant": by_variant,
         "rows": rows,
     }
+    if len(variants) == 1:
+        report["summary"] = next(iter(by_variant.values()))
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(json.dumps(report, indent=2))
 
-    # One line per shape and setting: calls/s over the rounds, the gain of the default
-    for name, by_setting in summary.items():
-        for setting, s in by_setting.items():
-            print(
-                f"{name:<14} {setting:<8} median {s['median']:>8.0f}  best {s['best']:>8.0f}"
-                f"  worst {s['worst']:>8.0f} calls/s  {s['jobs_per_s']:>7.1f} jobs/s"
-                f"  busy {s['dispatcher_busy']:.2f}  all ok {s['ok']}"
-            )
-        gain = by_setting["default"]["median"] / by_setting["process"]["median"] - 1
-        print(f"{name:<14} default over process: {gain:+.0%} (median)")
+    # One line per variant, shape and setting: calls/s over the rounds, the gain of the default
+    for variant, summary in by_variant.items():
+        for name, by_setting in summary.items():
+            for setting, s in by_setting.items():
+                print(
+                    f"{variant:<10} {name:<14} {setting:<8} median {s['median']:>8.0f}"
+                    f"  best {s['best']:>8.0f}  worst {s['worst']:>8.0f} calls/s"
+                    f"  {s['jobs_per_s']:>7.1f} jobs/s  busy {s['dispatcher_busy']:.2f}"
+                    f"  all ok {s['ok']}"
+                )
+            gain = by_setting["default"]["median"] / by_setting["process"]["median"] - 1
+            print(f"{variant:<10} {name:<14} default over process: {gain:+.0%} (median)")
 
 
 if __name__ == "__main__":
+    p = argparse.ArgumentParser(description="Dispatcher ceiling on CPU")
+    p.add_argument("out", nargs="?", default="runs/bench/dispatcher_ceiling.json")
+    p.add_argument("rounds", nargs="?", type=int, default=5)
+    p.add_argument("--knobs", default="{}", help="JSON knobs for every machine")
+    p.add_argument("--variants", default=None, help='JSON {name: {"core": ..., "knobs": {...}}}')
+    args = p.parse_args()
     main(
-        sys.argv[1] if len(sys.argv) > 1 else "runs/bench/dispatcher_ceiling.json",
-        int(sys.argv[2]) if len(sys.argv) > 2 else 5,
+        args.out,
+        args.rounds,
+        json.loads(args.knobs),
+        (json.loads(args.variants) if args.variants else {"default": {"core": None, "knobs": {}}}),
     )

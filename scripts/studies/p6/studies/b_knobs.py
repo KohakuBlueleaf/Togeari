@@ -96,8 +96,9 @@ def build(cfg: dict, scale: Scale) -> tuple:
 
 
 def run(cfg: dict, scale: Scale, root: Path) -> dict:
+    # The run's base knobs first, then the setting under study
     machine, source, sink = build(cfg, scale)
-    apply(machine, cfg["knobs"])
+    apply(machine, {**cfg.get("base_knobs", {}), **cfg["knobs"]})
     return measure.run(machine, source, sink)
 
 

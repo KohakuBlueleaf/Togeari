@@ -21,12 +21,19 @@ def dispatcher(cfg: dict, phase: str) -> dict | None:
     return p["dispatcher"]
 
 
+def label(r: dict) -> str:
+    """``variant / work / isolation`` (the core that ran when the config names no variant)."""
+    cfg = r["config"]
+    who = cfg.get("variant") or r.get("core") or cfg.get("core") or "python"
+    rnd = f" r{cfg['round']}" if cfg.get("round") is not None else ""
+    return f"{who} / {cfg['work']} / {cfg['isolation']}{rnd}"
+
+
 def rows(results: list[dict], loads: list[str]) -> list[list[str]]:
     """Per config: items/s at each load (with the share of idle), then the dispatcher alone."""
     out = []
     for r in results:
-        cfg = r["config"]
-        name = f"{r.get('core') or cfg['core'] or 'python'} / {cfg['work']} / {cfg['isolation']}"
+        name = label(r)
         if r.get("skipped") or r.get("error"):
             out.append([name, r.get("skipped") or "failed", *[""] * (len(loads) - 1)])
             continue
@@ -49,10 +56,9 @@ def alone(results: list[dict], loads: list[str]) -> list[list[str]]:
     """Per config: the dispatcher's calls/s and busy fraction at each load with no engine work."""
     out = []
     for r in results:
-        cfg = r["config"]
         if r.get("skipped") or r.get("error"):
             continue
-        name = f"{r.get('core') or 'python'} / {cfg['work']} / {cfg['isolation']}"
+        name = label(r)
         cells = []
         for load in loads[1:]:
             d = dispatcher(r, f"{load} alone")
@@ -74,11 +80,11 @@ def write(root: Path, title: str, results: list[dict], loads: list[str]) -> Path
         "Engine items/s fed directly (share of its idle rate), with the dispatcher's calls/s",
         "and busy fraction in the same window:",
         "",
-        table(["core / work / isolation", *loads], rows(results, loads)),
+        table(["variant / work / isolation", *loads], rows(results, loads)),
         "",
         "The dispatcher alone at each load (calls/s, busy fraction):",
         "",
-        table(["core / work / isolation", *loads[1:]], alone(results, loads)),
+        table(["variant / work / isolation", *loads[1:]], alone(results, loads)),
         "",
     ]
     path = root / "summary.md"

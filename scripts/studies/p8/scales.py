@@ -29,6 +29,8 @@ class Scale:
     vram_cap_gb: float
     py_workers: int
     spin_n: int
+    # Rounds over every config, interleaved (variants and configs inside each round)
+    rounds: int
 
 
 LOADS = (("idle", 0.0), ("100/s", 100.0), ("300/s", 300.0), ("1000/s", 1000.0), ("ceiling", None))
@@ -48,6 +50,7 @@ SCALES = {
         vram_cap_gb=2.0,
         py_workers=2,
         spin_n=2_000,
+        rounds=2,
     ),
     "full": Scale(
         name="full",
@@ -63,5 +66,6 @@ SCALES = {
         vram_cap_gb=4.0,
         py_workers=8,
         spin_n=40_000,
+        rounds=3,
     ),
 }

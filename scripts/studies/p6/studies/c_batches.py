@@ -37,7 +37,7 @@ def run(cfg: dict, scale: Scale, root: Path) -> dict:
         wait_ms=cfg["wait_ms"],
         report=None,
         admission=Fixed(cfg["admit"]),
-        record=None,
+        **{**cfg.get("base_knobs", {}), "record": None},
     )
     res = measure.run(machine, source, sink)
     sizes = res["lanes"]["score"]["batch_sizes"]

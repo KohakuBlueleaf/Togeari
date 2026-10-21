@@ -38,12 +38,14 @@ def work_program(node: str, inputs: tuple[str, ...]) -> str:
 
 
 def probe(m: Any) -> dict:
-    """The dispatcher's counters and thread CPU time, read on the dispatcher thread."""
+    """The dispatcher's counters (and the Rust core's region and offer counts) and thread CPU
+    time, read on the dispatcher thread."""
     return {
         "stats": copy.deepcopy(m.dispatcher.stats),
+        "native": m.dispatcher.native_stats() if m.core == "rust" else None,
         "thread_cpu_s": time.thread_time(),
         "wall": time.perf_counter(),
-        "jobs_live": len(m.dispatcher.jobs),
+        "jobs_live": m.dispatcher.job_count(),
     }
 
 
@@ -53,8 +55,10 @@ def build(
     libraries: tuple = (),
     bind: dict | None = None,
     window: int = 256,
+    knobs: dict | None = None,
 ) -> Machine:
-    """A machine with the ``chain`` entry, and ``work`` (node, inputs) when given."""
+    """A machine with the ``chain`` entry, and ``work`` (node, inputs) when given; ``knobs``
+    go to the machine under the admission and source buffer set here."""
     sim = Lane([SimCall(name="sim", latency_ms=0.0, capacity=64)], name="chain")
     programs = {chain_program(chain_len): ["chain"]}
     if work is not None:
@@ -64,8 +68,7 @@ def build(
         entry="chain",
         libraries=[lib, *libraries],
         bind={"inc": Use(sim), **(bind or {})},
-        admission=Fixed(window),
-        source_buffer=64,
+        **{**(knobs or {}), "admission": Fixed(window), "source_buffer": 64},
     )
     m.queries["s1_probe"] = probe
     return m
@@ -93,7 +96,14 @@ def window_stats(a: dict, b: dict) -> dict:
     }
     cycles = sb["cycles"] - sa["cycles"]
 
+    # Regions and GIL offers over the window (Rust core), with their rates
+    native = None
+    if a.get("native") and b.get("native"):
+        native = {k: v - a["native"].get(k, 0) for k, v in b["native"].items()}
+        native |= {f"{k}_per_s": native[k] / wall if wall > 0 else 0.0 for k in list(native)}
+
     return {
+        "native": native,
         "wall_s": wall,
         "calls": calls,
         "calls_per_s": calls / wall if wall > 0 else 0.0,

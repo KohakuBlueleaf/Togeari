@@ -5,7 +5,21 @@ per configuration on the release tree. The raw numbers of the engine study are i
 `runs/s1/full/` (`m1.json` … `m5.json`, per-configuration logs) after
 `python scripts/studies/s1/run.py --scale full`.
 
-## Dispatcher
+## The cores
+
+[The cores compared](native.md) holds every table of the Python core against the Rust core at
+each `gil_offer_us`, the method and the rule that set the defaults. Dispatcher ceiling, node
+calls/s and dispatcher µs per call, median of five interleaved rounds:
+
+| workload | Python core | Rust core | Rust / Python |
+|---|---|---|---|
+| a chain of inline nodes | 84,445 (11.8 µs) | 431,650 (2.3 µs) | 5.11× |
+| a chain of calls on an engine lane | 30,588 (32.7 µs) | 57,184 (17.5 µs) | 1.87× |
+| `each` with batched calls | 42,507 (23.5 µs) | 117,849 (8.5 µs) | 2.77× |
+
+The sections below measure the Python core.
+
+## Dispatcher (Python core)
 
 `scripts/benches/dispatcher_ceiling.py`: simulated engines that answer at once, so the
 dispatcher is the only cost. Five rounds; each round runs every shape with the default
@@ -38,7 +52,7 @@ cost at 4N is above twice the cost at N):
 `tests/scaling` also checks loop iterations: a `jump` loop and a `mutates` loop cost the same
 per iteration at 500 and 2,000 iterations (66–87 µs per iteration up to 8,000).
 
-## Engines (study S1)
+## Engines (study S1, Python core)
 
 Each phase is a 1 s warm-up and a 2.5 s measured window. "direct" feeds the engine
 from a plain thread; "lane" goes through a machine; "+ ceiling" runs a chain workload at
@@ -115,7 +129,7 @@ Items/s with both models running, divided by items/s alone:
 | `TorchEngine` | `isolation="thread"` | the highest throughput with the dispatcher under half busy; `process` for crash isolation or an idle dispatcher |
 | `WebCallEngine` | `pool_size=2` | 0.62–0.66 ms of client CPU per request at 1 or 2 pools, more above |
 
-## Machine knobs (P6 studies)
+## Machine knobs (P6 studies, Python core)
 
 `python scripts/studies/p6/run.py --study A|B|C --scale full` writes every configuration and a
 `summary.md` per study to `runs/p6/studies/full/`.
@@ -150,7 +164,7 @@ statements served from the job's kept results, over every lane; a lane's submits
 with batching and with how far each job ran ahead before its fault, which differs between the
 two runs. Run time is within noise of reuse off.
 
-## A full run: `examples/mixed`
+## A full run: `examples/mixed` (Python core)
 
 120 jobs over an HTTP registry, 8 worker processes and a network on `cuda:0`, every job
 recorded, one run: 5,634 node calls in 4.07 s (29 jobs/s), 12 faults taken inside `@try`;

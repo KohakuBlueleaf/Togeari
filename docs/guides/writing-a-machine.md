@@ -124,7 +124,7 @@ except ConstructionError as exc:
 | `start_units` | `True` | `False` builds and checks without starting units |
 | `source_buffer`, `sink_buffer` | 1024, 1024 | bounded source and sink queues; admission pauses while the sink queue is full |
 | `seed` | 0 | record and event sampling |
-| `core` | `TOGEARI_CORE`, else `"auto"` | `"python"` (the reference), `"rust"` (the native core, the same decisions on the same events) or `"auto"`, which runs Python until the measurements of the native core choose it |
+| `core` | `TOGEARI_CORE`, else `"auto"` | `"python"` (the reference), `"rust"` (the native core, the same decisions on the same events) or `"auto"`, which runs the native core when the extension is built and Python otherwise |
 
 Every other keyword is a knob. Knobs are validated at construction and by `set_knob`.
 
@@ -147,6 +147,7 @@ Every other keyword is a knob. Knobs are validated at construction and by `set_k
 | `gc_threshold` | `(50000, 20, 100)` | the process collector threshold while the machine runs; `None` keeps the process's own |
 | `squash_reuse` | 1024 | completed results kept per job when a fault squashes them; a refetched call with the same inputs reuses one instead of running again; 0 turns it off |
 | `squash_reuse_bytes` | 64 MiB | bytes of kept results per job; past it the oldest go first, a larger single result is not kept; `None` sets no byte cap |
+| `gil_offer_us` | `None` | the native core's least time between two GIL offers to other threads; `None` makes none but its waits for events ([tuning](tuning.md#the-native-core)) |
 
 ## 5. Running
 

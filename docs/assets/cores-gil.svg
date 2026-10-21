@@ -1,0 +1,309 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='1140' height='680' viewBox='0 0 1140 680' font-family='ui-sans-serif, -apple-system, Segoe UI, Helvetica, Arial' font-size='13'>
+<text x='10.0' y='22.0' fill='#8b949e' text-anchor='start'>engine throughput under dispatcher load: share of its idle rate</text>
+<rect x='10.0' y='38.0' width='14.0' height='10.0' rx='3' fill='#d29922'/>
+<text x='30.0' y='48.0' fill='#8b949e' text-anchor='start'>python</text>
+<rect x='85.0' y='38.0' width='14.0' height='10.0' rx='3' fill='#2f81f7'/>
+<text x='105.0' y='48.0' fill='#8b949e' text-anchor='start'>rust 0 µs</text>
+<rect x='182.5' y='38.0' width='14.0' height='10.0' rx='3' fill='#3fb950'/>
+<text x='202.5' y='48.0' fill='#8b949e' text-anchor='start'>rust 20 µs</text>
+<rect x='287.5' y='38.0' width='14.0' height='10.0' rx='3' fill='#1f9e89'/>
+<text x='307.5' y='48.0' fill='#8b949e' text-anchor='start'>rust 100 µs</text>
+<rect x='400.0' y='38.0' width='14.0' height='10.0' rx='3' fill='#db61a2'/>
+<text x='420.0' y='48.0' fill='#8b949e' text-anchor='start'>rust 300 µs</text>
+<rect x='512.5' y='38.0' width='14.0' height='10.0' rx='3' fill='#f0883e'/>
+<text x='532.5' y='48.0' fill='#8b949e' text-anchor='start'>rust 1000 µs</text>
+<rect x='632.5' y='38.0' width='14.0' height='10.0' rx='3' fill='#e5534b'/>
+<text x='652.5' y='48.0' fill='#8b949e' text-anchor='start'>rust 5000 µs</text>
+<rect x='752.5' y='38.0' width='14.0' height='10.0' rx='3' fill='#6e7681'/>
+<text x='772.5' y='48.0' fill='#8b949e' text-anchor='start'>rust inf</text>
+<rect x='842.5' y='38.0' width='14.0' height='10.0' rx='3' fill='#a371f7'/>
+<text x='862.5' y='48.0' fill='#8b949e' text-anchor='start'>rust None (default)</text>
+<text x='80.0' y='92.0' fill='#8b949e' text-anchor='start'>torch / thread engine</text>
+<line x1='80' y1='300.0' x2='500' y2='300.0' stroke='#8b949e33'/>
+<text x='74.0' y='304.0' fill='#8b949e' text-anchor='end'>0</text>
+<line x1='80' y1='250.0' x2='500' y2='250.0' stroke='#8b949e33'/>
+<text x='74.0' y='254.0' fill='#8b949e' text-anchor='end'>30</text>
+<line x1='80' y1='200.0' x2='500' y2='200.0' stroke='#8b949e33'/>
+<text x='74.0' y='204.0' fill='#8b949e' text-anchor='end'>60</text>
+<line x1='80' y1='150.0' x2='500' y2='150.0' stroke='#8b949e33'/>
+<text x='74.0' y='154.0' fill='#8b949e' text-anchor='end'>90</text>
+<line x1='80' y1='100.0' x2='500' y2='100.0' stroke='#8b949e33'/>
+<text x='74.0' y='104.0' fill='#8b949e' text-anchor='end'>120</text>
+<line x1='80' y1='300' x2='500' y2='300' stroke='#8b949e'/>
+<text x='80.0' y='318.0' fill='#8b949e' text-anchor='middle'>idle</text>
+<text x='185.0' y='318.0' fill='#8b949e' text-anchor='middle'>100/s</text>
+<text x='290.0' y='318.0' fill='#8b949e' text-anchor='middle'>300/s</text>
+<text x='395.0' y='318.0' fill='#8b949e' text-anchor='middle'>1000/s</text>
+<text x='500.0' y='318.0' fill='#8b949e' text-anchor='middle'>ceiling</text>
+<text x='28.0' y='200.0' fill='#8b949e' text-anchor='middle' transform='rotate(-90 28.0 200.0)'>% of idle</text>
+<polyline points='80.0,133.3 185.0,174.3 290.0,199.2 395.0,285.7 500.0,294.3' fill='none' stroke='#d29922' stroke-width='2'/>
+<circle cx='80.0' cy='133.3' r='3.5' fill='#d29922'/>
+<circle cx='185.0' cy='174.3' r='3.5' fill='#d29922'/>
+<circle cx='290.0' cy='199.2' r='3.5' fill='#d29922'/>
+<circle cx='395.0' cy='285.7' r='3.5' fill='#d29922'/>
+<circle cx='500.0' cy='294.3' r='3.5' fill='#d29922'/>
+<polyline points='80.0,133.3 185.0,154.1 290.0,162.7 395.0,216.7 500.0,288.8' fill='none' stroke='#2f81f7' stroke-width='2'/>
+<circle cx='80.0' cy='133.3' r='3.5' fill='#2f81f7'/>
+<circle cx='185.0' cy='154.1' r='3.5' fill='#2f81f7'/>
+<circle cx='290.0' cy='162.7' r='3.5' fill='#2f81f7'/>
+<circle cx='395.0' cy='216.7' r='3.5' fill='#2f81f7'/>
+<circle cx='500.0' cy='288.8' r='3.5' fill='#2f81f7'/>
+<polyline points='80.0,133.3 185.0,162.6 290.0,180.3 395.0,230.3 500.0,290.4' fill='none' stroke='#3fb950' stroke-width='2'/>
+<circle cx='80.0' cy='133.3' r='3.5' fill='#3fb950'/>
+<circle cx='185.0' cy='162.6' r='3.5' fill='#3fb950'/>
+<circle cx='290.0' cy='180.3' r='3.5' fill='#3fb950'/>
+<circle cx='395.0' cy='230.3' r='3.5' fill='#3fb950'/>
+<circle cx='500.0' cy='290.4' r='3.5' fill='#3fb950'/>
+<polyline points='80.0,133.3 185.0,158.2 290.0,178.9 395.0,229.4 500.0,290.1' fill='none' stroke='#1f9e89' stroke-width='2'/>
+<circle cx='80.0' cy='133.3' r='3.5' fill='#1f9e89'/>
+<circle cx='185.0' cy='158.2' r='3.5' fill='#1f9e89'/>
+<circle cx='290.0' cy='178.9' r='3.5' fill='#1f9e89'/>
+<circle cx='395.0' cy='229.4' r='3.5' fill='#1f9e89'/>
+<circle cx='500.0' cy='290.1' r='3.5' fill='#1f9e89'/>
+<polyline points='80.0,133.3 185.0,160.0 290.0,176.2 395.0,235.4 500.0,290.4' fill='none' stroke='#db61a2' stroke-width='2'/>
+<circle cx='80.0' cy='133.3' r='3.5' fill='#db61a2'/>
+<circle cx='185.0' cy='160.0' r='3.5' fill='#db61a2'/>
+<circle cx='290.0' cy='176.2' r='3.5' fill='#db61a2'/>
+<circle cx='395.0' cy='235.4' r='3.5' fill='#db61a2'/>
+<circle cx='500.0' cy='290.4' r='3.5' fill='#db61a2'/>
+<polyline points='80.0,133.3 185.0,153.7 290.0,170.1 395.0,223.3 500.0,292.3' fill='none' stroke='#f0883e' stroke-width='2'/>
+<circle cx='80.0' cy='133.3' r='3.5' fill='#f0883e'/>
+<circle cx='185.0' cy='153.7' r='3.5' fill='#f0883e'/>
+<circle cx='290.0' cy='170.1' r='3.5' fill='#f0883e'/>
+<circle cx='395.0' cy='223.3' r='3.5' fill='#f0883e'/>
+<circle cx='500.0' cy='292.3' r='3.5' fill='#f0883e'/>
+<polyline points='80.0,133.3 185.0,152.5 290.0,164.4 395.0,220.0 500.0,291.7' fill='none' stroke='#e5534b' stroke-width='2'/>
+<circle cx='80.0' cy='133.3' r='3.5' fill='#e5534b'/>
+<circle cx='185.0' cy='152.5' r='3.5' fill='#e5534b'/>
+<circle cx='290.0' cy='164.4' r='3.5' fill='#e5534b'/>
+<circle cx='395.0' cy='220.0' r='3.5' fill='#e5534b'/>
+<circle cx='500.0' cy='291.7' r='3.5' fill='#e5534b'/>
+<polyline points='80.0,133.3 185.0,157.0 290.0,172.7 395.0,226.8 500.0,291.9' fill='none' stroke='#6e7681' stroke-width='2'/>
+<circle cx='80.0' cy='133.3' r='3.5' fill='#6e7681'/>
+<circle cx='185.0' cy='157.0' r='3.5' fill='#6e7681'/>
+<circle cx='290.0' cy='172.7' r='3.5' fill='#6e7681'/>
+<circle cx='395.0' cy='226.8' r='3.5' fill='#6e7681'/>
+<circle cx='500.0' cy='291.9' r='3.5' fill='#6e7681'/>
+<polyline points='80.0,133.3 185.0,150.9 290.0,168.0 395.0,224.4 500.0,291.7' fill='none' stroke='#a371f7' stroke-width='4'/>
+<circle cx='80.0' cy='133.3' r='5' fill='#a371f7'/>
+<circle cx='185.0' cy='150.9' r='5' fill='#a371f7'/>
+<circle cx='290.0' cy='168.0' r='5' fill='#a371f7'/>
+<circle cx='395.0' cy='224.4' r='5' fill='#a371f7'/>
+<circle cx='500.0' cy='291.7' r='5' fill='#a371f7'/>
+<text x='610.0' y='92.0' fill='#8b949e' text-anchor='start'>torch / process engine</text>
+<line x1='610' y1='300.0' x2='1030' y2='300.0' stroke='#8b949e33'/>
+<text x='604.0' y='304.0' fill='#8b949e' text-anchor='end'>0</text>
+<line x1='610' y1='250.0' x2='1030' y2='250.0' stroke='#8b949e33'/>
+<text x='604.0' y='254.0' fill='#8b949e' text-anchor='end'>30</text>
+<line x1='610' y1='200.0' x2='1030' y2='200.0' stroke='#8b949e33'/>
+<text x='604.0' y='204.0' fill='#8b949e' text-anchor='end'>60</text>
+<line x1='610' y1='150.0' x2='1030' y2='150.0' stroke='#8b949e33'/>
+<text x='604.0' y='154.0' fill='#8b949e' text-anchor='end'>90</text>
+<line x1='610' y1='100.0' x2='1030' y2='100.0' stroke='#8b949e33'/>
+<text x='604.0' y='104.0' fill='#8b949e' text-anchor='end'>120</text>
+<line x1='610' y1='300' x2='1030' y2='300' stroke='#8b949e'/>
+<text x='610.0' y='318.0' fill='#8b949e' text-anchor='middle'>idle</text>
+<text x='715.0' y='318.0' fill='#8b949e' text-anchor='middle'>100/s</text>
+<text x='820.0' y='318.0' fill='#8b949e' text-anchor='middle'>300/s</text>
+<text x='925.0' y='318.0' fill='#8b949e' text-anchor='middle'>1000/s</text>
+<text x='1030.0' y='318.0' fill='#8b949e' text-anchor='middle'>ceiling</text>
+<text x='558.0' y='200.0' fill='#8b949e' text-anchor='middle' transform='rotate(-90 558.0 200.0)'>% of idle</text>
+<polyline points='610.0,133.3 715.0,131.6 820.0,132.1 925.0,279.8 1030.0,288.5' fill='none' stroke='#d29922' stroke-width='2'/>
+<circle cx='610.0' cy='133.3' r='3.5' fill='#d29922'/>
+<circle cx='715.0' cy='131.6' r='3.5' fill='#d29922'/>
+<circle cx='820.0' cy='132.1' r='3.5' fill='#d29922'/>
+<circle cx='925.0' cy='279.8' r='3.5' fill='#d29922'/>
+<circle cx='1030.0' cy='288.5' r='3.5' fill='#d29922'/>
+<polyline points='610.0,133.3 715.0,137.2 820.0,138.3 925.0,146.2 1030.0,262.0' fill='none' stroke='#2f81f7' stroke-width='2'/>
+<circle cx='610.0' cy='133.3' r='3.5' fill='#2f81f7'/>
+<circle cx='715.0' cy='137.2' r='3.5' fill='#2f81f7'/>
+<circle cx='820.0' cy='138.3' r='3.5' fill='#2f81f7'/>
+<circle cx='925.0' cy='146.2' r='3.5' fill='#2f81f7'/>
+<circle cx='1030.0' cy='262.0' r='3.5' fill='#2f81f7'/>
+<polyline points='610.0,133.3 715.0,130.4 820.0,133.9 925.0,142.6 1030.0,256.7' fill='none' stroke='#3fb950' stroke-width='2'/>
+<circle cx='610.0' cy='133.3' r='3.5' fill='#3fb950'/>
+<circle cx='715.0' cy='130.4' r='3.5' fill='#3fb950'/>
+<circle cx='820.0' cy='133.9' r='3.5' fill='#3fb950'/>
+<circle cx='925.0' cy='142.6' r='3.5' fill='#3fb950'/>
+<circle cx='1030.0' cy='256.7' r='3.5' fill='#3fb950'/>
+<polyline points='610.0,133.3 715.0,134.4 820.0,136.8 925.0,141.4 1030.0,254.5' fill='none' stroke='#1f9e89' stroke-width='2'/>
+<circle cx='610.0' cy='133.3' r='3.5' fill='#1f9e89'/>
+<circle cx='715.0' cy='134.4' r='3.5' fill='#1f9e89'/>
+<circle cx='820.0' cy='136.8' r='3.5' fill='#1f9e89'/>
+<circle cx='925.0' cy='141.4' r='3.5' fill='#1f9e89'/>
+<circle cx='1030.0' cy='254.5' r='3.5' fill='#1f9e89'/>
+<polyline points='610.0,133.3 715.0,135.5 820.0,142.2 925.0,148.3 1030.0,257.2' fill='none' stroke='#db61a2' stroke-width='2'/>
+<circle cx='610.0' cy='133.3' r='3.5' fill='#db61a2'/>
+<circle cx='715.0' cy='135.5' r='3.5' fill='#db61a2'/>
+<circle cx='820.0' cy='142.2' r='3.5' fill='#db61a2'/>
+<circle cx='925.0' cy='148.3' r='3.5' fill='#db61a2'/>
+<circle cx='1030.0' cy='257.2' r='3.5' fill='#db61a2'/>
+<polyline points='610.0,133.3 715.0,127.8 820.0,126.0 925.0,139.3 1030.0,287.3' fill='none' stroke='#f0883e' stroke-width='2'/>
+<circle cx='610.0' cy='133.3' r='3.5' fill='#f0883e'/>
+<circle cx='715.0' cy='127.8' r='3.5' fill='#f0883e'/>
+<circle cx='820.0' cy='126.0' r='3.5' fill='#f0883e'/>
+<circle cx='925.0' cy='139.3' r='3.5' fill='#f0883e'/>
+<circle cx='1030.0' cy='287.3' r='3.5' fill='#f0883e'/>
+<polyline points='610.0,133.3 715.0,129.2 820.0,132.1 925.0,140.9 1030.0,287.1' fill='none' stroke='#e5534b' stroke-width='2'/>
+<circle cx='610.0' cy='133.3' r='3.5' fill='#e5534b'/>
+<circle cx='715.0' cy='129.2' r='3.5' fill='#e5534b'/>
+<circle cx='820.0' cy='132.1' r='3.5' fill='#e5534b'/>
+<circle cx='925.0' cy='140.9' r='3.5' fill='#e5534b'/>
+<circle cx='1030.0' cy='287.1' r='3.5' fill='#e5534b'/>
+<polyline points='610.0,133.3 715.0,135.6 820.0,135.6 925.0,144.8 1030.0,288.0' fill='none' stroke='#6e7681' stroke-width='2'/>
+<circle cx='610.0' cy='133.3' r='3.5' fill='#6e7681'/>
+<circle cx='715.0' cy='135.6' r='3.5' fill='#6e7681'/>
+<circle cx='820.0' cy='135.6' r='3.5' fill='#6e7681'/>
+<circle cx='925.0' cy='144.8' r='3.5' fill='#6e7681'/>
+<circle cx='1030.0' cy='288.0' r='3.5' fill='#6e7681'/>
+<polyline points='610.0,133.3 715.0,132.7 820.0,132.1 925.0,143.8 1030.0,287.2' fill='none' stroke='#a371f7' stroke-width='4'/>
+<circle cx='610.0' cy='133.3' r='5' fill='#a371f7'/>
+<circle cx='715.0' cy='132.7' r='5' fill='#a371f7'/>
+<circle cx='820.0' cy='132.1' r='5' fill='#a371f7'/>
+<circle cx='925.0' cy='143.8' r='5' fill='#a371f7'/>
+<circle cx='1030.0' cy='287.2' r='5' fill='#a371f7'/>
+<text x='80.0' y='382.0' fill='#8b949e' text-anchor='start'>python / thread engine</text>
+<line x1='80' y1='590.0' x2='500' y2='590.0' stroke='#8b949e33'/>
+<text x='74.0' y='594.0' fill='#8b949e' text-anchor='end'>0</text>
+<line x1='80' y1='540.0' x2='500' y2='540.0' stroke='#8b949e33'/>
+<text x='74.0' y='544.0' fill='#8b949e' text-anchor='end'>30</text>
+<line x1='80' y1='490.0' x2='500' y2='490.0' stroke='#8b949e33'/>
+<text x='74.0' y='494.0' fill='#8b949e' text-anchor='end'>60</text>
+<line x1='80' y1='440.0' x2='500' y2='440.0' stroke='#8b949e33'/>
+<text x='74.0' y='444.0' fill='#8b949e' text-anchor='end'>90</text>
+<line x1='80' y1='390.0' x2='500' y2='390.0' stroke='#8b949e33'/>
+<text x='74.0' y='394.0' fill='#8b949e' text-anchor='end'>120</text>
+<line x1='80' y1='590' x2='500' y2='590' stroke='#8b949e'/>
+<text x='80.0' y='608.0' fill='#8b949e' text-anchor='middle'>idle</text>
+<text x='185.0' y='608.0' fill='#8b949e' text-anchor='middle'>100/s</text>
+<text x='290.0' y='608.0' fill='#8b949e' text-anchor='middle'>300/s</text>
+<text x='395.0' y='608.0' fill='#8b949e' text-anchor='middle'>1000/s</text>
+<text x='500.0' y='608.0' fill='#8b949e' text-anchor='middle'>ceiling</text>
+<text x='28.0' y='490.0' fill='#8b949e' text-anchor='middle' transform='rotate(-90 28.0 490.0)'>% of idle</text>
+<polyline points='80.0,423.3 185.0,441.6 290.0,440.3 395.0,438.0 500.0,438.2' fill='none' stroke='#d29922' stroke-width='2'/>
+<circle cx='80.0' cy='423.3' r='3.5' fill='#d29922'/>
+<circle cx='185.0' cy='441.6' r='3.5' fill='#d29922'/>
+<circle cx='290.0' cy='440.3' r='3.5' fill='#d29922'/>
+<circle cx='395.0' cy='438.0' r='3.5' fill='#d29922'/>
+<circle cx='500.0' cy='438.2' r='3.5' fill='#d29922'/>
+<polyline points='80.0,423.3 185.0,437.5 290.0,434.5 395.0,434.9 500.0,433.4' fill='none' stroke='#2f81f7' stroke-width='2'/>
+<circle cx='80.0' cy='423.3' r='3.5' fill='#2f81f7'/>
+<circle cx='185.0' cy='437.5' r='3.5' fill='#2f81f7'/>
+<circle cx='290.0' cy='434.5' r='3.5' fill='#2f81f7'/>
+<circle cx='395.0' cy='434.9' r='3.5' fill='#2f81f7'/>
+<circle cx='500.0' cy='433.4' r='3.5' fill='#2f81f7'/>
+<polyline points='80.0,423.3 185.0,426.8 290.0,422.2 395.0,422.4 500.0,419.3' fill='none' stroke='#3fb950' stroke-width='2'/>
+<circle cx='80.0' cy='423.3' r='3.5' fill='#3fb950'/>
+<circle cx='185.0' cy='426.8' r='3.5' fill='#3fb950'/>
+<circle cx='290.0' cy='422.2' r='3.5' fill='#3fb950'/>
+<circle cx='395.0' cy='422.4' r='3.5' fill='#3fb950'/>
+<circle cx='500.0' cy='419.3' r='3.5' fill='#3fb950'/>
+<polyline points='80.0,423.3 185.0,432.8 290.0,426.8 395.0,425.8 500.0,430.4' fill='none' stroke='#1f9e89' stroke-width='2'/>
+<circle cx='80.0' cy='423.3' r='3.5' fill='#1f9e89'/>
+<circle cx='185.0' cy='432.8' r='3.5' fill='#1f9e89'/>
+<circle cx='290.0' cy='426.8' r='3.5' fill='#1f9e89'/>
+<circle cx='395.0' cy='425.8' r='3.5' fill='#1f9e89'/>
+<circle cx='500.0' cy='430.4' r='3.5' fill='#1f9e89'/>
+<polyline points='80.0,423.3 185.0,436.4 290.0,433.5 395.0,434.2 500.0,439.4' fill='none' stroke='#db61a2' stroke-width='2'/>
+<circle cx='80.0' cy='423.3' r='3.5' fill='#db61a2'/>
+<circle cx='185.0' cy='436.4' r='3.5' fill='#db61a2'/>
+<circle cx='290.0' cy='433.5' r='3.5' fill='#db61a2'/>
+<circle cx='395.0' cy='434.2' r='3.5' fill='#db61a2'/>
+<circle cx='500.0' cy='439.4' r='3.5' fill='#db61a2'/>
+<polyline points='80.0,423.3 185.0,432.5 290.0,430.0 395.0,429.5 500.0,430.9' fill='none' stroke='#f0883e' stroke-width='2'/>
+<circle cx='80.0' cy='423.3' r='3.5' fill='#f0883e'/>
+<circle cx='185.0' cy='432.5' r='3.5' fill='#f0883e'/>
+<circle cx='290.0' cy='430.0' r='3.5' fill='#f0883e'/>
+<circle cx='395.0' cy='429.5' r='3.5' fill='#f0883e'/>
+<circle cx='500.0' cy='430.9' r='3.5' fill='#f0883e'/>
+<polyline points='80.0,423.3 185.0,426.3 290.0,430.8 395.0,431.8 500.0,425.5' fill='none' stroke='#e5534b' stroke-width='2'/>
+<circle cx='80.0' cy='423.3' r='3.5' fill='#e5534b'/>
+<circle cx='185.0' cy='426.3' r='3.5' fill='#e5534b'/>
+<circle cx='290.0' cy='430.8' r='3.5' fill='#e5534b'/>
+<circle cx='395.0' cy='431.8' r='3.5' fill='#e5534b'/>
+<circle cx='500.0' cy='425.5' r='3.5' fill='#e5534b'/>
+<polyline points='80.0,423.3 185.0,423.9 290.0,426.1 395.0,426.8 500.0,424.2' fill='none' stroke='#6e7681' stroke-width='2'/>
+<circle cx='80.0' cy='423.3' r='3.5' fill='#6e7681'/>
+<circle cx='185.0' cy='423.9' r='3.5' fill='#6e7681'/>
+<circle cx='290.0' cy='426.1' r='3.5' fill='#6e7681'/>
+<circle cx='395.0' cy='426.8' r='3.5' fill='#6e7681'/>
+<circle cx='500.0' cy='424.2' r='3.5' fill='#6e7681'/>
+<polyline points='80.0,423.3 185.0,432.3 290.0,435.1 395.0,434.4 500.0,430.6' fill='none' stroke='#a371f7' stroke-width='4'/>
+<circle cx='80.0' cy='423.3' r='5' fill='#a371f7'/>
+<circle cx='185.0' cy='432.3' r='5' fill='#a371f7'/>
+<circle cx='290.0' cy='435.1' r='5' fill='#a371f7'/>
+<circle cx='395.0' cy='434.4' r='5' fill='#a371f7'/>
+<circle cx='500.0' cy='430.6' r='5' fill='#a371f7'/>
+<text x='610.0' y='382.0' fill='#8b949e' text-anchor='start'>python / process engine</text>
+<line x1='610' y1='590.0' x2='1030' y2='590.0' stroke='#8b949e33'/>
+<text x='604.0' y='594.0' fill='#8b949e' text-anchor='end'>0</text>
+<line x1='610' y1='540.0' x2='1030' y2='540.0' stroke='#8b949e33'/>
+<text x='604.0' y='544.0' fill='#8b949e' text-anchor='end'>30</text>
+<line x1='610' y1='490.0' x2='1030' y2='490.0' stroke='#8b949e33'/>
+<text x='604.0' y='494.0' fill='#8b949e' text-anchor='end'>60</text>
+<line x1='610' y1='440.0' x2='1030' y2='440.0' stroke='#8b949e33'/>
+<text x='604.0' y='444.0' fill='#8b949e' text-anchor='end'>90</text>
+<line x1='610' y1='390.0' x2='1030' y2='390.0' stroke='#8b949e33'/>
+<text x='604.0' y='394.0' fill='#8b949e' text-anchor='end'>120</text>
+<line x1='610' y1='590' x2='1030' y2='590' stroke='#8b949e'/>
+<text x='610.0' y='608.0' fill='#8b949e' text-anchor='middle'>idle</text>
+<text x='715.0' y='608.0' fill='#8b949e' text-anchor='middle'>100/s</text>
+<text x='820.0' y='608.0' fill='#8b949e' text-anchor='middle'>300/s</text>
+<text x='925.0' y='608.0' fill='#8b949e' text-anchor='middle'>1000/s</text>
+<text x='1030.0' y='608.0' fill='#8b949e' text-anchor='middle'>ceiling</text>
+<text x='558.0' y='490.0' fill='#8b949e' text-anchor='middle' transform='rotate(-90 558.0 490.0)'>% of idle</text>
+<polyline points='610.0,423.3 715.0,433.0 820.0,442.5 925.0,485.1 1030.0,509.8' fill='none' stroke='#d29922' stroke-width='2'/>
+<circle cx='610.0' cy='423.3' r='3.5' fill='#d29922'/>
+<circle cx='715.0' cy='433.0' r='3.5' fill='#d29922'/>
+<circle cx='820.0' cy='442.5' r='3.5' fill='#d29922'/>
+<circle cx='925.0' cy='485.1' r='3.5' fill='#d29922'/>
+<circle cx='1030.0' cy='509.8' r='3.5' fill='#d29922'/>
+<polyline points='610.0,423.3 715.0,433.8 820.0,436.6 925.0,457.9 1030.0,484.2' fill='none' stroke='#2f81f7' stroke-width='2'/>
+<circle cx='610.0' cy='423.3' r='3.5' fill='#2f81f7'/>
+<circle cx='715.0' cy='433.8' r='3.5' fill='#2f81f7'/>
+<circle cx='820.0' cy='436.6' r='3.5' fill='#2f81f7'/>
+<circle cx='925.0' cy='457.9' r='3.5' fill='#2f81f7'/>
+<circle cx='1030.0' cy='484.2' r='3.5' fill='#2f81f7'/>
+<polyline points='610.0,423.3 715.0,433.8 820.0,435.7 925.0,449.1 1030.0,480.1' fill='none' stroke='#3fb950' stroke-width='2'/>
+<circle cx='610.0' cy='423.3' r='3.5' fill='#3fb950'/>
+<circle cx='715.0' cy='433.8' r='3.5' fill='#3fb950'/>
+<circle cx='820.0' cy='435.7' r='3.5' fill='#3fb950'/>
+<circle cx='925.0' cy='449.1' r='3.5' fill='#3fb950'/>
+<circle cx='1030.0' cy='480.1' r='3.5' fill='#3fb950'/>
+<polyline points='610.0,423.3 715.0,433.3 820.0,436.4 925.0,451.5 1030.0,483.2' fill='none' stroke='#1f9e89' stroke-width='2'/>
+<circle cx='610.0' cy='423.3' r='3.5' fill='#1f9e89'/>
+<circle cx='715.0' cy='433.3' r='3.5' fill='#1f9e89'/>
+<circle cx='820.0' cy='436.4' r='3.5' fill='#1f9e89'/>
+<circle cx='925.0' cy='451.5' r='3.5' fill='#1f9e89'/>
+<circle cx='1030.0' cy='483.2' r='3.5' fill='#1f9e89'/>
+<polyline points='610.0,423.3 715.0,431.9 820.0,432.8 925.0,454.7 1030.0,489.5' fill='none' stroke='#db61a2' stroke-width='2'/>
+<circle cx='610.0' cy='423.3' r='3.5' fill='#db61a2'/>
+<circle cx='715.0' cy='431.9' r='3.5' fill='#db61a2'/>
+<circle cx='820.0' cy='432.8' r='3.5' fill='#db61a2'/>
+<circle cx='925.0' cy='454.7' r='3.5' fill='#db61a2'/>
+<circle cx='1030.0' cy='489.5' r='3.5' fill='#db61a2'/>
+<polyline points='610.0,423.3 715.0,429.1 820.0,434.4 925.0,453.8 1030.0,491.2' fill='none' stroke='#f0883e' stroke-width='2'/>
+<circle cx='610.0' cy='423.3' r='3.5' fill='#f0883e'/>
+<circle cx='715.0' cy='429.1' r='3.5' fill='#f0883e'/>
+<circle cx='820.0' cy='434.4' r='3.5' fill='#f0883e'/>
+<circle cx='925.0' cy='453.8' r='3.5' fill='#f0883e'/>
+<circle cx='1030.0' cy='491.2' r='3.5' fill='#f0883e'/>
+<polyline points='610.0,423.3 715.0,434.0 820.0,430.0 925.0,449.9 1030.0,488.7' fill='none' stroke='#e5534b' stroke-width='2'/>
+<circle cx='610.0' cy='423.3' r='3.5' fill='#e5534b'/>
+<circle cx='715.0' cy='434.0' r='3.5' fill='#e5534b'/>
+<circle cx='820.0' cy='430.0' r='3.5' fill='#e5534b'/>
+<circle cx='925.0' cy='449.9' r='3.5' fill='#e5534b'/>
+<circle cx='1030.0' cy='488.7' r='3.5' fill='#e5534b'/>
+<polyline points='610.0,423.3 715.0,426.3 820.0,428.9 925.0,440.5 1030.0,480.7' fill='none' stroke='#6e7681' stroke-width='2'/>
+<circle cx='610.0' cy='423.3' r='3.5' fill='#6e7681'/>
+<circle cx='715.0' cy='426.3' r='3.5' fill='#6e7681'/>
+<circle cx='820.0' cy='428.9' r='3.5' fill='#6e7681'/>
+<circle cx='925.0' cy='440.5' r='3.5' fill='#6e7681'/>
+<circle cx='1030.0' cy='480.7' r='3.5' fill='#6e7681'/>
+<polyline points='610.0,423.3 715.0,426.7 820.0,432.3 925.0,449.3 1030.0,487.2' fill='none' stroke='#a371f7' stroke-width='4'/>
+<circle cx='610.0' cy='423.3' r='5' fill='#a371f7'/>
+<circle cx='715.0' cy='426.7' r='5' fill='#a371f7'/>
+<circle cx='820.0' cy='432.3' r='5' fill='#a371f7'/>
+<circle cx='925.0' cy='449.3' r='5' fill='#a371f7'/>
+<circle cx='1030.0' cy='487.2' r='5' fill='#a371f7'/>
+</svg>

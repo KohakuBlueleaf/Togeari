@@ -60,6 +60,7 @@ It then runs these phases and adds each one's time to `stats["phase_s"][phase]`:
 | `pump` | per lane: `lane.pump(now)`, then `deliver` each pair `lane.timers(now)` returns |
 | `retire` | `retire(job)` for each job of the swapped-out `dirty` set; an exception is `job_error` |
 | `admit` | `admit()` ([admission](../pool/admission.md)) |
+| `offer` | Rust core only: the pure GIL offer at the cycle's end, when one is due ([the GIL](../../native/gil.md)); the time a waiting thread holds the GIL then is busy time |
 
 After the phases: `stats["cycles"]`, `busy_s` (the cycle plus the time spent computing
 `next_timeout`), a cycle-time histogram `cycle_hist` (bucket = bit length of the cycle's

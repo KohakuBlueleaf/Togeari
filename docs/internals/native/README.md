@@ -20,7 +20,7 @@ decisions in the same order on the same events ([parity](parity.md)).
 | Asked (`core=`, else `TOGEARI_CORE`, else `"auto"`) | Runs |
 |---|---|
 | `"python"` | the Python core |
-| `"auto"` | `AUTO` (`"python"`), the core the measurements of spec/11 §11.6 chose; Python when that core is not built |
+| `"auto"` | `AUTO` (`"rust"`), the core the measurements of spec/11 §11.6 chose ([performance](../../performance/native.md)); Python when the extension is not built or has no dispatcher |
 | `"rust"` | the Rust core; without the extension, or one built without the dispatcher, a `ConstructionError` naming `core=` or `TOGEARI_CORE=` |
 | anything else | a `ConstructionError` |
 
@@ -103,6 +103,7 @@ The `extension-module` feature (on by default) leaves libpython unlinked, as a w
 `--no-default-features` links it so the unit tests run as a plain binary.
 
 CI builds the wheel with maturin on every OS and Python version of the matrix, installs it and
-runs the suite against it; a separate job runs `cargo fmt`, `clippy` and `cargo test`. A `v*`
+runs the suite against it twice, on the default core (Rust) and with `TOGEARI_CORE=python`;
+a separate job runs `cargo fmt`, `clippy` and `cargo test`. A `v*`
 tag builds wheels for CPython 3.10–3.14 on Linux x86_64 and aarch64 (manylinux 2_28),
 Windows x64 and macOS arm64, plus the sdist, and publishes them from environment `pypi`.

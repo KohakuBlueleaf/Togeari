@@ -141,7 +141,7 @@ level.
 | `ctx.emit(kind, **fields)` | puts an event on the bus; from a thread other than the dispatcher's, the emit is posted and runs on the dispatcher thread |
 | `ctx.service(name)` | another plugin's runtime service |
 | `ctx.signals()`, `ctx.knobs`, `ctx.code` | admission signals, the knob registry (a copy), code memory |
-| `ctx.listen(fn, kinds=None, passive=False)`, `ctx.unlisten(fn)` | `fn(kind, fields)` called synchronously on the dispatcher thread for each event of `kinds` (None: every kind); it must be cheap and must not keep the fields' objects. A listener that only records may say `passive=True`: the native core then keeps releasing the GIL and hands it a region's events when the region ends |
+| `ctx.listen(fn, kinds=None, passive=False)`, `ctx.unlisten(fn)` | `fn(kind, fields)` called synchronously on the dispatcher thread for each event of `kinds` (None: every kind); it must be cheap and must not keep the fields' objects. A listener that only records may say `passive=True`: the native core then keeps running its scheduling regions and hands it a region's events when the region ends; any other listener makes it run every cycle on its GIL path |
 | `ctx.stats()`, `ctx.summary(seconds)` | a deep copy of the dispatcher's counters; the run totals |
 | `ctx.lanes(loads=False, now=None)`, `ctx.units(loads=False)` | every lane and unit as dicts: state, in flight, rates, busy time, errors, configuration; with `loads`, each unit's `load()` |
 | `ctx.event_counts()`, `ctx.events_dropped()` | events emitted by kind; events each subscriber's queue dropped |

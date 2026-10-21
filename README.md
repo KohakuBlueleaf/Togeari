@@ -133,8 +133,10 @@ togeari doctor
 ```
 
 `togeari doctor` prints versions, the core a machine runs, devices and any leftover worker
-processes. `Machine(core=...)` (or `TOGEARI_CORE`) picks the Python core, the reference, or
-the native one ([native core](docs/internals/native/README.md)).
+processes. A machine runs the native Rust core when the extension is built and the Python
+core, the reference, otherwise; `Machine(core="python" | "rust")` (or `TOGEARI_CORE`) picks
+one ([native core](docs/internals/native/README.md)). Both make the same decisions in the same
+order.
 
 ## Quick start
 
@@ -311,17 +313,82 @@ The main knobs (the full table, with the debug knobs and the `Machine` arguments
 | `gc_threshold` | `(50000, 20, 100)` | the process collector threshold while running; None keeps the process's own |
 | `squash_reuse` | 1024 | results kept per job after a taken fault, reused when the refetched call's inputs match; 0 re-sends |
 | `squash_reuse_bytes` | 64 MiB | bytes of those results kept per job; None: no byte cap |
+| `gil_offer_us` | None | the Rust core's least time between two GIL offers to other threads; None offers only while it waits for events |
 
 Every knob can change while the machine runs (`machine.command("set_knob", ...)`).
+
+## Speed: the Python and Rust cores
+
+The Rust core makes the Python core's decisions 1.9–5.1× faster. Measured in one run of
+`scripts/studies/p8/s8.py --scale full` on one workstation (CPython 3.13, one GPU): every
+measurement runs each variant once per round in a rotating order; medians of five rounds
+(ceiling) or three (the rest). Every table, the method and the rule that chose the defaults:
+[the cores compared](docs/performance/native.md).
+
+**Dispatcher ceiling** (simulated engines that answer at once, so the dispatcher is the only
+cost):
+
+| workload | Python core | Rust core | Rust / Python |
+|---|---|---|---|
+| a chain of inline nodes | 84,445 calls/s (11.8 µs/call) | 431,650 calls/s (2.3 µs/call) | 5.11× |
+| a chain of calls on an engine lane | 30,588 calls/s (32.7 µs/call) | 57,184 calls/s (17.5 µs/call) | 1.87× |
+| `each` with batched calls | 42,507 calls/s (23.5 µs/call) | 117,849 calls/s (8.5 µs/call) | 2.77× |
+
+![Dispatcher ceiling by core and gil_offer_us](docs/assets/cores-ceiling.svg)
+
+**Scaling** (dispatcher µs per resident job or per `each` item; lower is better):
+
+| shape | Python core | Rust core | Rust, `gil_offer_us=0` | Rust, `gil_offer_us=300` |
+|---|---|---|---|---|
+| 500 resident jobs | 52.0 | 34.1 | 43.0 | 34.2 |
+| 2,000 resident jobs | 52.7 | 39.8 | 41.4 | 32.7 |
+| 8,000 resident jobs | 55.5 | 41.5 | 51.0 | 39.2 |
+| `each` over 250 items | 82.6 | 34.6 | 56.8 | 33.3 |
+| `each` over 1,000 items | 79.5 | 37.6 | 62.9 | 30.1 |
+| `each` over 4,000 items | 78.7 | 31.2 | 59.9 | 30.9 |
+
+![Dispatcher cost as the machine grows, by core](docs/assets/cores-scaling.svg)
+
+**GIL contention** (an engine fed from its own thread, items/s, while the dispatcher runs a
+chain workload paced at 100, 300 and 1000 jobs/s, or at its ceiling):
+
+| engine | core | idle | 100/s | 300/s | 1000/s | ceiling |
+|---|---|---|---|---|---|---|
+| torch, worker process | Python | 7,395 | 7,474 | 7,449 | 895 | 511 |
+| | Rust | 7,344 | 7,372 | 7,398 | 6,884 | 562 |
+| | Rust, `gil_offer_us=0` | 7,623 | 7,448 | 7,397 | 7,037 | 1,739 |
+| | Rust, `gil_offer_us=300` | 7,676 | 7,576 | 7,268 | 6,987 | 1,970 |
+| torch, thread | Python | 8,927 | 6,730 | 5,399 | 767 | 307 |
+| | Rust | 8,236 | 7,369 | 6,525 | 3,735 | 409 |
+| | Rust, `gil_offer_us=0` | 8,390 | 7,343 | 6,909 | 4,195 | 562 |
+| | Rust, `gil_offer_us=300` | 8,441 | 7,089 | 6,269 | 3,274 | 486 |
+| Python work, 8 processes | Python | 2,793 | 2,631 | 2,472 | 1,759 | 1,344 |
+| | Rust | 2,808 | 2,752 | 2,656 | 2,371 | 1,733 |
+| | Rust, `gil_offer_us=0` | 2,843 | 2,665 | 2,617 | 2,254 | 1,806 |
+| | Rust, `gil_offer_us=300` | 2,775 | 2,632 | 2,616 | 2,252 | 1,673 |
+
+At its ceiling the Python core runs about 25,000 calls/s and the Rust core about 40,000–47,000,
+so the ceiling column compares engines next to a dispatcher doing more work on Rust.
+
+![Engine throughput under dispatcher load, by core](docs/assets/cores-gil.svg)
+
+**`gil_offer_us`.** The default, `None`, gives the fastest dispatcher, and below its ceiling the
+dispatcher waits for events often enough, releasing the GIL each time, that engine threads run
+nearly as if it were idle: a torch network in a worker process keeps 6,884 items/s with the
+dispatcher at 1000 jobs/s, against 895 on the Python core. At the ceiling the dispatcher never
+waits, so other threads get the GIL only at the interpreter's switch interval (562 items/s).
+`gil_offer_us=300` offers it at most every 300 µs of the dispatcher's time and keeps 1,970
+items/s there, at a cost of up to 18% to the dispatcher (inline chains with `RunReport`, whose
+threads take each offer); `0` offers at every chance and costs up to 45% on those chains.
 
 <!-- measured:begin -->
 ## Measured
 
-All on one desktop machine with one GPU for the device rows, on the release tree; each block
-names its method. Full tables: [docs/performance](docs/performance/README.md).
+All on one desktop machine with one GPU for the device rows; each block names its method and
+the blocks below the Python core's. Full tables: [docs/performance](docs/performance/README.md).
 
-**Dispatcher ceiling** (`scripts/benches/dispatcher_ceiling.py`: simulated engines that
-answer at once, so the dispatcher is the only cost; median of five rounds):
+**Dispatcher ceiling, Python core** (`scripts/benches/dispatcher_ceiling.py`: simulated
+engines that answer at once, so the dispatcher is the only cost; median of five rounds):
 
 | workload | node calls/s | jobs/s | dispatcher busy |
 |---|---|---|---|
@@ -509,6 +576,8 @@ TOGEARI_SEEDS=300 python -m pytest tests/machine/generated -q
 python scripts/benches/dispatcher_ceiling.py
 python scripts/benches/scaling.py
 python scripts/studies/s1/run.py --scale full               # thread vs process, transports, GPU sharing
+python scripts/studies/p8/s8.py --scale full                # the cores compared, every gil_offer_us
+TOGEARI_CORE=python python -m pytest tests -q -m "not gpu"  # the suite on the reference core
 ```
 
 The generated suite runs programs from `kohakunode.testing.progen` (switch, parallel,

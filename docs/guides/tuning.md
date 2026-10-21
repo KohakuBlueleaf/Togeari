@@ -117,11 +117,22 @@ Python's `(2000, 10, 10)` ([performance](../performance/README.md)).
 
 | Knob | Default | Trades |
 |---|---|---|
-| `release_gil` | `True` | the Rust core fetches, orders the ready statements and retires without the GIL (engine threads run Python meanwhile) against a handoff of the GIL per fetch and per retire phase, and one per job whose fetch or retire needs Python; a bus listener not registered `passive` keeps the GIL held; the Python core ignores it |
+| `gil_offer_us` | `None` | the least time, in microseconds on the Rust core's clock, between two of its GIL offers. Each offer lets a waiting thread run: engine threads, feeders and plugin workers get the GIL sooner, but every offer that finds one runnable costs the dispatcher that thread's run. `None` runs no regions and never offers; `0` offers at every region; a value caps offers at 1e6 / value per second; `inf` runs the scheduling regions as Rust code but never offers. All of them release the GIL while waiting for events. The Python core ignores the knob |
 
-`Machine(core="rust")` (or `TOGEARI_CORE=rust`) runs the Rust core; it takes every knob above.
-`machine.dispatcher.native_stats()` counts its GIL-free regions and the work they did
-([internals](../internals/native/gil.md)).
+A machine runs the Rust core by default (`core="auto"`, when the extension is built);
+`Machine(core="python")` (or `TOGEARI_CORE=python`) runs the reference. Both take every knob
+above.
+
+`gil_offer_us=None` gives the fastest dispatcher, and below its ceiling the dispatcher waits for
+events often enough that engine threads get the GIL anyway. When the dispatcher runs at its
+ceiling next to an engine thread that needs the GIL (a feeder of a device, Python-level work in
+threads), set `gil_offer_us` to `300`: on the measured machine a torch feeder in a worker process
+then keeps 1,970 items/s instead of 562, and the dispatcher's own shapes give up at most 18%
+against `None` (inline chains with the run report plugin, whose threads each offer runs); `20`
+and `100` feed the same thread as well and cost the dispatcher up to 47% and 39% on those
+chains ([performance](../performance/native.md)).
+`machine.dispatcher.native_stats()` counts its regions (released and held), its GIL offers and
+the work the regions did ([internals](../internals/native/gil.md)).
 
 ## Reading a run
 

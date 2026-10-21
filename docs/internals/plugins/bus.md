@@ -18,12 +18,13 @@ by two threads at once. An emit posted as the machine stops may not run.
 | `unlisten(fn)` | removes `fn` from every kind |
 
 A `passive` listener only records what it receives and never acts on the machine from the call;
-the native core may then hand it the events of a GIL-free region when the region ends
+the native core may then hand it the events of a region when the region ends
 ([the GIL](../native/gil.md)). Passivity is per function: `passive` lists the functions every
 registration of which said `passive=True`, so one registration without it makes the function
 acting for all its kinds. `acting` counts the listening functions not in `passive`, recounted on
-every `listen` and `unlisten`; while it is not 0 the native core keeps the GIL. The decision log
-and the `counters` plugin listen passively. Plugins reach them through `PluginContext.listen` / `unlisten` ([hooks](hooks.md)).
+every `listen` and `unlisten`; while it is not 0 the native core runs no region (its GIL offers
+go on, as pure offers). The decision log and the `counters` plugin listen passively. Plugins
+reach them through `PluginContext.listen` / `unlisten` ([hooks](hooks.md)).
 
 ## Emitting
 

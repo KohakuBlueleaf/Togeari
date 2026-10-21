@@ -59,11 +59,17 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(404, {"error": self.path})
 
 
+class Server(ThreadingHTTPServer):
+    # Every station's lookup connects at once: with the default backlog of 5, Windows refuses
+    # the connects past it and the client retries them 0.5 s later
+    request_queue_size = 256
+
+
 class Registry:
     """The service on a free local port, served from a daemon thread."""
 
     def __init__(self):
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.httpd = Server(("127.0.0.1", 0), Handler)
         self.httpd.daemon_threads = True
         self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)

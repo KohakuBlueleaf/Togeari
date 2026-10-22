@@ -1,0 +1,6 @@
+@use "geometry" as g
+@def (x: int, dx: int)main(original, moved, original_x, moved_x):
+    (x=x, tags=["sample"])g.Point.make(original)
+    (original, dx)g.translate(moved)
+    (original)g.Point.get.x(original_x)
+    (moved)g.Point.get.x(moved_x)

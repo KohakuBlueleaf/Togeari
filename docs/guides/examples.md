@@ -8,7 +8,7 @@ check only), `togeari units ...` (engine checks, where the module gives samples)
 
 Every example records every job, checks each one against the reference interpreter
 (`conformance: N/N jobs match the reference`) and exits nonzero when a job fails or does not
-match. `tests/examples` runs them that way: the four CPU examples always, `mixed` (12 stations,
+match. `tests/examples` runs them that way: the CPU examples always, `mixed` (12 stations,
 `python examples/mixed/machine.py 12`) under the `gpu` marker.
 
 | Example | Engines | Shows |
@@ -17,6 +17,7 @@ match. `tests/examples` runs them that way: the four CPU examples always, `mixed
 | `multi_unit` | three `SimCall` units | one lane, units of different speed, `Throughput`, an outage and failover |
 | `trace_replay` | `SimStream`, `SimCall`, `SimBatch` | the three lane kinds side by side, batch forming, `TargetLoad` |
 | `parallel` | `PythonCallEngine` (threads) | one job's independent work running at once: `parallel` arms, run-ahead past a branch, an `each` fan-out |
+| `records` | `PythonCallEngine` (threads) | typed immutable records, visible field operations, codec boundaries, replay and re-execution |
 | `mixed` | `WebCallEngine`, `PythonCallEngine` (processes and threads), the builtin batched device engine | three kinds of engine behind one program, `ordered` nodes, the run report and recorder, `togeari conform` |
 
 ## hello
@@ -60,6 +61,14 @@ storm alert waits for the branch. The timeline starts once the machine and its w
 It prints the job's `strands_peak` and `inflight_peak`, and the job's time against the same
 calls one after another. The strands peak is lower than the calls in flight: a strand ends once
 it has fetched its code, while its calls stay in flight. Part 2 runs four cities as four jobs.
+
+## records
+
+`records.kir` constructs a point, sends it to a simulated slow worker operation, and projects
+both the original and translated coordinates. The script checks the original value is
+unchanged, verifies every job by replay/re-execution, and round-trips the returned record
+through explicit tagged JSON. It needs no device or external service. See
+[Typed records](records.md) for schema and adapter APIs.
 
 ## mixed
 

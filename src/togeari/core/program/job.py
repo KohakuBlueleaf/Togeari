@@ -60,6 +60,16 @@ def with_dependencies(program_hash: str, dependencies: dict) -> str:
     return _mix(program_hash, dependencies["hash"]) if dependencies else program_hash
 
 
+def program_hashes(
+    program: Program, entry: str | None, passes: list[str], dependencies: dict
+) -> tuple[str, str]:
+    """Hash executable code with exactly one dependency fingerprint, including on replay."""
+    return (
+        with_dependencies(_mix(semantic_hash(program), str(entry), ",".join(passes)), dependencies),
+        with_dependencies(_mix(full_hash(program), str(entry), ",".join(passes)), dependencies),
+    )
+
+
 def read_source(program: str | os.PathLike) -> tuple[str, str, Path | None]:
     """(text, source name, base dir): a path (``os.PathLike``) is read; a ``str`` is KIR text."""
     if isinstance(program, os.PathLike):
@@ -123,12 +133,7 @@ def build_job_programs(
                 default = p.default.value if isinstance(p.default, Literal) else None
                 params.append(Param(p.name, p.default is not None, default))
         outputs = [o.name for o in d.outputs] if d is not None else None
-        sem = with_dependencies(
-            _mix(semantic_hash(lowered), str(entry), ",".join(passes)), compiled.dependencies
-        )
-        full = with_dependencies(
-            _mix(full_hash(lowered), str(entry), ",".join(passes)), compiled.dependencies
-        )
+        sem, full = program_hashes(lowered, entry, passes, compiled.dependencies)
 
         out.append(
             JobProgram(

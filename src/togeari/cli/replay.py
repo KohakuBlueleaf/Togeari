@@ -17,7 +17,7 @@ from togeari.cli.loading import resolve
 from togeari.conformance.replay import STEP_BUDGET, Verdict, conform
 from togeari.core.construct.errors import Problems
 from togeari.core.contracts.io import JobRecord
-from togeari.core.program.job import JobProgram, build_job_programs, with_dependencies
+from togeari.core.program.job import JobProgram, build_job_programs, program_hashes
 from togeari.core.program.origin import restore_origins
 from togeari.plugins.record.archive import Archive, import_providers
 
@@ -70,8 +70,12 @@ def job_program(info: dict, libs: list[str]) -> JobProgram:
         for signature in dependencies["signatures"]:
             if contracts.get(signature["library"]) != signature["hash"]:
                 raise ValueError(f"recorded signature contract differs: {signature['library']}")
-        jp.semantic_hash = with_dependencies(jp.semantic_hash, dependencies)
-        jp.full_hash = with_dependencies(jp.full_hash, dependencies)
+        if jp.dependencies and not dependencies["modules"] and jp.dependencies != dependencies:
+            raise ValueError("rebuilt record dependency manifest differs")
+        # Record-only linked text already has a manifest; never mix its hash twice.
+        jp.semantic_hash, jp.full_hash = program_hashes(
+            jp.program, jp.entry, jp.passes, dependencies
+        )
     if jp.semantic_hash != info["hash"]:
         raise ValueError(f"{info['source']}:{info['entry']}: rebuilt program hash differs")
     # Linked text is sufficient for execution; provenance is restored separately.

@@ -10,12 +10,12 @@ use pyo3::types::{PyInt, PyList};
 
 use crate::program::core::{Instr, NameId};
 use crate::runtime::core::Core;
-use crate::runtime::events::Stop;
+use crate::runtime::events::{Exc, Stop};
 use crate::runtime::frontend::fetch::Caps;
-use crate::runtime::state::frame::{cut, pushed};
+use crate::runtime::state::frame::{cut, pushed, Collector, CollectorRef};
 use crate::runtime::state::{
-    EachSpawn, Frame, FrameKind, JobRef, Join, Key, NameMap, Resume, Slot, SlotRef, Strand,
-    StrandRef,
+    EachSpawn, Frame, FrameKind, Inflight, JobRef, Join, Key, NameMap, Resume, Slot, SlotRef,
+    Strand, StrandRef,
 };
 
 fn item_slot(py: Python<'_>, items: &Py<PyList>, i: i64) -> PyResult<SlotRef> {
@@ -62,6 +62,34 @@ impl Core {
         };
         let items = match py.get_type::<PyList>().call1((v.bind(py),)) {
             Ok(l) => l.cast_into::<PyList>().map_err(PyErr::from)?.unbind(),
+            Err(e) if ins.collect_target.is_some() => {
+                // Attribute snapshot failure to the original opening key, not its parked arm.
+                {
+                    let mut s = st.borrow_mut();
+                    if s.resume == Resume::Parked {
+                        let (prefix, counter) = s
+                            .frames
+                            .last()
+                            .and_then(|f| f.saved.clone())
+                            .expect("a parked frame");
+                        s.prefix = prefix;
+                        s.counter = counter - 1;
+                        s.frames = cut(&s.frames, s.frames.len() - 1);
+                        s.resume = Resume::No;
+                    }
+                }
+                let key = st.borrow_mut().consume();
+                let inf = Inflight::new(job, job.borrow().id, ins.clone(), key);
+                {
+                    let mut x = inf.borrow_mut();
+                    x.control = true;
+                    x.snapshot = Some(Core::snapshot_of(st));
+                }
+                self.end(Some(py), job, st)?;
+                job.borrow_mut().add(&inf);
+                self.fault(py, &inf, Exc::Obj(e.value(py).clone().into_any().unbind()), true)?;
+                return Ok(());
+            }
             Err(e) if e.is_instance_of::<PyTypeError>(py) => {
                 let msg = e.value(py).str()?.to_string();
                 return Err(Stop::Fault(format!("each: items are not iterable ({msg})")));
@@ -87,13 +115,96 @@ impl Core {
         };
 
         let n = items.bind(py).len() as i64;
+        let collector = if ins.collect_target.is_some() {
+            let c = Rc::new(RefCell::new(Collector {
+                ins: ins.clone(),
+                key: key.clone(),
+                count: n as usize,
+                output: Slot::pending(),
+                values: Vec::new(),
+                slots: Vec::new(),
+                snapshot: Some(Core::snapshot_of(st)),
+                active: true,
+                queued: false,
+            }));
+            job.borrow_mut().collectors.push(c.clone());
+            self.collect_finalize(py, job, &c)?;
+            Some(c)
+        } else {
+            None
+        };
         if n == 0 {
+            if let Some(c) = &collector {
+                st.borrow_mut()
+                    .names
+                    .as_mut()
+                    .expect("names")
+                    .set(ins.collect_target.expect("collect target"), c.borrow().output.clone());
+            }
             st.borrow_mut().pc = ins.after.expect("an each's after address");
         } else if ins.has_exit {
             self.each_in_order(py, st, ins, Rc::new(items), key)?;
         } else {
-            self.each_at_once(py, job, st, ins, Rc::new(items), n, key)?;
+            self.each_at_once(py, job, st, ins, Rc::new(items), n, key, collector)?;
         }
+        Ok(())
+    }
+
+    pub fn collect_finalize(
+        &self,
+        py: Python<'_>,
+        job: &JobRef,
+        collector: &CollectorRef,
+    ) -> PyResult<()> {
+        let c = collector.borrow();
+        if c.queued || !c.active {
+            return Ok(());
+        }
+        let key = Key::of(&c.key.0, c.count as i64);
+        let inf = Inflight::new(job, job.borrow().id, c.ins.clone(), key);
+        {
+            let mut x = inf.borrow_mut();
+            x.control = true;
+            x.collector = Some(collector.clone());
+            x.snapshot = c.snapshot.clone();
+        }
+        drop(c);
+        collector.borrow_mut().queued = true;
+        job.borrow_mut().add(&inf);
+        self.check(Some(py), &inf)
+    }
+
+    fn collect_capture(
+        &self,
+        py: Python<'_>,
+        job: &JobRef,
+        st: &StrandRef,
+        frame: &Frame,
+    ) -> Result<(), Stop> {
+        let collector = frame.collector.as_ref().expect("collector");
+        let ins = collector.borrow().ins.clone();
+        let end = self
+            .code
+            .borrow()
+            .instr(ins.iter_end.expect("end"))
+            .expect("end instruction");
+        let key = st.borrow_mut().consume();
+        let inf = Inflight::new(job, job.borrow().id, end, key);
+        let slot = match self.slot_of(Some(py), st, ins.collect_value.as_ref().expect("yield")) {
+            Ok(slot) => slot,
+            Err(Stop::Fault(_)) => self.undefined(),
+            Err(error) => return Err(error),
+        };
+        {
+            let mut x = inf.borrow_mut();
+            x.control = true;
+            x.collector = Some(collector.clone());
+            x.collect_index = Some(frame.i as usize);
+            x.snapshot = Some(Core::snapshot_of(st));
+            x.inputs.push(slot);
+        }
+        job.borrow_mut().add(&inf);
+        self.check(Some(py), &inf)?;
         Ok(())
     }
 
@@ -119,6 +230,7 @@ impl Core {
                 items: Some(items.clone()),
                 i: 0,
                 base: Some(key.clone()),
+                collector: None,
             };
             s.frames = pushed(&s.frames, f);
             s.prefix = key.extend(0);
@@ -135,7 +247,17 @@ impl Core {
             Some(f) if f.kind == FrameKind::Iter && f.each == ins.each_addr => f,
             _ => return Err(Stop::Fault("internal: iteration frame missing".to_string())),
         };
-        st.borrow_mut().consume();
+        let job = st.borrow().job.upgrade().expect("a resident job");
+        if f.collector.is_some() {
+            self.collect_capture(py, &job, st, &f)?;
+            if let Some(join) = &f.join {
+                self.resolve_join(Some(py), join, st)?;
+                self.end(Some(py), &job, st)?;
+                return Ok(());
+            }
+        } else {
+            st.borrow_mut().consume();
+        }
         let each = self
             .code
             .borrow()
@@ -164,7 +286,17 @@ impl Core {
             let (p, c) = f.saved.clone().expect("a saved key");
             s.prefix = p;
             s.counter = c;
+            if let Some(c) = &f.collector {
+                s.names
+                    .as_mut()
+                    .expect("names")
+                    .set(each.collect_target.expect("target"), c.borrow().output.clone());
+            }
             s.pc = each.after.expect("an each's after address");
+            drop(s);
+            if let Some(c) = &f.collector {
+                self.collect_finalize(py, &job, c)?;
+            }
         }
         Ok(())
     }
@@ -182,6 +314,7 @@ impl Core {
         items: Rc<Py<PyList>>,
         n: i64,
         key: Key,
+        collector: Option<CollectorRef>,
     ) -> PyResult<()> {
         let writes = &ins.body_may_write;
         let table = ins.body_writes.clone();
@@ -234,6 +367,7 @@ impl Core {
             table,
             last: last.clone(),
             prev: None,
+            collector: collector.clone(),
         };
         let sp = Strand::new(
             job,
@@ -249,6 +383,9 @@ impl Core {
 
         // The strand itself continues after the loop
         let mut after = last.borrow().phis.clone();
+        if let Some(c) = &collector {
+            after.insert(ins.collect_target.expect("target"), c.borrow().output.clone());
+        }
         if let Some(name) = ins.item {
             after.insert(name, item_slot(py, &items, n - 1)?);
         }
@@ -304,6 +441,7 @@ impl Core {
                 items: Some(es.items.clone()),
                 i,
                 base: Some(es.key.clone()),
+                collector: es.collector.clone(),
             };
             let names = NameMap::of(&es.base, Some(extra));
             let body = ins.body.expect("an each body");

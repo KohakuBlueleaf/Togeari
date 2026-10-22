@@ -209,6 +209,30 @@ class Join:
         self.all_names = all_names
 
 
+class Collector:
+    """Private values of one dynamic collection; published only by its retire marker."""
+
+    __slots__ = ("ins", "key", "count", "output", "values", "slots", "snapshot", "active", "queued")
+
+    def __init__(self, ins, key, count, snapshot):
+        self.ins = ins
+        self.key = key
+        self.count = count
+        self.output = Slot()
+        self.values = []
+        self.slots = []
+        self.snapshot = snapshot
+        self.active = True
+        self.queued = False
+
+    def abort(self):
+        self.active = False
+        self.output.state = SlotState.SQUASHED
+        self.values.clear()
+        self.slots.clear()
+        self.snapshot = None
+
+
 class Frame:
     """A region a strand is inside: where it rejoins, the key to restore, and its join if parked.
 
@@ -216,7 +240,18 @@ class Frame:
     snapshots and new strands share them.
     """
 
-    __slots__ = ("reconv", "saved", "join", "branch", "kind", "each", "items", "i", "base")
+    __slots__ = (
+        "reconv",
+        "saved",
+        "join",
+        "branch",
+        "kind",
+        "each",
+        "items",
+        "i",
+        "base",
+        "collector",
+    )
 
     def __init__(
         self,
@@ -229,6 +264,7 @@ class Frame:
         items=None,
         i=0,
         base=None,
+        collector=None,
     ):
         self.reconv = reconv
         self.saved = saved
@@ -239,6 +275,7 @@ class Frame:
         self.items = items
         self.i = i
         self.base = base
+        self.collector = collector
 
     def replace(self, **changes: Any) -> "Frame":
         f = Frame(
@@ -251,6 +288,7 @@ class Frame:
             self.items,
             self.i,
             self.base,
+            self.collector,
         )
         for k, v in changes.items():
             setattr(f, k, v)
@@ -330,6 +368,8 @@ class Inflight:
         "control",
         "dig",
         "reused",
+        "collector",
+        "collect_index",
     )
 
     def __init__(self, job, instr, key):
@@ -367,6 +407,8 @@ class Inflight:
         self.dig: str | None = None
         # Completed with a result kept from a squashed run of the same statement
         self.reused = False
+        self.collector = None
+        self.collect_index = None
 
     def __lt__(self, other: "Inflight") -> bool:
         return self.key < other.key
@@ -464,6 +506,7 @@ class Job:
         "inputs_dig",
         "freed",
         "memo",
+        "collectors",
     )
 
     def __init__(self, key: str, entry, inputs: dict):
@@ -525,6 +568,7 @@ class Job:
         self.freed = None
         # Results kept from squashed statements (`retire.faults.Memo`), made at the first one
         self.memo = None
+        self.collectors: dict[tuple, Collector] = {}
 
     # ------------------------------------------------------------ strands
     def add_strand(self, st: Strand) -> None:

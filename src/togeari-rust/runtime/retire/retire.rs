@@ -6,8 +6,10 @@ use pyo3::types::{PyByteArray, PyDict, PyList, PySet, PyString, PyTuple};
 
 use crate::program::core::{Instr, Op, StoreMode};
 use crate::runtime::core::Core;
+use crate::runtime::events::Exc;
 use crate::runtime::frontend::fetch::Flow;
 use crate::runtime::host::{is_exception, K};
+use crate::runtime::state::slot::hold;
 use crate::runtime::state::{deref, effective, InfRef, InfState, JobRef, Key, Names, SlotState};
 
 /// A retired `mutates` call: its version becomes the oldest one its values keep.
@@ -86,6 +88,9 @@ impl Core {
             return true;
         }
         let b = x.borrow();
+        if b.collector.is_some() {
+            return true;
+        }
         let positional = b.ins.binding.as_ref().map(|bd| bd.store) == Some(StoreMode::Positional);
         b.store_key.is_some() && !b.hit && positional
     }
@@ -128,6 +133,29 @@ impl Core {
                     }
                 } else if py.is_none() {
                     self.count_region(|r| r.free_retires += 1);
+                }
+                if x.borrow().collector.is_some() && x.borrow().collect_index.is_some() {
+                    let py = py.expect("collector retire holds GIL");
+                    let slot = {
+                        let b = x.borrow();
+                        effective(&b.inputs[0], &b.key)
+                    };
+                    let undef = slot
+                        .borrow()
+                        .value
+                        .as_ref()
+                        .is_some_and(|v| self.h.is_undef(py, v));
+                    if undef {
+                        self.fault(
+                            py,
+                            &x,
+                            Exc::Runtime("collect: yielded value is not defined".into()),
+                            false,
+                        )?;
+                        self.take_fault(py, job, &x)?;
+                        pass.bound = job.borrow_mut().oldest_live_key();
+                        continue;
+                    }
                 }
                 job.borrow_mut().window.pop_first();
                 x.borrow_mut().state = InfState::Retired;
@@ -194,6 +222,44 @@ impl Core {
         Ok(Flow::Done(0))
     }
 
+    fn collect_stat(
+        &self,
+        py: Python<'_>,
+        job: &JobRef,
+        name: &str,
+        peak: Option<usize>,
+    ) -> PyResult<()> {
+        let mut j = job.borrow_mut();
+        let previous = j
+            .stats
+            .extra
+            .get(name)
+            .map(|v| v.extract::<usize>(py))
+            .transpose()?
+            .unwrap_or(0);
+        let value = peak.map_or(previous + 1, |v| previous.max(v));
+        j.stats
+            .extra
+            .insert(name.into(), value.into_pyobject(py)?.into_any().unbind());
+        Ok(())
+    }
+
+    fn hold_collect_slot(&self, job: &JobRef, slot: &crate::runtime::state::SlotRef, size: i64) {
+        let old = slot.borrow().held.as_ref().map(|h| h.size);
+        let added = if let Some(old) = old {
+            let extra = (size - old).max(0);
+            slot.borrow_mut().held.as_mut().expect("held").size += extra;
+            extra
+        } else {
+            hold(slot, job.borrow().id, size, &self.freed)
+        };
+        let mut j = job.borrow_mut();
+        j.bytes += added;
+        j.stats.bytes_produced += added;
+        j.stats.bytes_peak = j.stats.bytes_peak.max(j.bytes);
+        self.pool_bytes.set(self.pool_bytes.get() + added);
+    }
+
     fn retire_one(
         &self,
         py: Option<Python<'_>>,
@@ -205,6 +271,51 @@ impl Core {
             return self.note_stmt(None, "stmt.retire", x);
         };
         let ins = x.borrow().ins.clone();
+        let collector = x.borrow().collector.clone();
+        if let Some(collector) = collector {
+            let index = x.borrow().collect_index;
+            let mut c = collector.borrow_mut();
+            if !c.active {
+                return Ok(());
+            }
+            if let Some(index) = index {
+                if index != c.values.len() {
+                    return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                        "collect: out-of-order retirement",
+                    ));
+                }
+                let slot = {
+                    let b = x.borrow();
+                    effective(&b.inputs[0], &b.key)
+                };
+                let value = slot.borrow().value.clone().expect("ready collection value");
+                self.hold_collect_slot(job, &slot, self.value_bytes(py, value.bind(py))?);
+                c.values.push(value);
+                c.slots.push(slot);
+                self.hold_collect_slot(job, &c.output, 64 + 16 * c.values.len() as i64);
+                self.collect_stat(py, job, "collect_captures", None)?;
+                self.collect_stat(py, job, "collect_peak_items", Some(c.values.len()))?;
+            } else {
+                if c.values.len() != c.count {
+                    return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                        "collect: incomplete retirement",
+                    ));
+                }
+                let value = PyList::new(py, c.values.iter().map(|v| v.bind(py)))?.into_any();
+                let size = self.value_bytes(py, &value)?;
+                self.fill(py, &c.output, value.unbind())?;
+                self.hold_collect_slot(job, &c.output, size);
+                self.collect_stat(py, job, "collect_finalizations", None)?;
+                job.borrow_mut()
+                    .collectors
+                    .retain(|other| !std::rc::Rc::ptr_eq(other, &collector));
+                c.values.clear();
+                c.slots.clear();
+                c.snapshot = None;
+                c.active = false;
+            }
+            return Ok(());
+        }
         if caps.assert_alias {
             self.alias_check(py, job, x)?;
         }

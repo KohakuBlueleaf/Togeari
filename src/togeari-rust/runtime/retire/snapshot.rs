@@ -36,7 +36,7 @@ impl Core {
     pub fn capture(&self, py: Python<'_>, job: &JobRef) -> PyResult<Option<Py<PyAny>>> {
         let st = {
             let j = job.borrow();
-            if !j.window.is_empty() || j.strands.len() != 1 {
+            if !j.collectors.is_empty() || !j.window.is_empty() || j.strands.len() != 1 {
                 return Ok(None);
             }
             j.strands.values().next().expect("a strand").clone()
@@ -219,6 +219,7 @@ impl Core {
                 items,
                 i: opt(&d, "i")?.unwrap_or(0),
                 base,
+                collector: None,
             }));
         }
         let mut base: IndexMap<u32, SlotRef> = IndexMap::new();

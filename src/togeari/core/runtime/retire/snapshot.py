@@ -33,6 +33,8 @@ def snapshot_key(region_hash: str, job_key: str, inputs_digest: bytes) -> bytes:
 
 def capture(job: Any) -> bytes | None:
     """The job's state as bytes, or None off a boundary; raises when a value cannot pickle."""
+    if getattr(job, "collectors", None):
+        return None
     live = list(job.strands.values())
     if job.window or len(live) != 1 or live[0].spawn is not None:
         return None

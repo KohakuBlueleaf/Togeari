@@ -134,6 +134,8 @@ class FrontEnd(ControlOps, EachOps):
         """Leave every region whose reconvergence point is ``st.pc``; False if the strand ended."""
         while st.frames and st.frames[-1].reconv == st.pc:
             f = st.frames[-1]
+            if f.collector is not None and f.join is not None:
+                return True  # collect's ITER_END emits its retirement marker before ending
             st.frames = st.frames[:-1]
             if f.join is not None:
                 self.resolve_join(f.join, st.names)
@@ -168,14 +170,14 @@ class FrontEnd(ControlOps, EachOps):
                 raise RuntimeFault(f"input {port!r} missing")
 
     # ------------------------------------------------------------ faults
-    def control_fault(self, st: Strand, ins, exc: Exception) -> None:
+    def control_fault(self, st: Strand, ins, exc: Exception, catchable: bool = False) -> None:
         key = self.consume(st)
         inf = Inflight(st.job, ins, key)
         inf.control = True
         inf.snapshot = snapshot_of(st)
         self.end(st)
         st.job.add(inf)
-        self.d.fault(inf, exc, catchable=False)
+        self.d.fault(inf, exc, catchable=catchable)
 
     # ------------------------------------------------------------ simple instructions
     def op_call(self, st: Strand, ins) -> None:

@@ -442,6 +442,9 @@ impl Core {
             let mut j = job.borrow_mut();
             j.held.clear();
             j.memo = None;
+            for collector in j.collectors.drain(..) {
+                collector.borrow_mut().abort();
+            }
         }
         self.release_freed();
         {

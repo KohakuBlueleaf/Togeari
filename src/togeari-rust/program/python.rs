@@ -222,6 +222,8 @@ fn instr(code: &mut Code, ins: &Bound<'_, PyAny>) -> PyResult<Instr> {
         iter_end: opt_i64(&g("iter_end")?)?,
         has_exit: g("has_exit")?.is_truthy()?,
         each_addr: opt_i64(&g("each_addr")?)?,
+        collect_value: operand(code, &g("collect_value")?)?,
+        collect_target: opt_name(code, &g("collect_target")?)?,
         try_id,
         reconv: None,
         structured: false,

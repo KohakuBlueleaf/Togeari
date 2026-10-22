@@ -9,7 +9,7 @@ use pyo3::types::PyDict;
 use crate::program::core::Instr;
 use crate::runtime::python::Owner;
 
-use super::frame::Frames;
+use super::frame::{CollectorRef, Frames};
 use super::job::Job;
 use super::key::{Key, Prefix};
 use super::names::Names;
@@ -51,6 +51,7 @@ pub struct Fault {
 }
 
 /// A strand's view just before a statement: names, frames, prefix, counter.
+#[derive(Clone)]
 pub struct Snap {
     pub names: Names,
     pub frames: Frames,
@@ -98,6 +99,8 @@ pub struct Inflight {
     pub control: bool,
     pub dig: Option<Obj>,
     pub reused: bool,
+    pub collector: Option<CollectorRef>,
+    pub collect_index: Option<usize>,
 }
 
 pub type InfRef = Rc<RefCell<Inflight>>;
@@ -131,11 +134,14 @@ impl Inflight {
             control: false,
             dig: None,
             reused: false,
+            collector: None,
+            collect_index: None,
         }))
     }
 
     /// Let go of values, work item, view and slots (retired or squashed).
     pub fn release(&mut self) {
+        self.collector = None;
         self.values = None;
         self.result = None;
         self.snapshot = None;

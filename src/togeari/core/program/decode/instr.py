@@ -83,6 +83,8 @@ class Instr:
     iter_end: int | None = None
     has_exit: bool = False
     each_addr: int | None = None
+    collect_value: Operand | None = None
+    collect_target: str | None = None
     # static context
     each_ctx: int | None = None  # innermost `each` whose body holds this instruction
     try_id: tuple | None = None  # innermost `@try` body holding this instruction
@@ -104,7 +106,7 @@ class Instr:
             case Op.ASSIGN:
                 return [self.target]
             case Op.EACH:
-                return [n for n in (self.item, self.index) if n is not None]
+                return [n for n in (self.item, self.index, self.collect_target) if n is not None]
             case _:
                 return []
 

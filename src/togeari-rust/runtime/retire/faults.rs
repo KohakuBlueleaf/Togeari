@@ -239,6 +239,11 @@ impl Core {
         {
             let mut b = x.borrow_mut();
             b.state = InfState::Squashed;
+            if b.collect_index.is_none() {
+                if let Some(c) = &b.collector {
+                    c.borrow_mut().queued = false;
+                }
+            }
             for s in b.outs.iter().flatten() {
                 s.borrow_mut().state = SlotState::Squashed;
             }
@@ -370,6 +375,19 @@ impl Core {
                     kept.push(Rc::new(g));
                 } else {
                     kept.push(f.clone());
+                }
+            }
+            let collectors = std::mem::take(&mut job.borrow_mut().collectors);
+            for collector in collectors {
+                if kept.iter().any(|f| {
+                    f.collector
+                        .as_ref()
+                        .is_some_and(|c| Rc::ptr_eq(c, &collector))
+                }) {
+                    job.borrow_mut().collectors.push(collector.clone());
+                    self.collect_finalize(py, job, &collector)?;
+                } else {
+                    collector.borrow_mut().abort();
                 }
             }
             let mut nm = NameMap::of(&snap.names, None);

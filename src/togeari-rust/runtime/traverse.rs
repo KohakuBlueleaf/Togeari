@@ -8,7 +8,7 @@ use pyo3::{PyTraverseError, PyVisit};
 
 use crate::program::core::{Code, Instr, Operand};
 use crate::runtime::core::{Core, Pend};
-use crate::runtime::state::frame::Frames;
+use crate::runtime::state::frame::{CollectorRef, Frames};
 use crate::runtime::state::names::Dict;
 use crate::runtime::state::{
     EachSpawn, Entry, InfRef, JobRef, JoinRef, Names, SlotRef, StrandRef, Val, Waiter,
@@ -23,6 +23,7 @@ enum Node {
     Slot(SlotRef),
     Join(JoinRef),
     Frames(Frames),
+    Collector(CollectorRef),
     Dict(Dict),
     Spawn(Rc<std::cell::RefCell<EachSpawn>>),
     Entry(Rc<Entry>),
@@ -72,10 +73,29 @@ impl<'a> Tr<'a> {
                         }
                     }
                 }
+                Node::Collector(c) if self.first(&c) => {
+                    if let Ok(c) = c.try_borrow() {
+                        self.stack.push(Node::Instr(c.ins.clone()));
+                        self.stack.push(Node::Slot(c.output.clone()));
+                        for slot in &c.slots {
+                            self.stack.push(Node::Slot(slot.clone()));
+                        }
+                        for value in &c.values {
+                            self.val(value)?;
+                        }
+                        if let Some(s) = &c.snapshot {
+                            self.names(&s.names);
+                            self.stack.push(Node::Frames(s.frames.clone()));
+                        }
+                    }
+                }
                 Node::Frames(f) if self.first(&f) => {
                     for fr in f.iter() {
                         if !self.first(fr) {
                             continue;
+                        }
+                        if let Some(c) = &fr.collector {
+                            self.stack.push(Node::Collector(c.clone()));
                         }
                         if let Some(j) = &fr.join {
                             self.stack.push(Node::Join(j.clone()));
@@ -132,6 +152,9 @@ impl<'a> Tr<'a> {
                 }
             }
         }
+        for c in &j.collectors {
+            self.stack.push(Node::Collector(c.clone()));
+        }
         self.stack.push(Node::Entry(j.entry.clone()));
         for s in j.strands.values() {
             self.stack.push(Node::Strand(s.clone()));
@@ -173,6 +196,9 @@ impl<'a> Tr<'a> {
         }
         for v in e.vals.iter().chain(e.idx.iter()) {
             self.val(v)?;
+        }
+        if let Some(c) = &e.collector {
+            self.stack.push(Node::Collector(c.clone()));
         }
         self.names(&e.base);
         self.stack.push(Node::Frames(e.frames.clone()));
@@ -223,6 +249,9 @@ impl<'a> Tr<'a> {
             .flatten()
         {
             v.call(o)?;
+        }
+        if let Some(c) = &x.collector {
+            self.stack.push(Node::Collector(c.clone()));
         }
         self.stack.push(Node::Instr(x.ins.clone()));
         for s in x.inputs.iter().chain(x.outs.iter().flatten()) {
@@ -294,6 +323,9 @@ impl Tr<'_> {
             self.operand(o)?;
         }
         if let Some(o) = &i.operand {
+            self.operand(o)?;
+        }
+        if let Some(o) = &i.collect_value {
             self.operand(o)?;
         }
         Ok(())

@@ -51,6 +51,10 @@ class IssueStage:
                     return
                 case SlotState.SQUASHED:
                     return
+        if inf.collector is not None:
+            inf.state = InfState.DONE
+            self.dirty[inf.job.id] = None
+            return
         inf.state = InfState.READY
         self.ready.append(inf)
         if self.bus.wants("stmt.ready", inf.job.id):

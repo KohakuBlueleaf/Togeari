@@ -3,9 +3,10 @@
 import logging
 
 from togeari.core.program.decode.instr import Op
-from togeari.core.runtime.kir import UNDEF
+from togeari.core.runtime.kir import UNDEF, RuntimeFault
 from togeari.core.runtime.retire import snapshot
-from togeari.core.runtime.state import Inflight, InfState, Job, SlotState, deref, effective
+from togeari.core.runtime.state import Inflight, InfState, Job, SlotState, deref, effective, hold
+from togeari.core.runtime.values import value_bytes
 
 log = logging.getLogger("togeari.dispatcher")
 _FINAL = (float("inf"),)
@@ -24,6 +25,10 @@ class RetireStage:
                 break
             if bound is not None and x.key >= bound:
                 break
+            if x.collector is not None and x.collect_index is not None and x.fault is None:
+                value = effective(x.inputs[0][1], x.key).value
+                if value is UNDEF:
+                    self.fault(x, RuntimeFault("collect: yielded value is not defined"), False)
             if x.fault is not None:
                 self.take_fault(job, x)
                 bound = job.oldest_live_key()
@@ -62,6 +67,36 @@ class RetireStage:
 
     def retire_one(self, job: Job, x: Inflight) -> None:
         ins = x.instr
+        if x.collector is not None:
+            collector = x.collector
+            if not collector.active:
+                return
+            if x.collect_index is None:
+                if len(collector.values) != collector.count:
+                    raise RuntimeError("collect: incomplete retirement")
+                value = collector.values
+                collector.values = []
+                self.fill(collector.output, value)
+                self.hold_collect_slot(job, collector.output, value_bytes(value))
+                job.stats["collect_finalizations"] = job.stats.get("collect_finalizations", 0) + 1
+                collector.slots.clear()
+                collector.snapshot = None
+                collector.active = False
+                job.collectors.pop(collector.key, None)
+            else:
+                if x.collect_index != len(collector.values):
+                    raise RuntimeError("collect: out-of-order retirement")
+                slot = effective(x.inputs[0][1], x.key)
+                collector.values.append(slot.value)
+                collector.slots.append(slot)
+                self.hold_collect_slot(job, slot, value_bytes(slot.value))
+                self.hold_collect_slot(job, collector.output, 64 + 16 * len(collector.values))
+                job.stats["collect_captures"] = job.stats.get("collect_captures", 0) + 1
+                job.stats["collect_peak_items"] = max(
+                    job.stats.get("collect_peak_items", 0), len(collector.values)
+                )
+            x.collector = None
+            return
         if self.knobs["assert_alias"]:
             self.alias_check(job, x)
         if job.record is not None and ins.op == Op.CALL:
@@ -78,7 +113,22 @@ class RetireStage:
         if self.bus.wants("stmt.retire", job.id):
             self.emit_stmt("stmt.retire", x)
 
+    def hold_collect_slot(self, job: Job, slot, size: int) -> None:
+        """Charge retained values and the linear private reference buffer until publication."""
+        before = getattr(slot, "size", 0)
+        added = max(0, size - before)
+        if before:
+            slot.size += added
+            job.bytes += added
+        else:
+            added = hold(slot, job, size)
+        self.pool_bytes += added
+        job.stats["bytes_produced"] += added
+        job.stats["bytes_peak"] = max(job.stats["bytes_peak"], job.bytes)
+
     def take_snapshot(self, job: Job) -> None:
+        if job.collectors:
+            return
         key = self.snapshot_key(job)
         if key is None:
             job.snap_off = True

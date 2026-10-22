@@ -362,6 +362,9 @@ impl Core {
                     _ => return Ok(true),
                 }
             };
+            if top.collector.is_some() && top.join.is_some() {
+                return Ok(true); // ITER_END emits the collection retirement marker.
+            }
             {
                 let mut s = st.borrow_mut();
                 let n = s.frames.len() - 1;

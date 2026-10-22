@@ -8,11 +8,12 @@ use indexmap::IndexMap;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 
-use crate::program::core::{NameId, Table};
+use crate::program::core::{Instr, NameId, Table};
 
+use super::inflight::Snap;
 use super::key::{Key, Prefix};
 use super::names::Names;
-use super::slot::SlotRef;
+use super::slot::{SlotRef, SlotState};
 use super::Val;
 
 /// The phis a parked region (branch arm, `each` iteration) resolves where it reconverges.
@@ -50,6 +51,31 @@ impl FrameKind {
     }
 }
 
+/// Private accumulation owned by one dynamic collection invocation.
+pub struct Collector {
+    pub ins: Rc<Instr>,
+    pub key: Key,
+    pub count: usize,
+    pub output: SlotRef,
+    pub values: Vec<Val>,
+    pub slots: Vec<SlotRef>,
+    pub snapshot: Option<Snap>,
+    pub active: bool,
+    pub queued: bool,
+}
+
+pub type CollectorRef = Rc<RefCell<Collector>>;
+
+impl Collector {
+    pub fn abort(&mut self) {
+        self.active = false;
+        self.output.borrow_mut().state = SlotState::Squashed;
+        self.values.clear();
+        self.slots.clear();
+        self.snapshot = None;
+    }
+}
+
 /// A region a strand is inside: where it rejoins, the key to restore, its join if parked.
 /// Frames never change once pushed; a strand's frames are shared.
 pub struct Frame {
@@ -62,6 +88,7 @@ pub struct Frame {
     pub items: Option<Rc<Py<PyList>>>,
     pub i: i64,
     pub base: Option<Key>,
+    pub collector: Option<CollectorRef>,
 }
 
 impl Frame {
@@ -81,6 +108,7 @@ impl Frame {
             items: None,
             i: 0,
             base: None,
+            collector: None,
         }
     }
 
@@ -95,6 +123,7 @@ impl Frame {
             items: self.items.clone(),
             i: self.i,
             base: self.base.clone(),
+            collector: self.collector.clone(),
         }
     }
 }
@@ -135,4 +164,5 @@ pub struct EachSpawn {
     // The last iteration's join (the names after the loop read its phis)
     pub last: JoinRef,
     pub prev: Option<JoinRef>,
+    pub collector: Option<CollectorRef>,
 }

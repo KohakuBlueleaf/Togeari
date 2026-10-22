@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from kohakunode.sig.env import Resolved
+from kohakunode.sig.std import INTERNAL
 
 from togeari.core.construct.errors import Problems
 from togeari.core.program.code import CodeMemory, Region
@@ -124,6 +125,14 @@ def bind_region(
     for ins in code.calls(region):
         if ins.signature is None:
             problems.add(src, f"node {ins.node!r} is unknown")
+            continue
+        resolved = region.job.env.resolve(ins.node)
+        if (
+            ins.node in ("kir.collect_items", "kir.collect_append")
+            and isinstance(resolved, Resolved)
+            and resolved.library is INTERNAL
+        ):
+            ins.binding = Bound(ins.node, True, fn=region.job.env.impl(ins.node))
             continue
         names = names_of(ins, region)
         pat, ties = match(patterns, names)

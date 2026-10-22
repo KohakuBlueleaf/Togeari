@@ -149,7 +149,7 @@ class Tables:
             start = ins.succ()
             table = write_table(self.mem, start, stop)
             if ins.op == Op.EACH:
-                extra = frozenset(n for n in (ins.item, ins.index) if n)
+                extra = frozenset(n for n in (ins.item, ins.index, ins.collect_target) if n)
                 table = {k: v | extra for k, v in table.items()}
                 table[a] = frozenset().union(*table.values(), extra) if table else extra
             self._writes[a] = table
@@ -187,7 +187,9 @@ class Tables:
             if ALL in writes:
                 self._carried[each_addr] = writes
             else:
-                live = live_in(self.mem, ins.body, ins.iter_end, writes)
+                yielded = ins.collect_value
+                reads = frozenset([yielded[1]]) if yielded and yielded[0] == "n" else frozenset()
+                live = live_in(self.mem, ins.body, ins.iter_end, writes | reads)
                 self._carried[each_addr] = frozenset(writes & live)
         return self._carried[each_addr]
 

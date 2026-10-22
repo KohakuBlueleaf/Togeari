@@ -18,6 +18,7 @@ match. `tests/examples` runs them that way: the CPU examples always, `mixed` (12
 | `trace_replay` | `SimStream`, `SimCall`, `SimBatch` | the three lane kinds side by side, batch forming, `TargetLoad` |
 | `parallel` | `PythonCallEngine` (threads) | one job's independent work running at once: `parallel` arms, run-ahead past a branch, an `each` fan-out |
 | `records` | `PythonCallEngine` (threads) | typed immutable records, visible field operations, codec boundaries, replay and re-execution |
+| `collect` | `PythonCallEngine` (threads) | nested ordered collection, empty inputs, bounded iteration spawning and conformance |
 | `mixed` | `WebCallEngine`, `PythonCallEngine` (processes and threads), the builtin batched device engine | three kinds of engine behind one program, `ordered` nodes, the run report and recorder, `togeari conform` |
 
 ## hello
@@ -69,6 +70,13 @@ both the original and translated coordinates. The script checks the original val
 unchanged, verifies every job by replay/re-execution, and round-trips the returned record
 through explicit tagged JSON. It needs no device or external service. See
 [Typed records](records.md) for schema and adapter APIs.
+
+## collect
+
+`collect.kir` doubles every value in nested rows using two native collections and ordinary
+worker calls. The script checks nested result order, empty inputs, replay and re-execution.
+Run `python examples/collect/machine.py`; no device or service is needed. See
+[Ordered collection](collect.md) for semantics and the initial mutation restriction.
 
 ## mixed
 

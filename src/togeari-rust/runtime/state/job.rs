@@ -11,6 +11,7 @@ use pyo3::types::{PyBytes, PyDict, PyList, PyString};
 
 use crate::program::core::NameId;
 
+use super::frame::CollectorRef;
 use super::inflight::{InfRef, InfState};
 use super::key::Key;
 use super::names::Names;
@@ -166,6 +167,7 @@ pub struct Job {
     pub snap_off: bool,
     pub inputs_dig: Option<Py<PyBytes>>,
     pub memo: Option<Memo>,
+    pub collectors: Vec<CollectorRef>,
 }
 
 pub type JobRef = Rc<RefCell<Job>>;
@@ -203,6 +205,7 @@ impl Job {
             snap_off: false,
             inputs_dig: None,
             memo: None,
+            collectors: Vec::new(),
         }))
     }
 

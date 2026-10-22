@@ -14,6 +14,7 @@ from kohakunode.syntax.ast import (
     Assign,
     Branch,
     Call,
+    Collect,
     Dataflow,
     Def,
     Each,
@@ -137,7 +138,7 @@ class Compiler:
                         cont_of[id(ns)] = (
                             self.ns_target(nxt_arm) if nxt_arm is not None else after[i + 1]
                         )
-                case Each() as s if (ns := local.get(s.label)) is not None:
+                case Each() | Collect() as s if (ns := local.get(s.label)) is not None:
                     end = self.new(Op.ITER_END, None, ins.addr, try_id, each_addr=ins.addr)
                     end.span = self.span(s)
                     if end.span.origin is not None:
@@ -214,6 +215,19 @@ class Compiler:
                 return self.new(Op.JUMP, s, each_ctx, try_id)
 
             # Loops
+            case Collect():
+                return self.new(
+                    Op.EACH,
+                    s,
+                    each_ctx,
+                    try_id,
+                    operand=operand(s.items),
+                    item=s.item,
+                    index=s.index,
+                    collect_value=operand(s.value),
+                    collect_target=s.target,
+                    node="kir.collect_items",
+                )
             case Each():
                 return self.new(
                     Op.EACH,
@@ -305,7 +319,7 @@ class Compiler:
                 def fix():
                     ins.targets = [t()]
 
-            case Each():
+            case Each() | Collect():
                 body = self.enter(s.label, [local])
 
                 def fix():

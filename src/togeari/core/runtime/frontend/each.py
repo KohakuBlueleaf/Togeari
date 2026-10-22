@@ -3,8 +3,18 @@
 from typing import Any
 
 from togeari.core.program.decode.instr import ALL
-from togeari.core.runtime.kir import RuntimeFault
-from togeari.core.runtime.state import Frame, Join, NameMap, Names, Slot, Strand, const
+from togeari.core.runtime.kir import RuntimeFault, undefined
+from togeari.core.runtime.state import (
+    Collector,
+    Frame,
+    Inflight,
+    Join,
+    NameMap,
+    Names,
+    Slot,
+    Strand,
+    const,
+)
 
 
 class EachSpawn:
@@ -21,6 +31,7 @@ class EachSpawn:
         "table",
         "last",
         "prev",
+        "collector",
     )
 
     def __init__(self, ins, items, key, base, saved, frames, carried, table, last):
@@ -36,6 +47,7 @@ class EachSpawn:
         # The last iteration's join (the names after the loop read its phis)
         self.last: Join = last
         self.prev: Join | None = None
+        self.collector = None
 
 
 class EachOps:
@@ -53,8 +65,19 @@ class EachOps:
             return
         try:
             items = list(got[0])
-        except TypeError as exc:
-            raise RuntimeFault(f"each: items are not iterable ({exc})") from None
+        except Exception as exc:
+            if ins.collect_target is not None:
+                # Snapshotting belongs to the opening instruction, not its parked body key.
+                if st.resume == "parked":
+                    st.prefix, st.counter = st.frames[-1].saved
+                    st.counter -= 1
+                    st.frames = st.frames[:-1]
+                    st.resume = False
+                self.control_fault(st, ins, exc, catchable=True)
+                return
+            if isinstance(exc, TypeError):
+                raise RuntimeFault(f"each: items are not iterable ({exc})") from None
+            raise
 
         # The `each`'s own key (taken when it parked, or now)
         if st.resume == "parked":
@@ -64,12 +87,22 @@ class EachOps:
             key = self.consume(st)
         st.resume = False
 
+        if ins.collect_target is not None:
+            snap = (st.names.snapshot(), st.frames, st.prefix, st.counter)
+            collector = Collector(ins, key, len(items), snap)
+            st.job.collectors[key] = collector
+            self.collect_finalize(st.job, collector)
+        else:
+            collector = None
+
         if not items:
+            if collector is not None:
+                st.names.set(ins.collect_target, collector.output)
             st.pc = ins.after
         elif ins.has_exit:
             self.each_in_order(st, ins, items, key)
         else:
-            self.each_at_once(st, ins, items, key)
+            self.each_at_once(st, ins, items, key, collector)
 
     # ------------------------------------------------------------ in order
     def each_in_order(self, st: Strand, ins, items: list, key: tuple) -> None:
@@ -85,7 +118,14 @@ class EachOps:
         f = st.frames[-1] if st.frames else None
         if f is None or f.kind != "iter" or f.each != ins.each_addr:
             raise RuntimeFault("internal: iteration frame missing")
-        self.consume(st)
+        if f.collector is not None:
+            self.collect_capture(st, f)
+            if f.join is not None:
+                self.resolve_join(f.join, st.names)
+                self.end(st)
+                return
+        else:
+            self.consume(st)
         each = self.mem[f.each]
 
         # Next iteration, or leave the loop
@@ -98,10 +138,41 @@ class EachOps:
         else:
             st.frames = st.frames[:-1]
             st.prefix, st.counter = f.saved
+            if f.collector is not None:
+                st.names.set(each.collect_target, f.collector.output)
+                self.collect_finalize(st.job, f.collector)
             st.pc = each.after
 
+    def collect_finalize(self, job, collector):
+        if collector.queued or not collector.active:
+            return
+        inf = Inflight(job, collector.ins, (*collector.key, collector.count))
+        inf.control = True
+        inf.collector = collector
+        inf.snapshot = collector.snapshot
+        collector.queued = True
+        job.add(inf)
+        self.d.check(inf)
+
+    def collect_capture(self, st, frame):
+        collector = frame.collector
+        ins = self.mem[collector.ins.iter_end]
+        key = self.consume(st)
+        inf = Inflight(st.job, ins, key)
+        inf.control = True
+        inf.collector = collector
+        inf.collect_index = frame.i
+        inf.snapshot = (st.names.snapshot(), st.frames, st.prefix, st.counter)
+        try:
+            slot = self.slot_of(st, collector.ins.collect_value)
+        except RuntimeFault:
+            slot = undefined()
+        inf.inputs = [("value", slot)]
+        st.job.add(inf)
+        self.d.check(inf)
+
     # ------------------------------------------------------------ at once
-    def each_at_once(self, st: Strand, ins, items: list, key: tuple) -> None:
+    def each_at_once(self, st: Strand, ins, items: list, key: tuple, collector=None) -> None:
         """One strand per item, started lazily in index order by a spawner strand.
 
         Iteration i+1 reads the carried names of iteration i through phis; the
@@ -128,10 +199,13 @@ class EachOps:
         e = EachSpawn(
             ins, items, key, base, (st.prefix, st.counter), st.frames, carried, table, last
         )
+        e.collector = collector
         job.add_strand(Strand(job, ins.addr, key, 0, st.frames, None, spawn=e))
 
         # The strand itself continues after the loop
         after = dict(last.phis)
+        if collector is not None:
+            after[ins.collect_target] = collector.output
         if ins.item is not None:
             after[ins.item] = const(items[-1])
         if ins.index is not None:
@@ -157,7 +231,9 @@ class EachOps:
             join = Join({n: _phi() for n in e.carried}, e.table, e.last.all_names)
 
         # The iteration strand, ending at ITER_END with its join resolved
-        f = Frame(ins.iter_end, e.saved, join, ins.addr, "iter", ins.addr, items, i, e.key)
+        f = Frame(
+            ins.iter_end, e.saved, join, ins.addr, "iter", ins.addr, items, i, e.key, e.collector
+        )
         it = Strand(job, ins.body, (*e.key, i), 0, (*e.frames, f), NameMap.of(e.base, extra))
         job.add_strand(it)
         e.prev = join

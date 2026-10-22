@@ -164,6 +164,8 @@ pub struct Instr {
     pub iter_end: Option<i64>,
     pub has_exit: bool,
     pub each_addr: Option<i64>,
+    pub collect_value: Option<Operand>,
+    pub collect_target: Option<NameId>,
     pub try_id: Option<(i64, i64)>,
 
     // Decode tables of a control instruction

@@ -121,6 +121,11 @@ def build_job_programs(
         job = _job_program(compiled.program, defs.get(entry) if entry else None)
         try:
             lowered = run_passes(job, compiled.env, passes)
+            written = (
+                run_passes(compiled.program, compiled.env, ["expand_collect"])
+                if "expand_collect" in passes
+                else compiled.program
+            )
         except Exception as exc:  # noqa: BLE001
             problems.add(source, f"entry {entry!r}: {exc}")
             continue
@@ -140,7 +145,7 @@ def build_job_programs(
                 source,
                 entry,
                 lowered,
-                compiled.program,
+                written,
                 compiled.env,
                 params,
                 outputs,
@@ -151,7 +156,7 @@ def build_job_programs(
                 [str(w) for w in compiled.warnings],
                 dependencies=copy.deepcopy(compiled.dependencies),
                 origins={
-                    "written": program_origins(compiled.program),
+                    "written": program_origins(written),
                     "lowered": program_origins(lowered),
                 },
                 linked_text=write(compiled.program),

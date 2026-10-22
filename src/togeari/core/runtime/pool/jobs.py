@@ -171,6 +171,9 @@ class JobsStage:
                 self.squash(x)
         job.held.clear()
         job.memo = None
+        for collector in job.collectors.values():
+            collector.abort()
+        job.collectors.clear()
         self.release_freed()
 
         # The record

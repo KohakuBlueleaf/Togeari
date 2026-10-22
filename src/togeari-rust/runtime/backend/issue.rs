@@ -91,6 +91,12 @@ impl Core {
                 SlotState::Ready => {}
             }
         }
+        if inf.borrow().collector.is_some() {
+            let mut x = inf.borrow_mut();
+            x.state = InfState::Done;
+            self.mark_dirty(x.job_id);
+            return Ok(());
+        }
         inf.borrow_mut().state = InfState::Ready;
         self.ready.borrow_mut().push(inf.clone());
         self.note_stmt(py, "stmt.ready", inf)

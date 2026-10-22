@@ -1,0 +1,6 @@
+@def (rows: list)main(results):
+    (rows)collect(row, `outer`, scaled -> results)
+    outer:
+        (row)collect(value, `inner`, doubled -> scaled)
+        inner:
+            (value, 2)mul(doubled)

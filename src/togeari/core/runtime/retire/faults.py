@@ -139,6 +139,9 @@ class FaultStage:
 
         # Its output and version slots are squashed
         x.state = InfState.SQUASHED
+        if x.collector is not None and x.collect_index is None:
+            x.collector.queued = False
+        x.collector = None
         for s in x.outs:
             if s is not None:
                 s.state = SlotState.SQUASHED
@@ -195,6 +198,14 @@ class FaultStage:
                     reconv = tables.reconv.get(f.each) if f.kind == "iter" else f.reconv
                     f = f.replace(join=None, reconv=reconv)
                 kept.append(f)
+            # Only collectors surrounding the local handler survive a precise fault.
+            surviving = {f.collector.key for f in kept if f.collector is not None}
+            for key, collector in list(job.collectors.items()):
+                if key not in surviving:
+                    collector.abort()
+                    del job.collectors[key]
+                else:
+                    self.front.collect_finalize(job, collector)
             nm = NameMap.of(names)
             if info.error_name:
                 nm.set(info.error_name, const(dict(err)))

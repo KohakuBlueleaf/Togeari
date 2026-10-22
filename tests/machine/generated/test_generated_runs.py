@@ -97,22 +97,53 @@ def test_snapshots_resume_and_conform(seed):
         m.stop(drain=False, timeout=5)
     resumed = sum(bool(r.stats.get("resumed")) for r in sink.records)
     assert resumed > 0 or not snapped, (snapped, resumed)
-    SNAPPED[seed] = snapped
 
     # Every job of the second run succeeded: no snapshot is left for a later rerun
     if all(r.ok for r in sink.records):
         assert len(store) == 0, f"{len(store)} snapshots left after {resumed} resumed jobs ended"
 
 
-# Snapshots left by the first machine, per seed of test_snapshots_resume_and_conform
-SNAPPED: dict[int, int] = {}
+class ArchivingStore(MemoryStore):
+    """Keep snapshot writes separately from the live store's normal completion cleanup."""
+
+    def __init__(self):
+        super().__init__()
+        self.archive = MemoryStore()
+
+    def put(self, key, outputs):
+        super().put(key, outputs)
+        self.archive.put(key, outputs)
 
 
 def test_some_seed_snapshotted_and_resumed():
-    """The snapshot runs above resumed jobs for at least one seed (a resume was exercised)."""
-    if not SNAPPED:
-        pytest.skip("test_snapshots_resume_and_conform did not run")
-    assert any(n > 0 for n in SNAPPED.values()), SNAPPED
+    """Exercise a generated snapshot/resume without depending on other tests or workers."""
+    # Seed 3 reaches a snapshot boundary with one job; no seed sweep is needed here.
+    p = entry_program(3, jobs=1)
+    jobs = keyed(p.inputs, "coverage-")
+    inputs_of = {j.key: j.inputs for j in jobs}
+    store = ArchivingStore()
+    knobs = dict(seed=3, n_units=2, window=4, run_ahead=False, snapshot_every=1)
+
+    # Archive real snapshots: completion may delete the live copy before a polling thread
+    # sees it. This check must not depend on winning that race, seed-test order, or xdist.
+    m = build(p.text, p.entry, store=store, **knobs)
+    try:
+        sink = bounded(m, lambda: run_jobs(m, jobs), BOUND_S)
+        conform_all(m, sink.records, inputs_of, **CHECK)
+    finally:
+        m.stop(drain=False, timeout=5)
+    assert len(store.archive) > 0, "the generated coverage program made no snapshot"
+
+    # The archive is a normal store: restore the captured state and check real execution.
+    m = build(p.text, p.entry, store=store.archive, **knobs)
+    try:
+        sink = bounded(m, lambda: run_jobs(m, jobs), BOUND_S)
+        conform_all(m, sink.records, inputs_of, **CHECK)
+    finally:
+        m.stop(drain=False, timeout=5)
+    assert any(r.stats.get("resumed") for r in sink.records), "no snapshot was resumed"
+    assert all(r.ok for r in sink.records)
+    assert len(store.archive) == 0
 
 
 @pytest.mark.parametrize("seed", SEEDS)

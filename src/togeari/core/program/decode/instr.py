@@ -3,6 +3,10 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from kohakunode.syntax.ast import Origin
+
+from togeari.core.program.origin import origin_dict
+
 # Operand kinds: ("n", name) reads a name, ("l", value) a literal, ("d", value) a
 # signature default, ("missing", port) a required input nobody gave.
 Operand = tuple[str, Any]
@@ -27,17 +31,24 @@ ALL = "*"
 
 @dataclass
 class Span:
-    """Where an instruction came from (inline renames are undone in ``def_of``)."""
+    """Source location and structured provenance; legacy spans may lack an origin."""
 
     source: str
     line: int | None
     node: str
     def_of: str | None = None
+    origin: Origin | None = None
 
     def __str__(self) -> str:
         where = f"{self.source}:{self.line}" if self.line else self.source
         via = f" (in @def {self.def_of})" if self.def_of else ""
-        return f"{where} {self.node}{via}"
+        calls = ""
+        if self.origin is not None and self.origin.calls:
+            calls = " via " + " -> ".join(
+                f"{call.module}:{call.line}" if call.line else call.module
+                for call in self.origin.calls
+            )
+        return f"{where} {self.node}{via}{calls}"
 
 
 @dataclass
@@ -75,6 +86,15 @@ class Instr:
     # static context
     each_ctx: int | None = None  # innermost `each` whose body holds this instruction
     try_id: tuple | None = None  # innermost `@try` body holding this instruction
+
+    def origin_dict(self) -> dict | None:
+        """Detached JSON provenance, also used by the native core's retained instruction."""
+        return origin_dict(self.span.origin) if self.span is not None else None
+
+    def record_origin(self, origins: list, index: int) -> None:
+        """Append alongside a call record; pad a legacy snapshot's missing prefix."""
+        origins.extend([None] * (index - len(origins)))
+        origins.append(self.origin_dict())
 
     def writes(self) -> list[str]:
         match self.op:

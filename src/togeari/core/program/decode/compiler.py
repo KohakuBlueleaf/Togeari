@@ -7,6 +7,7 @@ continues after the namespace definition, except an `each` body (back to its
 
 import re
 from collections.abc import Callable
+from dataclasses import replace
 
 from kohakunode.sig.env import NodeEnv, Resolved
 from kohakunode.syntax.ast import (
@@ -80,7 +81,12 @@ class Compiler:
                 node = type(s).__name__.lower()
                 names = []
 
-        # The `@def` an inlined name came from, by its rename prefix
+        # Structured provenance survives linking, inlining and metadata stripping.
+        origin = getattr(s, "origin", None)
+        if origin is not None:
+            return Span(origin.module, origin.line, node, origin.definition, origin)
+
+        # Compatibility for unstamped ASTs: recover the definition from rename prefixes.
         m = next((m for m in (_DEF_PREFIX.match(n) for n in names) if m), None)
         return Span(self.source, s.line, node, m.group(1) if m else None)
 
@@ -133,6 +139,9 @@ class Compiler:
                         )
                 case Each() as s if (ns := local.get(s.label)) is not None:
                     end = self.new(Op.ITER_END, None, ins.addr, try_id, each_addr=ins.addr)
+                    end.span = self.span(s)
+                    if end.span.origin is not None:
+                        end.span.origin = replace(end.span.origin, generated="iter_end")
                     ins.iter_end = end.addr
                     cont_of[id(ns)] = lambda a=end.addr: a
                     ctx_of[id(ns)] = ins.addr

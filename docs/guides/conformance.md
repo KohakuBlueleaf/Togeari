@@ -10,7 +10,9 @@ as written.
 `record=<rate>` records that share of jobs (`record=1.0`: every job). A recorded job's
 `JobRecord.record` holds one entry per node call, in sequential order: node, input digest,
 `"ok"` or `"error"`, a copy of the result (or the error), and the values `mutates` inputs were
-changed to. Recorded jobs also get every detail event.
+changed to. Recorded jobs also get every detail event. Structured provenance is stored
+separately in `JobRecord.stats["record_origins"]`, aligned with those unchanged five-field
+tuples; see [Modules and origins](modules-and-origins.md).
 
 ## Checking in the same process
 
@@ -80,6 +82,8 @@ disk, one folder per run, with the programs they ran:
 ```
 records/
   programs/<hash>.json one file per program (by semantic hash): text, entry, passes, library references
+  runs/<run>/programs/<hash>.json the run's latest source metadata and origins
+  runs/<run>/programs/<hash>-<region>.json exact loaded-region provenance
   runs/<run>/run.json  the run's id, start time and digest providers
   runs/<run>/record.kv the job entries (record.pkl without KohakuVault)
 ```
@@ -103,6 +107,10 @@ recorder), and only for the jobs the machine's `record` knob samples.
 | `--engine-errors` / `--no-engine-errors` | a recorded failure of a re-executed node that the node itself does not raise counts as an engine failure (default) or as a mismatch |
 | `--max-fail N` | print at most N failures (20) |
 | `--step-budget N` | instructions the reference may execute per job (1 000 000) |
+
+New program files store self-contained linked KIR text, the original authored text, a
+dependency manifest and origin sidecars. Replay does not reopen imported KIR files; legacy
+program files remain readable. See [the archive encoding](modules-and-origins.md#archive-encoding-and-compatibility).
 
 A program file names each node library as `module:attr`, preferring a module that can be
 imported later (a machine module run by `togeari run` is also registered under its file name).
@@ -128,7 +136,8 @@ not pickle); a weak digest is an input digested by type only. Give such types a
 ## Reading records in Python
 
 `Archive(path, runs=None)` (`togeari.plugins`) reads a record folder back: `programs` (by
-semantic hash), `runs()` (run ids, oldest first), and `jobs()`, one dict per recorded job with
+semantic hash), `program(hash, run, region=None)` (exact provenance with legacy fallback),
+`runs()` (run ids, oldest first), and `jobs()`, one dict per recorded job with
 `run`, `key`, `entry`, `program`, `inputs`, `ok`, `outputs`, `failure`, `missing`, `stats`,
 `record` and `weak`.
 

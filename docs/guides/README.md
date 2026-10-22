@@ -8,6 +8,7 @@
 | [Builtin engines](builtin-engines.md) | `PythonCallEngine`, `WebCallEngine` with `JsonHttp`, `TorchEngine` with `TorchModule` and `TorchAdapter` |
 | [Stores, sources and sinks](stores-and-io.md) | the store contract, `MemoryStore`, `VaultStore`, writing a store; sources, sinks, sharding, job keys |
 | [Tuning](tuning.md) | admission, window, issue order, lane options, effects, events, the collector, the core and `gil_offer_us`; reading the run report and trace |
+| [Modules and origins](modules-and-origins.md) | importable KIR subgraphs, dependency identity, source attribution, portable replay archives |
 | [Conformance](conformance.md) | recording, `conform()` in replay and re-execute modes, `togeari conform`, reading records with `Archive`, `togeari doctor` |
 | [Examples](examples.md) | what each example shows and how to run it |
 

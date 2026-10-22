@@ -1,0 +1,5 @@
+@import "transforms.kir" as transforms
+
+@def (values: list)main(first: list, second: list):
+    (values, "primary")transforms.transform(first)
+    (values, "backup")transforms.transform(second)

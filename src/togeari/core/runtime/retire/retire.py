@@ -65,10 +65,12 @@ class RetireStage:
         if self.knobs["assert_alias"]:
             self.alias_check(job, x)
         if job.record is not None and ins.op == Op.CALL:
+            ins.record_origin(job.stats.setdefault("record_origins", []), len(job.record))
             job.record.append((ins.node, x.dig, "ok", x.kept, x.mutated))
             limit = self.knobs["record_limit"]
             if limit is not None and len(job.record) > limit:
                 job.record = None
+                job.stats.pop("record_origins", None)
                 job.stats["record_skipped"] = f"more than {limit} calls"
         # A positional result is stored as copied at settle, before any younger in-place change
         if x.store_key is not None and not x.hit and ins.binding.store == "positional":

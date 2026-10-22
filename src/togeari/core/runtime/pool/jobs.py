@@ -100,6 +100,9 @@ class JobsStage:
             if blob is not None:
                 restored = snapshot.restore(job, blob, self.code)
 
+        # Region identity is local to this machine, never inherited from a snapshot.
+        job.stats["program_region"] = entry.region.index
+
         # Bytes held: the inputs for the job's life, restored values while their slots live (the
         # entry's parameters are counted once, with the inputs)
         job.freed = self.freed

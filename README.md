@@ -107,6 +107,10 @@ flowchart LR
 - **Inspectable and supervised.** Queries and commands go through the dispatcher's inbox
   and see one consistent state. A failing job fails alone, a failing plugin is disabled, and
   a dead dispatcher answers every caller instead of hanging.
+- **Reusable KIR modules and source attribution.** Source imports link before execution;
+  structured origins connect inlined calls, faults, inspector rows and records to their
+  definitions and call sites. Replay retains linked code and provenance without needing
+  the original module files ([modules and origins](docs/guides/modules-and-origins.md)).
 - **Proof.** Every node call of a recorded job is kept in retire order;
   `togeari conform` replays it through `kohakunode`, and `--reexecute` runs chosen nodes
   again to catch a result delivered to the wrong statement.
@@ -227,6 +231,7 @@ togeari units   examples/hello/machine.py              # engine behaviour checks
 | [`trace_replay`](examples/trace_replay) | stream, call and batch lanes side by side on replayed latency samples |
 | [`parallel`](examples/parallel) | one job's independent work at once: `parallel` arms, run-ahead past a branch, an `each` fan-out, with a timeline |
 | [`mixed`](examples/mixed) | the builtin engines together: an HTTP registry, Python worker processes, a network on `cuda:0`, ordered log writes, every job recorded and conformed |
+| [`modules`](examples/modules/README.md) | imported KIR library with branch + `each`, two call sites and origin sidecars; `python examples/modules/machine.py --core both` checks replay and reexecution on Python and Rust |
 
 <!-- examples-output:begin -->
 Their output on the release tree (the default core, Rust):

@@ -42,7 +42,7 @@ class Recorder(BasePlugin):
         self.ctx: PluginContext | None = None
         self.writer: ArchiveWriter | None = None
         self.inputs: dict[str, bytes | None] = {}
-        self.known: set[str] = set()
+        self.known: set[tuple[str, int | None]] = set()
         self.refs: list[str] = []
         self.providers: list[str] = []
 
@@ -93,12 +93,20 @@ class Recorder(BasePlugin):
             self.providers = providers
             self.writer.add_providers(providers)
 
-        # The program the job started in, written once per semantic hash before its first job
+        # Keep exact region provenance even for semantically identical loaded programs.
         program = record.stats.get("program")
-        if program is not None and program not in self.known:
-            region = self.ctx.code.by_hash.get(program)
+        index = record.stats.get("program_region")
+        key = (program, index)
+        if program is not None and key not in self.known:
+            region = (
+                self.ctx.code.by_hash.get(program)
+                if index is None
+                else next((r for r in self.ctx.code.regions if r.index == index), None)
+            )
             if region is not None:
-                self.known.add(program)
+                self.known.add(key)
                 info = program_info(region.job, self.refs, self.ctx.sig_path)
+                if index is not None:
+                    info["region"] = index
                 self.writer.add_program(info)
         self.writer.add_job(record, inputs, program)

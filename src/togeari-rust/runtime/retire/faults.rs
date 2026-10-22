@@ -296,8 +296,14 @@ impl Core {
                     &py.None().into_bound(py),
                 ],
             )?;
+            self.record_origin(py, job, &ins, rec.bind(py).len())?;
             rec.bind(py).append(t)?;
         }
+        let origin = ins.py.bind(py).call_method0(intern!(py, "origin_dict"))?;
+        job.borrow_mut()
+            .stats
+            .extra
+            .insert("fault_origin".into(), origin.clone().unbind());
         let (jid, jkey, entry) = {
             let j = job.borrow();
             (j.id, j.key.clone_ref(py), j.entry.clone())
@@ -305,6 +311,7 @@ impl Core {
         let info = PyDict::new(py);
         info.set_item("job", jid)?;
         info.set_item("key", jkey.bind(py))?;
+        info.set_item("origin", &origin)?;
         info.update(err.bind(py).as_mapping())?;
         let where_ = PyDict::new(py);
         where_.set_item("entry", entry.py_name.bind(py))?;
@@ -321,6 +328,7 @@ impl Core {
             f.set_item("addr", ins.addr)?;
             f.set_item("key", key.to_py(py))?;
             f.set_item("squashed", job.borrow().stats.squashed)?;
+            f.set_item("origin", &origin)?;
             for (k, v) in err.bind(py).iter() {
                 f.set_item(format!("error_{}", k.str()?), v)?;
             }

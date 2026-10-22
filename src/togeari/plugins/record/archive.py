@@ -4,8 +4,9 @@ Layout of a record directory:
 
 - ``programs/<semantic hash>.json``: one program: source, KIR text, entry
   ``@def``, passes, hash, library references (``module:attr``) and signature
-  paths; one file per program, so writers of several runs never overwrite
-  each other;
+  paths; the latest metadata for each semantic program, kept for legacy readers;
+- ``runs/<run>/programs/<hash>.json``: this run's program provenance, so a later
+  metadata-only revision with the same semantic hash cannot overwrite it;
 - ``runs/<run>/run.json``: the run's id, start time and ``digest_providers``
   (modules that register digest functions, imported before a replay so input
   digests are computed as in the run);
@@ -72,9 +73,13 @@ def library_refs(libraries: list) -> list[str]:
 
 def program_info(job_program: Any, libraries: list[str], sig_path: list | None) -> dict:
     return {
+        "schema_version": 2,
         "source": job_program.source,
         "entry": job_program.entry,
-        "text": job_program.text,
+        "text": job_program.linked_text or job_program.text,
+        "authored_text": job_program.text,
+        "dependencies": job_program.dependencies,
+        "origins": job_program.origins,
         "passes": list(job_program.passes),
         "hash": job_program.semantic_hash,
         "libraries": list(libraries),
@@ -251,6 +256,12 @@ class ArchiveWriter:
     def _write(self, task: tuple) -> None:
         match task:
             case ("program", info):
+                # Keep per-run provenance as well as the legacy global program index.
+                folder = self.folder / PROGRAMS
+                folder.mkdir(exist_ok=True)
+                if "region" in info:
+                    _write_json(folder / f"{info['hash']}-{info['region']}.json", info, self.run)
+                _write_json(folder / f"{info['hash']}.json", info, self.run)
                 _write_json(self.path / PROGRAMS / f"{info['hash']}.json", info, self.run)
             case ("providers", providers):
                 self.set_providers(providers)
@@ -300,6 +311,18 @@ class Archive:
         folder = self.path / RUNS
         names = sorted(p.name for p in folder.iterdir() if p.is_dir()) if folder.exists() else []
         return [n for n in names if self.only is None or n in self.only]
+
+    def program(self, program_hash: str, run: str, region: int | None = None) -> dict | None:
+        """Exact run/region provenance, falling back to the run then legacy global index."""
+        folder = self.path / RUNS / run / PROGRAMS
+        if region is not None:
+            file = folder / f"{program_hash}-{region}.json"
+            if file.exists():
+                return json.loads(file.read_text(encoding="utf-8"))
+        file = folder / f"{program_hash}.json"
+        if file.exists():
+            return json.loads(file.read_text(encoding="utf-8"))
+        return self.programs.get(program_hash)
 
     def run_info(self, run: str) -> dict:
         """A run's ``run.json`` (empty when it is missing)."""

@@ -7,12 +7,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from kohakunode import KirCheckError, compile_source
+from kohakunode import KirCheckError, compile_source, write
 from kohakunode.lower import full_hash, run_passes, semantic_hash
 from kohakunode.sig.env import NodeEnv
 from kohakunode.syntax.ast import Def, Literal, Program
 
 from togeari.core.construct.errors import Problems
+from togeari.core.program.origin import program_origins
 
 DEFAULT_PASSES = ["order_dataflow", "inline", "strip_meta"]
 
@@ -31,7 +32,7 @@ class JobProgram:
     source: str
     entry: str | None
     program: Program  # lowered job program
-    written: Program  # the program as written (replay runs on it)
+    written: Program  # linked checked original (replay runs on it)
     env: NodeEnv
     params: list[Param]
     outputs: list[str] | None  # None: every top-level source name
@@ -40,6 +41,10 @@ class JobProgram:
     full_hash: str
     text: str = ""
     warnings: list[str] = field(default_factory=list)
+    dependencies: dict = field(default_factory=dict)
+    origins: dict = field(default_factory=dict)
+    linked_text: str = ""
+    source_program: Program | None = None
 
     @property
     def name(self) -> str:
@@ -48,6 +53,11 @@ class JobProgram:
 
 def _mix(*parts: str) -> str:
     return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
+
+
+def with_dependencies(program_hash: str, dependencies: dict) -> str:
+    """Include linked dependency identity without changing legacy no-module keys."""
+    return _mix(program_hash, dependencies["hash"]) if dependencies else program_hash
 
 
 def read_source(program: str | os.PathLike) -> tuple[str, str, Path | None]:
@@ -78,7 +88,10 @@ def build_job_programs(
     # The whole program checked once, unlowered
     passes = list(DEFAULT_PASSES if passes is None else passes)
     try:
-        compiled = compile_source(text, libraries, base, sig_path, passes=[])
+        logical_source = Path(program).name if isinstance(program, os.PathLike) else source
+        compiled = compile_source(
+            text, libraries, base, sig_path, passes=[], source_name=logical_source
+        )
     except KirCheckError as exc:
         for d in (d for d in exc.diagnostics if d.severity == "error"):
             loc = f"{source}:{d.line}" if getattr(d, "line", None) else source
@@ -110,8 +123,12 @@ def build_job_programs(
                 default = p.default.value if isinstance(p.default, Literal) else None
                 params.append(Param(p.name, p.default is not None, default))
         outputs = [o.name for o in d.outputs] if d is not None else None
-        sem = _mix(semantic_hash(lowered), str(entry), ",".join(passes))
-        full = _mix(full_hash(lowered), str(entry), ",".join(passes))
+        sem = with_dependencies(
+            _mix(semantic_hash(lowered), str(entry), ",".join(passes)), compiled.dependencies
+        )
+        full = with_dependencies(
+            _mix(full_hash(lowered), str(entry), ",".join(passes)), compiled.dependencies
+        )
 
         out.append(
             JobProgram(
@@ -127,6 +144,13 @@ def build_job_programs(
                 full,
                 text,
                 [str(w) for w in compiled.warnings],
+                dependencies=copy.deepcopy(compiled.dependencies),
+                origins={
+                    "written": program_origins(compiled.program),
+                    "lowered": program_origins(lowered),
+                },
+                linked_text=write(compiled.program),
+                source_program=compiled.source_program,
             )
         )
     return out

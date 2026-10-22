@@ -158,8 +158,11 @@ class FaultStage:
         x.state = InfState.RETIRED
         err = x.fault["error"]
         if not x.control and job.record is not None:
+            x.instr.record_origin(job.stats.setdefault("record_origins", []), len(job.record))
             job.record.append((x.instr.node, x.dig, "error", err, None))
-        info = {"job": job.id, "key": job.key, **err}
+        origin = x.instr.origin_dict()
+        job.stats["fault_origin"] = origin
+        info = {"job": job.id, "key": job.key, "origin": origin, **err}
         self.plugins.notify("on_fault", info, where=self.where(job))
         if self.bus.wants("fault.taken", job.id):
             self.bus.emit(
@@ -168,6 +171,7 @@ class FaultStage:
                 addr=x.instr.addr,
                 key=x.key,
                 squashed=job.stats["squashed"],
+                origin=origin,
                 **{f"error_{k}": v for k, v in err.items()},
             )
         names, frames, prefix, counter = x.snapshot

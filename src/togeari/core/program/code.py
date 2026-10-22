@@ -1,8 +1,9 @@
 """Code memory: every loaded job program, decoded into regions of one instruction table.
 
 A job carries only its instruction addresses; the dispatcher never asks which
-program a job belongs to. Regions are cached by semantic hash, never moved and
-never rewritten, so loading a program while jobs run affects none of them.
+program a job belongs to. Regions are cached by semantic hash when their provenance
+also matches, never moved and never rewritten, so loading a program while jobs run
+affects none of them.
 
 Loading is staged: ``stage`` decodes a job program into new addresses that no
 entry reaches yet, and ``commit`` makes the region known (lookup, cache,
@@ -65,7 +66,14 @@ class CodeMemory:
 
     # ------------------------------------------------------------ loading
     def cached(self, job: JobProgram) -> Region | None:
-        return self.by_hash.get(job.semantic_hash)
+        region = self.by_hash.get(job.semantic_hash)
+        if (
+            region is not None
+            and region.job.source == job.source
+            and region.job.origins == job.origins
+        ):
+            return region
+        return None
 
     def stage(self, job: JobProgram) -> Region:
         """Decode a job program into new addresses; its problems are in ``region.problems``."""

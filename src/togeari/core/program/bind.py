@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from kohakunode.sig.env import Resolved
-from kohakunode.sig.std import STD
 
 from togeari.core.construct.errors import Problems
 from togeari.core.program.code import CodeMemory, Region
@@ -63,11 +62,11 @@ def _specificity(pattern: str) -> tuple[int, int]:
 
 
 def names_of(ins: Instr, region: Region) -> list[str]:
-    """The names a call can be matched by: as written, plus ``kir.std.<name>`` for std nodes."""
+    """Match the linked call spelling and its original host-library-qualified name."""
     names = [ins.node]
     r = region.job.env.resolve(ins.node)
-    if isinstance(r, Resolved) and r.library is STD:
-        names.append(f"kir.std.{r.signature.name}")
+    if isinstance(r, Resolved) and r.library is not None:
+        names.append(f"{r.library.name}.{r.signature.name}")
     return names
 
 
@@ -128,7 +127,7 @@ def bind_region(
             continue
         names = names_of(ins, region)
         pat, ties = match(patterns, names)
-        where = f"{src}:{ins.span.line}" if ins.span and ins.span.line else src
+        where = str(ins.span) if ins.span else src
         if pat is None:
             problems.add(where, f"node {ins.node!r} is not bound")
             continue

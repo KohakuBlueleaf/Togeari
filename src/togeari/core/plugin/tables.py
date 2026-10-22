@@ -53,6 +53,7 @@ def q_job(m: Any, id: int) -> dict:
             "state": s.state,
             "pc": s.pc,
             "at": _span(m, s.pc),
+            "origin": m.code.mem[s.pc].origin_dict(),
             "key": s.next_key(),
             "spawner": s.spawn is not None,
         }
@@ -62,6 +63,7 @@ def q_job(m: Any, id: int) -> dict:
         {
             "node": x.instr.node or x.instr.op,
             "at": _span(m, x.instr.addr),
+            "origin": x.instr.origin_dict(),
             "key": x.key,
             "state": x.state,
             "unit": x.item.ext.get("unit") if x.item is not None else None,
@@ -122,6 +124,12 @@ def q_programs(m: Any) -> list[dict]:
             "addrs": [r.start, r.end],
             "inputs": [p.name for p in r.job.params],
             "outputs": r.job.outputs,
+            "dependencies": copy.deepcopy(r.job.dependencies),
+            "origins": {
+                str(addr): m.code.mem[addr].origin_dict()
+                for addr in range(r.start, r.end)
+                if m.code.mem[addr].span is not None
+            },
         }
         for r in m.code.regions
     ]

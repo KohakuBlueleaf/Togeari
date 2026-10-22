@@ -4,7 +4,7 @@ use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::{PyByteArray, PyDict, PyList, PySet, PyString, PyTuple};
 
-use crate::program::core::{Op, StoreMode};
+use crate::program::core::{Instr, Op, StoreMode};
 use crate::runtime::core::Core;
 use crate::runtime::frontend::fetch::Flow;
 use crate::runtime::host::{is_exception, K};
@@ -59,6 +59,27 @@ impl RetirePass {
 }
 
 impl Core {
+    /// Keep provenance beside the unchanged five-field replay records.
+    pub fn record_origin(
+        &self,
+        py: Python<'_>,
+        job: &JobRef,
+        ins: &Instr,
+        index: usize,
+    ) -> PyResult<()> {
+        let origins = job
+            .borrow_mut()
+            .stats
+            .extra
+            .entry("record_origins".into())
+            .or_insert_with(|| PyList::empty(py).into_any().unbind())
+            .clone_ref(py);
+        ins.py
+            .bind(py)
+            .call_method1(intern!(py, "record_origin"), (origins, index))?;
+        Ok(())
+    }
+
     /// Whether retiring ``x`` needs Python: a record, the alias check, a positional store.
     fn retire_needs_gil(&self, job: &JobRef, x: &InfRef, caps: &RetireCaps) -> bool {
         if caps.assert_alias || job.borrow().record.is_some() {
@@ -213,12 +234,14 @@ impl Core {
                 )?
             };
             let rec = rec.bind(py);
+            self.record_origin(py, job, &ins, rec.len())?;
             rec.append(t)?;
             let limit = self.h.knob(py, K::RecordLimit)?;
             if !limit.is_none() && rec.len() as f64 > crate::lanes::lane::as_f64(&limit)? {
                 let msg = PyString::new(py, &format!("more than {} calls", limit.str()?));
                 let mut j = job.borrow_mut();
                 j.record = None;
+                j.stats.extra.shift_remove("record_origins");
                 j.stats
                     .extra
                     .insert("record_skipped".into(), msg.into_any().unbind());

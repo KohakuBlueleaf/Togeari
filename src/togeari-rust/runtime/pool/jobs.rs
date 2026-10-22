@@ -261,6 +261,17 @@ impl Core {
             }
         }
 
+        // Region identity is local to this machine, never inherited from a snapshot.
+        let region_index = entry
+            .py
+            .bind(py)
+            .getattr(intern!(py, "region"))?
+            .getattr(intern!(py, "index"))?;
+        job.borrow_mut()
+            .stats
+            .extra
+            .insert("program_region".into(), region_index.unbind());
+
         // Bytes held: the inputs for the job's life, restored values while their slots live
         let bytes = self.value_bytes(py, inputs.as_any())?;
         job.borrow_mut().bytes = bytes;

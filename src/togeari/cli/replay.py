@@ -2,15 +2,23 @@
 reference.
 """
 
+import copy
+import hashlib
+import json
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from kohakunode import parse
+from kohakunode.modules import contract_hash
+from kohakunode.sig.std import STD
 
 from togeari.cli.loading import resolve
 from togeari.conformance.replay import STEP_BUDGET, Verdict, conform
 from togeari.core.construct.errors import Problems
 from togeari.core.contracts.io import JobRecord
-from togeari.core.program.job import JobProgram, build_job_programs
+from togeari.core.program.job import JobProgram, build_job_programs, with_dependencies
+from togeari.core.program.origin import restore_origins
 from togeari.plugins.record.archive import Archive, import_providers
 
 
@@ -30,6 +38,9 @@ class Replayed:
 
 def job_program(info: dict, libs: list[str]) -> JobProgram:
     """Rebuild the job program of one recorded entry; its semantic hash must match."""
+    version = info.get("schema_version", 1)
+    if version not in (1, 2):
+        raise ValueError(f"unsupported recorded program schema version {version!r}")
     text = info["text"] if "\n" in info["text"] else info["text"] + "\n"
     problems = Problems()
     refs = libs or info["libraries"]
@@ -44,8 +55,35 @@ def job_program(info: dict, libs: list[str]) -> JobProgram:
     jobs = build_job_programs(text, [info["entry"]], libraries, sig_path, info["passes"], problems)
     problems.raise_if_any()
     jp = jobs[0]
+    dependencies = copy.deepcopy(info.get("dependencies", {}))
+    if dependencies:
+        if dependencies.get("version") != 1:
+            raise ValueError("unsupported recorded dependency manifest version")
+        payload = {k: v for k, v in dependencies.items() if k != "hash"}
+        fingerprint = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        ).hexdigest()
+        if fingerprint != dependencies.get("hash"):
+            raise ValueError("recorded dependency manifest hash differs")
+        contracts = {lib.name: contract_hash(lib) for lib, _ in jp.env.libraries}
+        contracts[STD.name] = contract_hash(STD)
+        for signature in dependencies["signatures"]:
+            if contracts.get(signature["library"]) != signature["hash"]:
+                raise ValueError(f"recorded signature contract differs: {signature['library']}")
+        jp.semantic_hash = with_dependencies(jp.semantic_hash, dependencies)
+        jp.full_hash = with_dependencies(jp.full_hash, dependencies)
     if jp.semantic_hash != info["hash"]:
         raise ValueError(f"{info['source']}:{info['entry']}: rebuilt program hash differs")
+    # Linked text is sufficient for execution; provenance is restored separately.
+    jp.source = info["source"]
+    jp.text = info.get("authored_text", info["text"])
+    jp.source_program = parse(jp.text)
+    jp.dependencies = dependencies
+    if "origins" in info:
+        jp.origins = copy.deepcopy(info["origins"])
+        for name, program in (("written", jp.written), ("lowered", jp.program)):
+            if name in jp.origins:
+                restore_origins(program, jp.origins[name])
     return jp
 
 
@@ -69,7 +107,7 @@ def replay_dir(
     mode = "reexecute" if reexecute else "replay"
     pure = set(reexecute or ())
     archive = Archive(path, runs)
-    programs: dict[str, JobProgram] = {}
+    programs: dict[tuple[str, str, int | None], JobProgram] = {}
     prepared: set[str] = set()
     for job in archive.jobs():
         name, program, run = job["entry"], job["program"], job["run"]
@@ -86,14 +124,16 @@ def replay_dir(
                     " put their module on PYTHONPATH"
                 )
 
-        # The job's program, by semantic hash, rebuilt once
-        if program not in programs:
-            info = archive.programs.get(program)
+        # Semantic code may have different provenance across runs and loaded regions.
+        region = job["stats"].get("program_region")
+        program_key = (run, program, region)
+        if program_key not in programs:
+            info = archive.program(program, run, region)
             if info is None:
                 verdict = Verdict(False, f"no program {program!r} recorded for entry {name!r}")
                 yield Replayed(job["key"], name, verdict, job["weak"], run, weak_digests)
                 continue
-            programs[program] = job_program(info, libs or [])
+            programs[program_key] = job_program(info, libs or [])
 
         rec = JobRecord(
             job["key"],
@@ -105,7 +145,7 @@ def replay_dir(
             record=job["record"],
         )
         verdict = conform(
-            programs[program],
+            programs[program_key],
             rec,
             job["inputs"] or {},
             mode=mode,

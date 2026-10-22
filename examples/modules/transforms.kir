@@ -1,0 +1,16 @@
+@use "module_demo" as host
+@export transform
+
+@def (value: int, prefix: str)decorate(text: str):
+    (prefix, value)host.label(text)
+
+@def (values: list, prefix: str)transform(result: list):
+    result = []
+    (values)each(value, `item`)
+    item:
+        (value)host.keep(accepted)
+        (accepted)branch(`include`, `skip`)
+        include:
+            (value, prefix)decorate(text)
+            (result, text)append(result)
+        skip:

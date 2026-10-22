@@ -116,26 +116,37 @@ class ArchivingStore(MemoryStore):
 
 
 def test_some_seed_snapshotted_and_resumed():
-    """Exercise a generated snapshot/resume without depending on other tests or workers."""
-    # Seed 3 reaches a snapshot boundary with one job; no seed sweep is needed here.
-    p = entry_program(3, jobs=1)
-    jobs = keyed(p.inputs, "coverage-")
+    """Guarantee snapshot/resume coverage independently of generated scheduling shapes."""
+    # A straight call chain fetches to END even with window=1 (the oldest-strand progress
+    # rule). Instead, stall one strand on an inline predicate: issue fills it AFTER fetch,
+    # so retire sees ready names and an empty window before the branch can advance.
+    program = """
+@def (a: int)main(result):
+    (a)inc(first)
+    (first, 10)less(more)
+    (more)branch(`yes`, `no`)
+    yes:
+        (first)inc(result)
+    no:
+        (first)inc(result)
+"""
+    jobs = keyed([{"a": 0}], "coverage-")
     inputs_of = {j.key: j.inputs for j in jobs}
     store = ArchivingStore()
-    knobs = dict(seed=3, n_units=2, window=4, run_ahead=False, snapshot_every=1)
+    knobs = dict(n_units=1, window=1, retire_buffer=1, run_ahead=False, snapshot_every=1)
 
     # Archive real snapshots: completion may delete the live copy before a polling thread
     # sees it. This check must not depend on winning that race, seed-test order, or xdist.
-    m = build(p.text, p.entry, store=store, **knobs)
+    m = build(program, "main", store=store, **knobs)
     try:
         sink = bounded(m, lambda: run_jobs(m, jobs), BOUND_S)
         conform_all(m, sink.records, inputs_of, **CHECK)
     finally:
         m.stop(drain=False, timeout=5)
-    assert len(store.archive) > 0, "the generated coverage program made no snapshot"
+    assert len(store.archive) > 0, "the sequential coverage program made no snapshot"
 
     # The archive is a normal store: restore the captured state and check real execution.
-    m = build(p.text, p.entry, store=store.archive, **knobs)
+    m = build(program, "main", store=store.archive, **knobs)
     try:
         sink = bounded(m, lambda: run_jobs(m, jobs), BOUND_S)
         conform_all(m, sink.records, inputs_of, **CHECK)

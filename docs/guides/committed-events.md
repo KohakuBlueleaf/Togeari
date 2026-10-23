@@ -88,7 +88,9 @@ Recorded jobs preserve unchanged five-field call tuples and a separate
 `stats.committed_events = {"version": 1, "events": [...]}` sidecar containing the
 full committed prefix, including a restored prefix. Invocation associations come
 from `stats.record_invocations`; delivery retries are not duplicate semantic rows.
-The ordinary archive stats encoding retains these fields.
+The ordinary archive stats encoding retains these fields. This full event history is retained
+also when ordinary call recording is disabled. Outbox limits bound pending delivery, **not**
+all historical output. See [measured history and checkpoint costs](../performance/event-history.md).
 
 Conformance replay regenerates reference semantic events from recorded node
 outcomes without opening a consumer or journal. It checks sequence, topic,

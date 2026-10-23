@@ -1,5 +1,8 @@
 # Performance
 
+[Event-history and checkpoint costs](event-history.md) measures CPU-only resident
+history, capture pauses, storage acknowledgment, and independent-job delay on both cores.
+
 Measured on one desktop machine with one GPU (`cuda:0`, allocator capped per process). One run
 per configuration on the release tree. The raw numbers of the engine study are in
 `runs/s1/full/` (`m1.json` … `m5.json`, per-configuration logs) after

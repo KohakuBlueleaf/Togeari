@@ -126,6 +126,11 @@ program/input identity, actual cut metadata and validated snapshot-v3 bytes. The
 overwritten by later automatic snapshots and are not deleted when the original job
 completes successfully. Explicit deletion is separate.
 
+Capture validation, encoding, and artifact packing still run synchronously on the dispatcher.
+Large captured values or committed event histories can delay independent jobs, even when
+the delivery backlog has drained. Off-thread storage does not remove that pause; see the
+[reproducible cost measurements](../performance/event-history.md).
+
 Only immutable artifact bytes are handed to a bounded I/O worker. Live jobs, slots and
 mutable scheduler structures never cross into the store worker. Completion returns through
 the dispatcher inbox with an operation-generation guard; stale callbacks cannot finish a

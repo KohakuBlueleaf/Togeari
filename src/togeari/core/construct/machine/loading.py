@@ -79,6 +79,7 @@ class LoadStage:
                     problems,
                     self._used,
                     self.defaults,
+                    event_output=self.event_output,
                 )
                 region.binding_fingerprint = self._binding_fingerprint
                 if not problems.items:

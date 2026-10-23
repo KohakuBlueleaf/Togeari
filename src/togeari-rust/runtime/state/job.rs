@@ -186,6 +186,8 @@ pub struct Job {
     pub collectors: Vec<CollectorRef>,
     pub cut: Option<CutRequest>,
     pub checkpoint_watermark: Option<Key>,
+    pub event_state: Option<Py<PyDict>>,
+    pub event_cancel: Option<String>,
 }
 
 pub type JobRef = Rc<RefCell<Job>>;
@@ -235,6 +237,8 @@ impl Job {
             collectors: Vec::new(),
             cut: None,
             checkpoint_watermark: None,
+            event_state: None,
+            event_cancel: None,
         }))
     }
 

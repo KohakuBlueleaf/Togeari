@@ -40,6 +40,7 @@ class RunStage:
         if not self.units_started and any(lane.units for lane in self.lanes):
             raise RuntimeError("the machine was built without starting its units")
         if d.thread is None:
+            self.events.start()
             self.plugins.notify("on_machine_start")
             self.bus.emit("machine.start")
             d.thread = threading.Thread(target=d.loop, name="togeari-dispatcher", daemon=True)
@@ -208,18 +209,33 @@ class RunStage:
             return
         d = self.dispatcher
         thread = d.thread
+        event_deadline = (
+            time.monotonic() + min(max(0.0, timeout), self.event_output.close_timeout_s)
+            if self.event_output is not None
+            else None
+        )
         if thread is not None and thread.is_alive():
             # Cancel pending checkpoint admission before stop waits for the job pool to drain.
             d.inbox.put(("call", self.checkpoints.close))
+            d.inbox.put(("call", self.events.cancel_restores))
             d.inbox.put(("stop", drain, Reply()))
-            thread.join(timeout if drain else min(timeout, STOP_CANCEL_S))
+            wait = timeout if drain else min(timeout, STOP_CANCEL_S)
+            if event_deadline is not None:
+                wait = min(wait, max(0.0, event_deadline - time.monotonic()))
+            thread.join(wait)
             if thread.is_alive():
+                if event_deadline is not None:
+                    # The core must classify unresolved semantic appends, not squash as absent.
+                    d.inbox.put(("call", d.expire_event_commits))
                 d.inbox.put(("stop", False, Reply()))
                 thread.join(min(timeout, STOP_CANCEL_S))
             if thread.is_alive():
                 d.abandon(TimeoutError("the dispatcher did not stop in time"))
 
         self.checkpoints.close()
+        self.event_shutdown = self.events.close(
+            timeout=None if event_deadline is None else max(0.0, event_deadline - time.monotonic())
+        )
         self.plugins.notify("on_machine_stop")
         self.bus.emit("machine.stop")
         self.plugins.unload_all()

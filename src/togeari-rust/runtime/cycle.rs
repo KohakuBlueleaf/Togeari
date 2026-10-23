@@ -640,7 +640,13 @@ impl Core {
             .getattr("checkpoints")?
             .getattr("pending_resumes")?
             .is_truthy()?;
+        let pending_events = self
+            .event_manager(py)?
+            .getattr("pending_restores")?
+            .is_truthy()?;
         let settled = self.jobs.borrow().is_empty()
+            && self.event_admissions.borrow().is_empty()
+            && !pending_events
             && !pending_resumes
             && !shell.getattr(intern!(py, "sink_pending"))?.is_truthy()?;
         let idle = settled && shell.getattr(intern!(py, "source_buf"))?.is_none();

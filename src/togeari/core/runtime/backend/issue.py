@@ -5,6 +5,8 @@ import time
 from collections import deque
 from typing import Any
 
+from kohakunode.events import Event
+
 from togeari.core.contracts.digest import digest, digest_with_weak
 from togeari.core.contracts.io import MISS, copy_value
 from togeari.core.contracts.results import ItemError, Ok
@@ -70,8 +72,13 @@ class IssueStage:
         speculative = (open_key is not None and open_key < inf.key) or (
             live_key is not None and live_key < inf.key
         )
-        if ins.ordered and speculative:
-            return Gate.WAIT
+        if ins.ordered:
+            if speculative:
+                return Gate.WAIT
+            # DONE means computed, not durably committed. A prepared emit stays
+            # an ordered-effect barrier until the pre-pop journal gate retires it.
+            if any(prior.key < inf.key and prior.instr.semantic_emit for prior in job.window):
+                return Gate.WAIT
         if ins.mutates:
             match self.knobs["mutates"]:
                 case "copy-always":
@@ -92,7 +99,7 @@ class IssueStage:
             if inf.state != InfState.READY:
                 continue
             job = inf.job
-            if job.paused:
+            if job.paused or job.event_cancel is not None:
                 job.held.append(inf)
                 continue
             try:
@@ -188,6 +195,26 @@ class IssueStage:
         ins = inf.instr
         b = ins.binding
         inf.t_issue = time.perf_counter()
+
+        if ins.semantic_emit:
+            # Snapshot/validate before allocating an execution attempt. Only the
+            # retirement gate may commit this event; issue never publishes it.
+            try:
+                captured = Event.capture(inf.values["topic"], inf.values["payload"])
+                inf.event = self.m.events.prepare(
+                    inf.job.job_execution_id,
+                    inf.job.event_state["next_sequence"],
+                    inf.invocation_id,
+                    captured,
+                    ins.origin_dict(),
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.fault(inf, exc, catchable=True)
+                return
+            inf._begin_attempt()
+            inf.job.issue(inf)
+            self.complete(inf, Ok(None, True), None)
+            return
 
         # Inline: run on the dispatcher now
         if b.inline:

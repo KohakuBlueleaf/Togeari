@@ -375,6 +375,8 @@ class Inflight:
         "invocation_id",
         "attempt_ids",
         "resolution",
+        "event",
+        "event_commit",
     )
 
     def __init__(self, job, instr, key):
@@ -417,6 +419,8 @@ class Inflight:
         self.invocation_id: str | None = None
         self.attempt_ids: list[str] = []
         self.resolution = "not_submitted"
+        self.event = None
+        self.event_commit = None
 
     def _identity_fields(self) -> tuple[str, str | None, str | None]:
         """Stable transport metadata, independent of recording and input digests."""
@@ -535,6 +539,8 @@ class Job:
         "collectors",
         "cut",
         "checkpoint_watermark",
+        "event_state",
+        "event_cancel",
     )
 
     def __init__(self, key: str, entry, inputs: dict):
@@ -606,6 +612,8 @@ class Job:
         self.collectors: dict[tuple, Collector] = {}
         self.cut = None
         self.checkpoint_watermark: tuple | None = None
+        self.event_state: dict | None = None
+        self.event_cancel: str | None = None
 
     # ------------------------------------------------------------ strands
     def add_strand(self, st: Strand) -> None:

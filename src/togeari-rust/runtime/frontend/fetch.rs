@@ -199,7 +199,9 @@ impl Core {
     }
 
     pub fn blocked_by_caps(&self, job: &JobRef, st: &StrandRef, caps: &Caps) -> bool {
-        if self.checkpoint_blocks(job, &st.borrow().next_key()) {
+        if job.borrow().event_cancel.is_some()
+            || self.checkpoint_blocks(job, &st.borrow().next_key())
+        {
             return true;
         }
         {

@@ -19,6 +19,7 @@ from typing import Any
 
 from kohakunode import Interpreter, KirRuntimeError, NodeFailure
 
+from togeari.conformance.events import compare_events
 from togeari.core.contracts.digest import digest
 from togeari.core.contracts.io import copy_value
 
@@ -35,6 +36,7 @@ class Verdict:
     reference: Any = None
     machine: Any = None
     details: list = field(default_factory=list)
+    event_status: str = "not_applicable"
 
 
 _error_types: dict[str, type] = {}
@@ -170,6 +172,8 @@ def replay(
     pure: Callable[[str], bool] | Collection[str] | None = None,
     engine_errors: bool = True,
     step_budget: int = STEP_BUDGET,
+    *,
+    _events: list | None = None,
 ) -> tuple[str, Any, list[str]]:
     """Run the reference over one job's record.
 
@@ -189,7 +193,17 @@ def replay(
             raise ValueError(f"mode must be one of {MODES}, not {mode!r}")
     hook = _Hook(record, mode == "reexecute", pure_test(pure), engine_errors)
 
-    interp = Interpreter(job_program.written, job_program.env, hook=hook, step_budget=step_budget)
+    def capture(event):
+        if _events is not None:
+            _events.append((event, hook.pos - 1))
+
+    interp = Interpreter(
+        job_program.written,
+        job_program.env,
+        hook=hook,
+        step_budget=step_budget,
+        events=capture,
+    )
     try:
         if job_program.entry is None:
             interp.run()
@@ -222,27 +236,47 @@ def conform(
     rec = job_record.record
     if rec is None:
         return Verdict(False, "job was not recorded")
-    status, ref, notes = replay(job_program, rec, inputs, mode, pure, engine_errors, step_budget)
+    captured = []
+    status, ref, notes = replay(
+        job_program,
+        rec,
+        inputs,
+        mode,
+        pure,
+        engine_errors,
+        step_budget,
+        _events=captured,
+    )
+    event_status, event_reason = compare_events(job_program, job_record, captured)
+    if status == "mismatch" and event_status == "verified":
+        event_status = "unverified"
+        event_reason = (
+            "semantic events unverified: reference replay stopped before completing the trace"
+        )
+    if event_reason:
+        notes.append(event_reason)
+    if status != "mismatch" and event_status in ("mismatch", "unverified"):
+        return Verdict(False, event_reason, details=notes, event_status=event_status)
 
     # A replay mismatch, or both sides failing
     match status:
         case "mismatch":
-            return Verdict(False, ref, details=notes)
+            return Verdict(False, ref, details=notes, event_status=event_status)
         case "error":
             if job_record.ok:
                 reason = "reference failed, machine succeeded"
-                return Verdict(False, reason, ref, job_record.outputs, notes)
+                return Verdict(False, reason, ref, job_record.outputs, notes, event_status)
             mine = job_record.failure or {}
             if mine.get("kind") != ref["kind"] or (
                 ref["kind"] != "KirRuntimeError" and mine.get("node") != ref["node"]
             ):
-                return Verdict(False, "failures differ", ref, mine, notes)
-            return Verdict(True, "both failed alike", ref, mine, notes)
+                return Verdict(False, "failures differ", ref, mine, notes, event_status)
+            return Verdict(True, "both failed alike", ref, mine, notes, event_status)
 
     # The reference succeeded: the machine must have, with the same outputs
     if not job_record.ok:
         reason = "machine failed, reference succeeded"
-        return Verdict(False, reason, ref, job_record.failure, notes)
+        return Verdict(False, reason, ref, job_record.failure, notes, event_status)
     if digest(ref) != digest(job_record.outputs):
-        return Verdict(False, "outputs differ", ref, job_record.outputs, notes)
-    return Verdict(True, "", ref, job_record.outputs, notes)
+        return Verdict(False, "outputs differ", ref, job_record.outputs, notes, event_status)
+    return Verdict(True, "", ref, job_record.outputs, notes, event_status)

@@ -33,8 +33,19 @@ class RetireStage:
                     self.fault(x, RuntimeFault("collect: yielded value is not defined"), False)
             if x.fault is not None:
                 self.take_fault(job, x)
+                if (
+                    not job.ended
+                    and job.event_cancel is not None
+                    and not self.m.events.pending(job.job_execution_id)
+                ):
+                    message, job.event_cancel = job.event_cancel, None
+                    job.stats["retired"] += retired
+                    self.cancel_job(job, message)
+                    return
                 bound = job.oldest_live_key()
                 continue
+            if x.instr.semantic_emit and not self.event_before_retire(job, x):
+                break
             w.pop_first()
             x.state = InfState.RETIRED
             job.checkpoint_watermark = x.key
@@ -46,6 +57,11 @@ class RetireStage:
             # The retired statement lets go of its values, work item, view and slots
             x.values = x.result = x.snapshot = x.kept = x.mutated = x.versions = x.item = None
             x.inputs = x.outs = ()
+            if job.event_cancel is not None and not self.m.events.pending(job.job_execution_id):
+                message, job.event_cancel = job.event_cancel, None
+                job.stats["retired"] += retired
+                self.cancel_job(job, message)
+                return
         job.oldest_open_key()
         job.stats["retired"] += retired
         if job.ended:
@@ -58,7 +74,13 @@ class RetireStage:
             self.take_snapshot(job)
 
         # Statements blocked on older work may go now; strands at a cap may fetch again
-        blocked = self.blocked.pop(job.id, None)
+        event_blocked = any(
+            x.instr.semantic_emit
+            and x.event_commit is not None
+            and x.event_commit["status"] in ("full", "pending")
+            for x in w
+        )
+        blocked = self.blocked.pop(job.id, None) if not event_blocked else None
         if blocked:
             for inf in blocked:
                 if inf.state == InfState.READY:
@@ -69,6 +91,24 @@ class RetireStage:
             self.progress_checkpoint(job)
         if not w and not job.strands:
             self.finish(job)
+
+    def event_before_retire(self, job: Job, inf: Inflight) -> bool:
+        """Journal ACK is the semantic commitment boundary, before removing the call."""
+        token = inf.event_commit
+        if token is None or token["status"] == "full":
+
+            def wake():
+                if job.id in self.jobs and not job.ended:
+                    self.dirty[job.id] = None
+
+            token = self.m.events.commit(inf.event, wake)
+            inf.event_commit = token
+        if token["status"] == "committed":
+            return True
+        if token["status"] == "failed":
+            self.fault(inf, RuntimeError(token.get("error", "event journal rejected append")), True)
+            self.dirty[job.id] = None
+        return False
 
     def retire_one(self, job: Job, x: Inflight) -> None:
         ins = x.instr
@@ -102,6 +142,17 @@ class RetireStage:
                 )
             x.collector = None
             return
+        if ins.semantic_emit:
+            event = x.event
+            cursor = job.event_state
+            cursor["next_sequence"] = event.sequence + 1
+            cursor["committed_watermark"] = event.sequence
+            job.stats.setdefault("committed_events", {"version": 1, "events": []})["events"].append(
+                event.to_dict()
+            )
+            job.stats["event_state"] = dict(cursor)
+            self.m.events.retired(event)
+            x.event = x.event_commit = None
         if self.knobs["assert_alias"]:
             self.alias_check(job, x)
         if job.record is not None and ins.op == Op.CALL:

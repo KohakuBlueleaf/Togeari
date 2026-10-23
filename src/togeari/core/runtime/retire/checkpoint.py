@@ -264,6 +264,8 @@ class CheckpointStage:
             "steps": job.steps,
             "record": job.record,
         }
+        if job.event_state is not None:
+            state["event_state"] = job.event_state
         cut.phase = "cutting"
         try:
             manifest = execution_for_job(job, self.code, self.m)

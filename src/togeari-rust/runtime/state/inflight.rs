@@ -94,6 +94,8 @@ pub struct Inflight {
     pub result: Option<Obj>,
     pub kept: Option<Obj>,
     pub mutated: Option<Obj>,
+    pub event: Option<Obj>,
+    pub event_commit: Option<Obj>,
 
     // Timing, store and squash reuse
     pub t_issue: f64,
@@ -134,6 +136,8 @@ impl Inflight {
             result: None,
             kept: None,
             mutated: None,
+            event: None,
+            event_commit: None,
             t_issue: 0.0,
             t_done: 0.0,
             store_key: None,
@@ -154,6 +158,8 @@ impl Inflight {
         self.snapshot = None;
         self.kept = None;
         self.mutated = None;
+        self.event = None;
+        self.event_commit = None;
         self.versions = None;
         self.item = None;
         self.inputs = Vec::new();

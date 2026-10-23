@@ -236,6 +236,7 @@ fn instr(code: &mut Code, ins: &Bound<'_, PyAny>) -> PyResult<Instr> {
         body_may_write: NameSet::default(),
         body_writes: None,
         carried: NameSet::default(),
+        semantic_emit: g("semantic_emit")?.extract()?,
     })
 }
 

@@ -17,7 +17,7 @@ use crate::runtime::state::{Entry, InfState, Job, JobRef, NameMap, Param, Slot, 
 
 enum SnapshotAdmission {
     New,
-    Resumed,
+    Prepared(Py<PyDict>, Py<PyDict>),
     Reject(Py<PyDict>),
 }
 
@@ -100,7 +100,10 @@ impl Core {
         Ok(entry)
     }
 
-    fn outputs_list<'py>(py: Python<'py>, entry: &Entry) -> PyResult<Bound<'py, PyList>> {
+    pub(crate) fn outputs_list<'py>(
+        py: Python<'py>,
+        entry: &Entry,
+    ) -> PyResult<Bound<'py, PyList>> {
         let l = PyList::empty(py);
         for (o, _) in entry.outputs.iter().flatten() {
             l.append(o.bind(py))?;
@@ -365,17 +368,55 @@ impl Core {
                 .warn_unverified
                 .bind(py)
                 .call((self.h.machine.bind(py), &decision), Some(&kwargs))?;
+            if state.get_item("event_state")?.is_some_and(|v| !v.is_none()) {
+                return self.stage_event_admission(py, &job, &item, &inputs, &state, &decision);
+            }
             self.apply_prepared_snapshot(py, &job, &state, &decision)?;
             true
         } else {
             match self.resume_snapshot(py, &job)? {
                 SnapshotAdmission::New => false,
-                SnapshotAdmission::Resumed => true,
+                SnapshotAdmission::Prepared(state, decision) => {
+                    if state
+                        .bind(py)
+                        .get_item("event_state")?
+                        .is_some_and(|v| !v.is_none())
+                    {
+                        return self.stage_event_admission(
+                            py,
+                            &job,
+                            &item,
+                            &inputs,
+                            state.bind(py),
+                            decision.bind(py),
+                        );
+                    }
+                    self.apply_prepared_snapshot(py, &job, state.bind(py), decision.bind(py))?;
+                    true
+                }
                 SnapshotAdmission::Reject(decision) => {
                     return self.reject_snapshot(py, &item, decision.bind(py), handle, &name_s);
                 }
             }
         };
+
+        self.finish_event_admission(py, &job, &inputs, restored)
+    }
+
+    pub(crate) fn finish_event_admission(
+        &self,
+        py: Python<'_>,
+        job: &JobRef,
+        inputs: &Bound<'_, PyAny>,
+        restored: bool,
+    ) -> PyResult<()> {
+        let (id, key, entry, sampled) = {
+            let j = job.borrow();
+            (j.id, j.key.clone_ref(py), j.entry.clone(), j.sampled)
+        };
+        let key = key.bind(py);
+        let name = entry.py_name.clone_ref(py);
+        self.ensure_event_state(py, job)?;
 
         // Region identity is local to this machine, never inherited from a snapshot.
         let region_index = entry
@@ -425,7 +466,7 @@ impl Core {
             self.pool_bytes.set(self.pool_bytes.get() + j.bytes);
         }
         self.jobs.borrow_mut().insert(id, job.clone());
-        self.keys.bind(py).add(&key)?;
+        self.keys.bind(py).add(key)?;
         self.mark_dirty(id);
         *self.last_started.borrow_mut() = Some(job.clone());
         self.h
@@ -435,14 +476,14 @@ impl Core {
         if self.wants(py, "job.admit", Some(id))? {
             let f = PyDict::new(py);
             f.set_item("job", id)?;
-            f.set_item("key", &key)?;
+            f.set_item("key", key)?;
             f.set_item("entry", name.bind(py))?;
             self.emit(py, "job.admit", &f)?;
         }
         let info = PyDict::new(py);
-        info.set_item("key", &key)?;
+        info.set_item("key", key)?;
         info.set_item("entry", name.bind(py))?;
-        info.set_item("inputs", &inputs)?;
+        info.set_item("inputs", inputs)?;
         info.set_item("recorded", job.borrow().record.is_some())?;
         let kw = PyDict::new(py);
         kw.set_item("where", Core::where_entry(py, entry.py_name.bind(py))?)?;
@@ -552,8 +593,7 @@ impl Core {
             .warn_unverified
             .bind(py)
             .call((self.h.machine.bind(py), &decision), Some(&kwargs))?;
-        self.apply_prepared_snapshot(py, job, &state, &decision)?;
-        Ok(SnapshotAdmission::Resumed)
+        Ok(SnapshotAdmission::Prepared(state.unbind(), decision.unbind()))
     }
 
     fn reject_snapshot(
@@ -814,6 +854,18 @@ impl Core {
     }
 
     pub fn cancel_job(&self, py: Python<'_>, job: &JobRef, message: &str) -> PyResult<()> {
+        let inflights: Vec<_> = job.borrow().window.live().to_vec();
+        for inf in inflights {
+            let token = inf.borrow().event_commit.as_ref().map(|t| t.clone_ref(py));
+            if let Some(token) = token {
+                let status: String = token.bind(py).get_item("status")?.extract()?;
+                if status == "pending" || status == "committed" {
+                    job.borrow_mut().event_cancel = Some(message.to_string());
+                    self.mark_dirty(job.borrow().id);
+                    return Ok(());
+                }
+            }
+        }
         let failure = PyDict::new(py);
         failure.set_item("kind", "Cancelled")?;
         failure.set_item("node", py.None())?;

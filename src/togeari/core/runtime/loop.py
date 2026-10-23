@@ -170,7 +170,7 @@ class LoopStage:
         dirty, self.dirty = self.dirty, {}
         for jid in dirty:
             job = self.jobs.get(jid)
-            if job is not None and not job.ended and not job.paused:
+            if job is not None and not job.ended and not job.paused and job.event_cancel is None:
                 try:
                     self.front.advance(job)
                     if job.cut is not None:
@@ -240,6 +240,9 @@ class LoopStage:
         """Run done, stop done, idle flag."""
         manager = getattr(self.m, "checkpoints", None)
         pending_resumes = manager.pending_resumes if manager is not None else 0
+        events = getattr(self.m, "events", None)
+        if events is not None:
+            pending_resumes += events.pending_restores
         settled = not self.jobs and not self.sink_pending and not pending_resumes
         idle = settled and self.source_buf is None
         if self.run is not None and (idle or (self.stopping and settled)):

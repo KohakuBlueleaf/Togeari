@@ -223,7 +223,21 @@ def q_waits(m: Any, job: int | None = None, limit: int = 256) -> dict:
     return waits(m, job=job, limit=limit)
 
 
+def q_event_output(m: Any, job_execution_id: str | None = None) -> dict:
+    """Cached semantic-output state only; never poll a sink or journal here."""
+    manager = getattr(m, "events", None)
+    if manager is None:
+        return {"enabled": False, "configuration": None, "status": None}
+    configuration = copy.deepcopy(manager.configuration())
+    return {
+        "enabled": configuration["enabled"],
+        "configuration": configuration,
+        "status": copy.deepcopy(manager.status(job_execution_id)),
+    }
+
+
 QUERIES = {
+    "event_output": q_event_output,
     "waits": q_waits,
     "checkpoints": q_checkpoints,
     "jobs": q_jobs,

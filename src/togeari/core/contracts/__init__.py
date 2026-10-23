@@ -17,6 +17,7 @@ from togeari.core.contracts.engine import (
     StreamEngine,
     Work,
 )
+from togeari.core.contracts.events import CommittedEvent, EventJournal, EventOutput, EventSink
 from togeari.core.contracts.execution import ExecutionPolicy
 from togeari.core.contracts.io import MISS, JobRecord, Sink, Source, SourceItem, Store
 from togeari.core.contracts.policies import Admission, Former, Issue, Selector
@@ -41,9 +42,13 @@ __all__ = [
     "Blocked",
     "CallEngine",
     "Cancelled",
+    "CommittedEvent",
     "Done",
     "Engine",
     "EngineBase",
+    "EventJournal",
+    "EventOutput",
+    "EventSink",
     "ExecutionPolicy",
     "Former",
     "Issue",

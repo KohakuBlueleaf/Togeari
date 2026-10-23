@@ -158,7 +158,7 @@ impl Core {
                 if state != InfState::Done || pass.bound.as_ref().is_some_and(|b| key >= *b) {
                     break;
                 }
-                if faulted || self.retire_needs_gil(job, &x, caps) {
+                if faulted || x.borrow().ins.semantic_emit || self.retire_needs_gil(job, &x, caps) {
                     let Some(py) = py else {
                         self.count_region(|r| r.gil_retires += 1);
                         return Ok(need);
@@ -194,11 +194,20 @@ impl Core {
                         continue;
                     }
                 }
+                let semantic_emit = x.borrow().ins.semantic_emit;
+                if semantic_emit
+                    && !self.event_before_retire(py.expect("emit retire holds GIL"), job, &x)?
+                {
+                    break;
+                }
                 job.borrow_mut().window.pop_first();
                 x.borrow_mut().state = InfState::Retired;
                 job.borrow_mut().checkpoint_watermark = Some(x.borrow().key.clone());
                 pass.retired += 1;
                 self.retire_one(py, job, &x, caps)?;
+                if semantic_emit {
+                    self.event_retired(py.expect("emit retire holds GIL"), job, &x)?;
+                }
                 if x.borrow().versions.is_some() {
                     fold_versions(&x);
                 }
@@ -206,6 +215,15 @@ impl Core {
                 // The retired statement lets go of its values, work item, view and slots
                 self.disown(&x, "retired");
                 x.borrow_mut().release();
+                let cancel = job.borrow_mut().event_cancel.take();
+                if let Some(reason) = cancel {
+                    self.cancel_job(
+                        py.expect("deferred event cancellation holds GIL"),
+                        job,
+                        &reason,
+                    )?;
+                    break;
+                }
             }
             {
                 let mut j = job.borrow_mut();
@@ -235,7 +253,15 @@ impl Core {
         // Statements blocked on older work may go now; strands at a cap may fetch again
         if pass.stage == Stage::Wake {
             let jid = job.borrow().id;
-            let blocked = self.blocked.borrow_mut().remove(&jid);
+            let pending_emit = job.borrow().window.live().iter().any(|inf| {
+                let inf = inf.borrow();
+                inf.ins.semantic_emit && inf.state == InfState::Done && inf.fault.is_none()
+            });
+            let blocked = if pending_emit {
+                None
+            } else {
+                self.blocked.borrow_mut().remove(&jid)
+            };
             for inf in blocked.into_iter().flatten() {
                 if inf.borrow().state == InfState::Ready {
                     self.ready.borrow_mut().push(inf);

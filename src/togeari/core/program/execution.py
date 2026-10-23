@@ -19,6 +19,7 @@ from kohakunode.sig.records import thaw_default
 
 from togeari.core.construct.errors import ConstructionError, Problem
 from togeari.core.contracts.adapter import PythonAdapter
+from togeari.core.contracts.events import EventOutput
 from togeari.core.contracts.reuse import builtin_revision
 from togeari.core.lanes.lane import Lane
 from togeari.core.policies.resources import resource_former, resource_policy
@@ -310,6 +311,7 @@ def _static_execution(region: Any, code: Any) -> dict:
                 group["positions"].append(ins.addr - region.start)
         region.execution_static = {
             "instructions": instructions,
+            "emits": tuple(ins for ins in instructions if ins.semantic_emit),
             "lanes": lanes,
             "unknown": unknown,
             "program": {
@@ -466,6 +468,22 @@ def _render_execution(region: Any, code: Any, machine: Any) -> dict:
             )
         },
     }
+    if static["emits"]:
+        output = getattr(machine, "event_output", None)
+        if type(output) is EventOutput:
+            identity["runtime_policy"]["event_output"] = output.descriptor()
+            if output.sink_revision is None and not all(
+                ins.binding.binding_revision for ins in static["emits"]
+            ):
+                _unknown(
+                    unknown,
+                    "runtime_policy.event_output.sink_revision",
+                    "event sink implementation revision unknown",
+                )
+        else:
+            identity["runtime_policy"]["event_output"] = _unknown(
+                unknown, "runtime_policy.event_output", "semantic emission has no EventOutput"
+            )
     # A fresh job is not a mixed-history job, even after a known policy change.
     transitions = []
     manifest = {"schema": SCHEMA, "version": VERSION, "identity": identity}
@@ -516,7 +534,14 @@ def observe_execution(region: Any, code: Any, machine: Any) -> dict:
             "resource_policy": canonical_bytes(resource_policy(lane.former)),
             "estimator": id(estimate),
         }
-    samples["runtime_policy"] = _number(machine.knobs.get("step_budget"), [], "step_budget")
+    samples["runtime_policy"] = [
+        _number(machine.knobs.get("step_budget"), [], "step_budget"),
+        (
+            getattr(machine, "event_output", None)._descriptor
+            if static["emits"] and type(getattr(machine, "event_output", None)) is EventOutput
+            else None
+        ),
+    ]
     previous = machine._execution_observed.get(region.index)
     epoch = machine._execution_epochs.setdefault(region.index, 0)
     coverage = tuple(

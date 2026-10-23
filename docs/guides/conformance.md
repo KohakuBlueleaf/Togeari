@@ -61,7 +61,7 @@ for rec in sorted(sink.records, key=lambda r: r.key):
 ```
 
 `conform(job_program, job_record, inputs, mode="replay", pure=None, engine_errors=True)`
-returns a `Verdict(ok, reason, reference, machine, details)`:
+returns a `Verdict(ok, reason, reference, machine, details, event_status)`:
 
 | Mode | Each node call of the reference |
 |---|---|
@@ -73,6 +73,24 @@ run gives, and that the outputs follow from the results. Re-execution also catch
 delivered to the wrong statement or job. Re-execute only nodes without side effects. Under
 re-execution, `engine_errors=True` accepts a recorded failure the node itself does not raise
 (an engine-side failure) and notes it in `details`; `False` makes it a mismatch.
+
+## Semantic event conformance
+
+Authentic standard `emit` calls retain ordinary five-field call records. Their
+committed output is checked separately from
+`stats.committed_events = {"version": 1, "events": [...]}`. Replay regenerates
+reference events from the recorded outcomes; it never opens a journal or invokes
+a consumer. Sequence/topic/type-sensitive portable payload and invocation/job
+association must match. Delivery retries are diagnostics, not extra semantic events;
+origins are explanatory rather than part of semantic event equality.
+
+`Verdict.event_status` is `verified`, `mismatch`, `unverified`, or `not_applicable`.
+A legacy emitting trace without a sidecar is **unverified with `ok=False`**, not a
+verified empty event sequence. Nonemitting legacy replay is unchanged. The CLI
+prints an extra event-status summary when any trace is unverified or mismatched.
+Earlier committed events are checked even when a later call fails. Matching
+semantic events does not establish consumer acknowledgment or exactly-once external
+effects. See [Committed events](committed-events.md).
 
 ## Checking a run afterwards
 

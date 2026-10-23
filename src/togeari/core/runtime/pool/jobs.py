@@ -133,8 +133,9 @@ class JobsStage:
         # Resume from a snapshot of an earlier run of this job
         snap = self.snapshot_key(job) if self.knobs["snapshot_every"] else None
         restored = False
+        restore_state = restore_decision = None
         if checkpoint is not None:
-            snapshot.apply_prepared(job, checkpoint["state"], checkpoint["decision"])
+            restore_state, restore_decision = checkpoint["state"], checkpoint["decision"]
             warn_unverified(self.m, checkpoint["decision"], execution_hash=job.execution_hash)
             job.stats["execution"] = pinned_execution
             job.stats["execution_epoch"] = observation["epoch"]
@@ -164,7 +165,7 @@ class JobsStage:
                 )
                 decision = prepared["decision"]
                 if decision["allow"]:
-                    snapshot.apply_prepared(job, prepared["state"], decision)
+                    restore_state, restore_decision = prepared["state"], decision
                     warn_unverified(
                         self.m, decision, execution_hash=observation["manifest"]["hash"]
                     )
@@ -184,6 +185,95 @@ class JobsStage:
             job.stats["execution"] = pinned_execution
             job.stats["execution_epoch"] = observation["epoch"]
 
+        requires_events = self.m.event_output is not None and any(
+            ins.semantic_emit for ins in self.code.calls(entry.region)
+        )
+        if restored and restore_state.get("event_state") is not None:
+            # Reserve the key while journal frontier I/O is off-dispatcher. Do not
+            # re-run pre_admit, apply saved state, or notify/start nodes yet.
+            self.keys.add(job.key)
+
+            def finish_frontier(frontier_decision):
+                self.keys.discard(job.key)
+                if self.stopping:
+                    self.reject(item, "Cancelled", "machine stopped during event restore", handle)
+                    return
+                if not frontier_decision["allow"]:
+                    self.reject(
+                        item,
+                        "EventJournalIncompatible",
+                        "; ".join(issue["message"] for issue in frontier_decision["issues"]),
+                        handle,
+                        name,
+                        stats={"event_restore": frontier_decision},
+                    )
+                    return
+                current = observe_execution(entry.region, self.code, self.m)
+                if (
+                    current["epoch"] != observation["epoch"]
+                    or current["manifest"]["hash"] != job.execution_hash
+                ):
+                    self.reject(
+                        item,
+                        "SnapshotIncompatible",
+                        "execution changed during event frontier validation",
+                        handle,
+                        name,
+                    )
+                    return
+                snapshot.apply_prepared(job, restore_state, restore_decision)
+                self._finish_start_job(
+                    job, item, handle, params, True, pinned_execution, observation["epoch"]
+                )
+
+            def checked_frontier(frontier_decision):
+                try:
+                    finish_frontier(frontier_decision)
+                except Exception as exc:  # noqa: BLE001
+                    # Async callbacks bypass the normal start_job exception guard.
+                    # Never leave an unanswered handle or a reserved/half-admitted job.
+                    self.keys.discard(job.key)
+                    if job.id in self.jobs:
+                        self.job_error(job, exc)
+                    else:
+                        job.freed = None
+                        for strand in list(job.strands.values()):
+                            job.end_strand(strand)
+                        self.stats["machine_errors"] += 1
+                        self.reject(
+                            item, "MachineError", f"{type(exc).__name__}: {exc}", handle, name
+                        )
+
+            if self.m.events is None:
+                self.keys.discard(job.key)
+                self.reject(
+                    item, "EventJournalIncompatible", "event output is unavailable", handle, name
+                )
+                return
+            self.m.events.check_frontier(
+                restore_state["job_execution_id"], restore_state["event_state"], checked_frontier
+            )
+            return
+        if restored:
+            snapshot.apply_prepared(job, restore_state, restore_decision)
+        elif requires_events:
+            job.event_state = {
+                "version": 1,
+                "next_sequence": 0,
+                "committed_watermark": -1,
+                "journal_identity": copy.deepcopy(self.m.event_output.descriptor()["journal"]),
+            }
+            job.stats["committed_events"] = {"version": 1, "events": []}
+        self._finish_start_job(
+            job, item, handle, params, restored, pinned_execution, observation["epoch"]
+        )
+
+    def _finish_start_job(self, job, item, handle, params, restored, pinned_execution, epoch):
+        """Install a checked admission after optional asynchronous frontier validation."""
+        entry = job.entry
+        name = entry.name
+        job.stats["execution"] = pinned_execution
+        job.stats["execution_epoch"] = epoch
         # Region identity is local to this machine, never inherited from a snapshot.
         job.stats["program_region"] = entry.region.index
 
@@ -271,6 +361,8 @@ class JobsStage:
         stats["seconds"] = time.perf_counter() - job.start_time
         stats["steps"] = job.steps
         stats["bytes"] = job.bytes
+        if job.event_state is not None:
+            stats["event_output"] = self.m.events.status(job.job_execution_id)
         rec = JobRecord(
             job.key, job.entry.name, ok, outputs, job.failure, missing, stats, record=job.record
         )
@@ -316,7 +408,43 @@ class JobsStage:
         }
         self.end_job(job, {}, list(job.entry.outputs or []))
 
+    def expire_event_commits(self) -> list[dict]:
+        """Bounded shutdown escape: unresolved append is unknown, never asserted absent."""
+        unknown = self.m.events.force_unknown()
+        affected = {entry["job_execution_id"] for entry in unknown}
+        for job in list(self.jobs.values()):
+            if job.job_execution_id in affected:
+                job.event_cancel = None
+                job.failure = {
+                    "kind": "EventCommitUnknown",
+                    "node": None,
+                    "message": "event journal append did not acknowledge before shutdown deadline",
+                }
+                job.stats["event_commit_unknown"] = [
+                    entry["event_id"]
+                    for entry in unknown
+                    if entry["job_execution_id"] == job.job_execution_id
+                ]
+                self.end_job(job, {}, list(job.entry.outputs or []))
+            elif job.event_cancel is not None or any(
+                inf.instr.semantic_emit and inf.event_commit is not None for inf in job.window
+            ):
+                message, job.event_cancel = job.event_cancel or "machine event output stopped", None
+                self.cancel_job(job, message)
+        return unknown
+
     def cancel_job(self, job: Job, message: str) -> None:
+        # An append may already be durable while its ACK is in flight. Finish
+        # retiring that exact head before terminal cancellation, never squash it.
+        if any(
+            inf.instr.semantic_emit
+            and inf.event_commit is not None
+            and inf.event_commit["status"] in ("pending", "committed")
+            for inf in job.window
+        ):
+            job.event_cancel = message
+            self.dirty[job.id] = None
+            return
         job.failure = {"kind": "Cancelled", "node": None, "message": message}
         self.end_job(job, {}, list(job.entry.outputs or []))
 

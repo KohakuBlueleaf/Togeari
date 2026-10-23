@@ -99,6 +99,7 @@ def machine_spec(ctx: PluginContext) -> dict:
             "contributed": built["contributed_policies"],
         },
         "store": describe(built["store"]),
+        "event_output": ctx.query_now("event_output"),
         "plugins": ctx.query_now("plugins"),
         "knobs": ctx.query_now("knobs"),
         "warnings": [str(w) for w in built["warnings"]],

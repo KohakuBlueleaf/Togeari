@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from kohakunode.sig.env import Resolved
-from kohakunode.sig.std import INTERNAL
+from kohakunode.sig.std import INTERNAL, is_standard_emit
 
 from togeari.core.construct.errors import Problems
 from togeari.core.contracts.execution import ExecutionPolicy
@@ -207,6 +207,8 @@ def bind_region(
     problems: Problems,
     used: set[str],
     defaults: Defaults,
+    *,
+    event_output: Any = None,
 ) -> None:
     """Resolve every call of a region; collect every problem."""
     patterns = list(bind)
@@ -217,6 +219,42 @@ def bind_region(
             continue
         resolved = region.job.env.resolve(ins.node)
         where = str(ins.span) if ins.span else src
+        implementation = region.job.env.impl(ins.node)
+        ins.semantic_emit = isinstance(resolved, Resolved) and is_standard_emit(
+            resolved.library, resolved.signature, implementation
+        )
+        if ins.semantic_emit:
+            if event_output is None:
+                problems.add(
+                    where, "standard emit requires Machine(event_output=EventOutput(sink, journal))"
+                )
+            pat, ties = match(patterns, names_of(ins, region))
+            if len(ties) > 1:
+                problems.add("bind", f"node {ins.node!r} matches multiple bindings equally")
+                continue
+            if pat is not None:
+                used.add(pat)
+            _warn_inline_timeout(ins.hint, problems, where)
+            declaration = bind[pat] if pat is not None else None
+            ins.binding = Bound(
+                pat or ins.node,
+                True,
+                fn=implementation,
+                deterministic=False,
+                implementation_revision=_revision(
+                    getattr(declaration, "implementation_revision", None),
+                    "implementation_revision",
+                    problems,
+                    where,
+                ),
+                binding_revision=_revision(
+                    getattr(declaration, "binding_revision", None),
+                    "binding_revision",
+                    problems,
+                    where,
+                ),
+            )
+            continue
         if (
             ins.node in ("kir.collect_items", "kir.collect_append")
             and isinstance(resolved, Resolved)

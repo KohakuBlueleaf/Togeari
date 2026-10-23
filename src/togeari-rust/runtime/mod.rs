@@ -2,6 +2,7 @@
 
 pub mod backend;
 pub mod builtins;
+pub mod committed;
 pub mod core;
 pub mod cycle;
 pub mod events;

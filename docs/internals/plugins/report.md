@@ -7,6 +7,21 @@ from scheduling preferences. The descriptive `calls`/lane fields are not identit
 proof; a separate versioned `execution` manifest now reports declared identity
 and explicitly records missing attestations.
 
+## Semantic event output
+
+`spec.json.event_output` contains `{enabled, configuration, status}` obtained from
+the core `event_output` query. Configuration identifies the explicit journal,
+durability flag, queue count/byte bounds and delivery contract. Status is cached
+manager metadata; generating a report does not poll a sink or journal. This is a
+report-creation snapshot, not a live acknowledgment guarantee.
+
+Archive job stats preserve `committed_events: {version: 1, events: [...]}` alongside
+the unchanged five-field call record. Semantic events are compared during
+conformance replay without consumers; retry deliveries do not add semantic rows.
+Legacy emitting records missing the sidecar are event-unverified and fail full
+conformance. Committed watermarks and terminal job success do not imply delivery
+acknowledgment. See [committed events](../../guides/committed-events.md).
+
 ## Execution manifest and source identity
 
 Each `programs[region].execution` in a freshly generated spec contains the full

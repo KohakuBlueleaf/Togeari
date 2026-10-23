@@ -88,6 +88,7 @@ class Instr:
     # static context
     each_ctx: int | None = None  # innermost `each` whose body holds this instruction
     try_id: tuple | None = None  # innermost `@try` body holding this instruction
+    semantic_emit: bool = False  # exact maintained STD emit, established at binding
 
     def origin_dict(self) -> dict | None:
         """Detached JSON provenance, also used by the native core's retained instruction."""

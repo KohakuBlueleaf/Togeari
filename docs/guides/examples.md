@@ -19,6 +19,7 @@ match. `tests/examples` runs them that way: the CPU examples always, `mixed` (12
 | `parallel` | `PythonCallEngine` (threads) | one job's independent work running at once: `parallel` arms, run-ahead past a branch, an `each` fan-out |
 | `records` | `PythonCallEngine` (threads) | typed immutable records, visible field operations, codec boundaries, replay and re-execution |
 | `collect` | `PythonCallEngine` (threads) | nested ordered collection, empty inputs, bounded iteration spawning and conformance |
+| `events` | standard inline operations plus explicit event sink/journal | ordered committed semantic output, bounded outbox, equal payloads with distinct IDs, sidecar conformance |
 | `mixed` | `WebCallEngine`, `PythonCallEngine` (processes and threads), the builtin batched device engine | three kinds of engine behind one program, `ordered` nodes, the run report and recorder, `togeari conform` |
 
 ## hello
@@ -77,6 +78,16 @@ through explicit tagged JSON. It needs no device or external service. See
 worker calls. The script checks nested result order, empty inputs, replay and re-execution.
 Run `python examples/collect/machine.py`; no device or service is needed. See
 [Ordered collection](collect.md) for semantics and the initial mutation restriction.
+
+## events
+
+`events.kir` emits one immutable semantic event per input element, including equal
+payloads from distinct invocations. The machine explicitly configures a nondurable
+memory journal and memory sink with a two-event bound, then checks event sequence,
+distinct IDs, acknowledgment and reference sidecar conformance. An empty input
+still has a verified empty event prefix. Run `python examples/events/machine.py`;
+no worker service, device or network is needed. See [Committed events](committed-events.md)
+for durable SQLite journals and at-least-once delivery limits.
 
 ## mixed
 

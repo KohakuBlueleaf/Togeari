@@ -178,6 +178,8 @@ pub struct Instr {
     pub body_may_write: NameSet,
     pub body_writes: Option<Rc<Table>>,
     pub carried: NameSet,
+    /// Authentic maintained emit, resolved by the Python binder, never by spelling.
+    pub semantic_emit: bool,
 }
 
 pub struct Region {

@@ -49,7 +49,7 @@ def _weak_text(weak: dict) -> str:
 
 
 def run(args: argparse.Namespace, out: TextIO) -> int:
-    total = passed = weak = digests = 0
+    total = passed = weak = digests = event_unverified = event_mismatch = 0
     failures: list[str] = []
     runs: dict[str, dict] = {}
 
@@ -64,6 +64,8 @@ def run(args: argparse.Namespace, out: TextIO) -> int:
     )
     for r in replayed:
         n_weak = sum(r.weak_digests.values())
+        event_unverified += r.verdict.event_status == "unverified"
+        event_mismatch += r.verdict.event_status == "mismatch"
         per = runs.setdefault(r.run, {"jobs": 0, "ok": 0, "weak": 0, "digests": 0})
         total += 1
         per["jobs"] += 1
@@ -94,4 +96,10 @@ def run(args: argparse.Namespace, out: TextIO) -> int:
         f"{passed}/{total} jobs conform; {weak} with weak values; {digests} weak digests",
         file=out,
     )
+    if event_unverified or event_mismatch:
+        print(
+            f"semantic events: {event_unverified} unverified, {event_mismatch} mismatched; "
+            "consumer delivery/acknowledgment is not replayed",
+            file=out,
+        )
     return 0 if total and passed == total else 1

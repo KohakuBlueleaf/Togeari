@@ -1,0 +1,5 @@
+@def (items: list)main(count):
+    (items)each(item, `body`)
+    body:
+        ("item", item)emit()
+    (items)len(count)

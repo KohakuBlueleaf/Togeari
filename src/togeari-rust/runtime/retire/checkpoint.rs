@@ -440,6 +440,7 @@ impl Core {
                 request.start_steps,
             )
         };
+        self.ensure_event_state(py, job)?;
         let raw = PyDict::new(py);
         raw.set_item("pc", candidate.pc)?;
         raw.set_item("prefix", prefix_to_py(py, &candidate.prefix))?;
@@ -449,6 +450,9 @@ impl Core {
         {
             let job = job.borrow();
             raw.set_item("job_execution_id", &job.job_execution_id)?;
+            if let Some(cursor) = &job.event_state {
+                raw.set_item("event_state", cursor.bind(py))?;
+            }
             raw.set_item("stats", job.stats.to_dict(py)?)?;
             raw.set_item("steps", job.steps)?;
             raw.set_item("record", job.record.as_ref().map(|r| r.bind(py)))?;

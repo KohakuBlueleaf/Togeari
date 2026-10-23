@@ -11,6 +11,7 @@ Unpickling runs code named in the data, so a store that holds snapshots must be
 one only trusted writers can change.
 """
 
+import copy
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -94,6 +95,8 @@ def capture(job: Any, code: Any = None, manifest: dict | None = None) -> bytes |
         "steps": job.steps,
         "record": job.record,
     }
+    if job.event_state is not None:
+        state["event_state"] = job.event_state
     return encode_snapshot(state, job.entry, code, manifest)
 
 
@@ -126,10 +129,12 @@ def apply_prepared(job: Any, state: dict, decision: dict) -> None:
     if record is None:
         stats.pop("record_invocations", None)
         stats.pop("record_origins", None)
+    event_state = copy.deepcopy(state.get("event_state"))
     # Nothing below consumes unvalidated types or addresses.
     for previous in list(job.strands.values()):
         job.end_strand(previous)
     job.job_execution_id = state["job_execution_id"]
+    job.event_state = event_state
     job.stats = stats
     job.record = record
     job.steps = state["steps"]

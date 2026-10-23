@@ -15,6 +15,7 @@ from togeari.core.construct.machine.running import RunStage
 from togeari.core.construct.machine.units import UnitStage, start_units_of
 from togeari.core.construct.units import stop_all
 from togeari.core.contracts.adapter import PythonAdapter
+from togeari.core.contracts.events import EventOutput
 from togeari.core.lanes.lane import Lane
 from togeari.core.observe.bus import Bus
 from togeari.core.plugin.manager import PluginManager
@@ -26,6 +27,7 @@ from togeari.core.program.code import CodeMemory
 from togeari.core.program.execution import MODES, binding_fingerprint, initial_binding_units
 from togeari.core.runtime.checkpoints import CheckpointManager
 from togeari.core.runtime.dispatcher import Dispatcher
+from togeari.core.runtime.events import EventOutboxManager
 from togeari.core.runtime.native import NativeDispatcher
 
 _NO_START = contextvars.ContextVar("togeari_no_unit_start", default=False)
@@ -70,6 +72,7 @@ class Machine(LoadStage, UnitStage, RunStage):
         seed: int = 0,
         core: str | None = None,
         persistence_compatibility: str = "warn",
+        event_output: EventOutput | None = None,
         **knobs: Any,
     ):
         problems = Problems()
@@ -84,6 +87,9 @@ class Machine(LoadStage, UnitStage, RunStage):
         self.passes = passes
         self.bind = dict(bind or {})
         self.store = store
+        self.event_output = event_output
+        if event_output is not None and not isinstance(event_output, EventOutput):
+            problems.add("event_output", "expected EventOutput or None")
         self.source_buffer = source_buffer
         self.sink_buffer = sink_buffer
         self.start_timeout_s = start_timeout_s
@@ -173,6 +179,8 @@ class Machine(LoadStage, UnitStage, RunStage):
         # Units start, all at once, every failure listed; none start in check mode
         self.dispatcher = (NativeDispatcher if self.core == "rust" else Dispatcher)(self, seed)
         self.checkpoints = CheckpointManager(self)
+        self.events = EventOutboxManager(self, event_output)
+        self.event_shutdown = None
         if start_units and not _NO_START.get():
             units = [u for lane in self.lanes for u in lane.units]
             failures = start_units_of(units, self.start_timeout_s, self._lane_of_unit)

@@ -231,6 +231,75 @@ impl Inbox {
 // ------------------------------------------------------------ the core
 #[pymethods]
 impl PyCore {
+    fn expire_event_commits(&self, py: Python<'_>) -> PyResult<Obj> {
+        let core = self.c();
+        let affected = core.event_manager(py)?.call_method0("force_unknown")?;
+        for item in affected.try_iter()? {
+            let item = item?;
+            let uid: String = item.get_item("job_execution_id")?.extract()?;
+            let jobs: Vec<_> = core
+                .jobs
+                .borrow()
+                .values()
+                .filter(|j| j.borrow().job_execution_id == uid)
+                .cloned()
+                .collect();
+            for job in jobs {
+                let entry = job.borrow().entry.clone();
+                let failure = PyDict::new(py);
+                failure.set_item("kind", "EventCommitUnknown")?;
+                failure.set_item("node", py.None())?;
+                failure.set_item(
+                    "message",
+                    "event journal append did not acknowledge before shutdown deadline",
+                )?;
+                let ids = PyList::new(py, [item.get_item("event_id")?])?;
+                {
+                    let mut job = job.borrow_mut();
+                    job.event_cancel = None;
+                    job.stats
+                        .extra
+                        .insert("event_commit_unknown".into(), ids.into_any().unbind());
+                    job.failure = Some(failure.unbind());
+                }
+                core.end_job(py, &job, PyDict::new(py), Core::outputs_list(py, &entry)?)?;
+            }
+        }
+        let remaining: Vec<_> = core.jobs.borrow().values().cloned().collect();
+        for job in remaining {
+            let cancel = {
+                let j = job.borrow();
+                j.event_cancel.is_some()
+                    || j.window.live().iter().any(|inf| {
+                        let x = inf.borrow();
+                        x.ins.semantic_emit && x.event_commit.is_some()
+                    })
+            };
+            if cancel {
+                let reason = job
+                    .borrow_mut()
+                    .event_cancel
+                    .take()
+                    .unwrap_or_else(|| "machine event output stopped".into());
+                core.cancel_job(py, &job, &reason)?;
+            }
+        }
+        Ok(affected.unbind())
+    }
+
+    fn _event_restore(
+        &self,
+        py: Python<'_>,
+        jobid: u64,
+        decision: &Bound<'_, PyDict>,
+    ) -> PyResult<()> {
+        self.c().complete_event_admission(py, jobid, decision)
+    }
+
+    fn _event_wake(&self, jobid: u64) {
+        self.c().mark_dirty(jobid);
+    }
+
     #[new]
     #[pyo3(signature = (machine, seed = 0))]
     fn new(machine: &Bound<'_, PyAny>, seed: i64) -> PyResult<Self> {

@@ -159,6 +159,7 @@ def replay_dir(
             job["outputs"],
             job["failure"],
             job["missing"],
+            stats=copy.deepcopy(job.get("stats", {})),
             record=job["record"],
         )
         verdict = conform(

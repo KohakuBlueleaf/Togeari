@@ -135,6 +135,9 @@ impl<'a> Tr<'a> {
         for x in j.stats.extra.values() {
             v.call(x)?;
         }
+        if let Some(state) = &j.event_state {
+            v.call(state)?;
+        }
         if let Some(r) = &j.record {
             v.call(r)?;
         }
@@ -249,9 +252,17 @@ impl<'a> Tr<'a> {
         if let Some(o) = &x.values {
             v.call(o)?;
         }
-        for o in [&x.result, &x.kept, &x.mutated, &x.store_key, &x.dig]
-            .into_iter()
-            .flatten()
+        for o in [
+            &x.result,
+            &x.kept,
+            &x.mutated,
+            &x.store_key,
+            &x.dig,
+            &x.event,
+            &x.event_commit,
+        ]
+        .into_iter()
+        .flatten()
         {
             v.call(o)?;
         }
@@ -387,6 +398,15 @@ impl Core {
             }
         }
         tr.visit.call(&self.keys)?;
+        if let Ok(staged) = self.event_admissions.try_borrow() {
+            for admission in staged.values() {
+                tr.push(Node::Job(admission.job.clone()));
+                tr.visit.call(&admission.item)?;
+                tr.visit.call(&admission.inputs)?;
+                tr.visit.call(&admission.state)?;
+                tr.visit.call(&admission.decision)?;
+            }
+        }
         if let Ok(j) = self.jobs.try_borrow() {
             for job in j.values() {
                 tr.push(Node::Job(job.clone()));
@@ -421,6 +441,11 @@ impl Core {
 
     /// Drop the job state, code and caches (the collector breaks a cycle through the core).
     pub fn teardown(&self) {
+        if let Ok(mut pending) = self.event_admissions.try_borrow_mut() {
+            for (_, staged) in pending.drain() {
+                Core::let_go(&staged.job);
+            }
+        }
         let jobs: Vec<JobRef> = match self.jobs.try_borrow_mut() {
             Ok(mut j) => j.drain(..).map(|(_, j)| j).collect(),
             Err(_) => return,

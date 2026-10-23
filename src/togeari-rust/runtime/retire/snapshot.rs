@@ -50,6 +50,7 @@ struct PreparedSnapshot {
     stats: JobStats,
     steps: i64,
     record: Option<Py<PyList>>,
+    event_state: Option<Py<PyDict>>,
 }
 
 impl PreparedSnapshot {
@@ -178,7 +179,13 @@ impl PreparedSnapshot {
                     .unbind(),
             );
         }
+        let event_state = state
+            .get_item("event_state")?
+            .filter(|v| !v.is_none())
+            .map(|v| v.cast_into::<PyDict>().map(|d| d.unbind()))
+            .transpose()?;
         Ok(Self {
+            event_state,
             job_execution_id,
             pc,
             prefix,
@@ -295,8 +302,12 @@ impl Core {
         state.set_item("counter", counter)?;
         state.set_item("frames", frames)?;
         state.set_item("values", values)?;
+        self.ensure_event_state(py, job)?;
         let entry = {
             let job = job.borrow();
+            if let Some(cursor) = &job.event_state {
+                state.set_item("event_state", cursor.bind(py))?;
+            }
             state.set_item("job_execution_id", &job.job_execution_id)?;
             state.set_item("stats", job.stats.to_dict(py)?)?;
             state.set_item("steps", job.steps)?;
@@ -352,6 +363,7 @@ impl Core {
         job.stats = prepared.stats;
         job.steps = prepared.steps;
         job.record = prepared.record;
+        job.event_state = prepared.event_state;
         Ok(())
     }
 }

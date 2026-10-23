@@ -38,6 +38,15 @@ thread (`togeari-inspector`). Requests reach the machine only through `ctx.inspe
 
 Errors answer `{"error": message}`.
 
+## Semantic event-output inspection
+
+`GET /queries/event_output` returns `{enabled, configuration, status}`. Optional
+`job_execution_id` filters the status by logical job ID (not the resident numeric
+job ID or source key). Values are detached manager snapshots; inspection does
+not call the sink or read the journal. Append pending, durable pending delivery,
+watermark and delivery errors are distinct concepts. A job's terminal record is
+not a consumer acknowledgment. See [committed events](../../guides/committed-events.md).
+
 ## Logical run and invocation inspection
 
 The `jobs` and `job` queries include `job_execution_id`, read from the authoritative

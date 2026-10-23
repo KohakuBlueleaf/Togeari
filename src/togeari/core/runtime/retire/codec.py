@@ -8,6 +8,7 @@ independently, so their unpickled alias graph survives preparation unchanged.
 import pickle
 from typing import Any
 
+from togeari.core.contracts.events import CommittedEvent, event_bytes
 from togeari.core.contracts.identity import (
     validate_attempt_id,
     validate_invocation_id,
@@ -183,7 +184,38 @@ def _address(value: Any, region: Any, path: str, *, relative: bool, nullable=Fal
 
 
 def _state(raw: Any, entry: Any, code: Any, *, relative: bool) -> dict:
-    state = _shape(raw, _STATE_KEYS, "state")
+    state = _mapping(raw, "state")
+    if set(state) not in (_STATE_KEYS, _STATE_KEYS | {"event_state"}):
+        raise InvalidState("state", "invalid snapshot state fields")
+    requires_events = any(ins.semantic_emit for ins in code.calls(entry.region))
+    event_state = state.get("event_state")
+    if requires_events and event_state is None:
+        raise InvalidState(
+            "state.event_state", "emit programs require an authoritative event cursor"
+        )
+    if event_state is not None:
+        _shape(
+            event_state,
+            {"version", "next_sequence", "journal_identity", "committed_watermark"},
+            "state.event_state",
+        )
+        if type(event_state["version"]) is not int or event_state["version"] != 1:
+            raise InvalidState("state.event_state.version", "unsupported event cursor version")
+        next_sequence = _integer(
+            event_state["next_sequence"], "state.event_state.next_sequence", nonnegative=True
+        )
+        watermark = _integer(
+            event_state["committed_watermark"], "state.event_state.committed_watermark"
+        )
+        if watermark < -1 or next_sequence != watermark + 1:
+            raise InvalidState(
+                "state.event_state", "event sequence must follow committed watermark"
+            )
+        _mapping(event_state["journal_identity"], "state.event_state.journal_identity")
+        try:
+            event_bytes(event_state["journal_identity"])
+        except (TypeError, ValueError) as exc:
+            raise InvalidState("state.event_state.journal_identity", str(exc)) from None
     try:
         validate_job_execution_id(state["job_execution_id"])
     except ValueError as exc:
@@ -196,6 +228,26 @@ def _state(raw: Any, entry: Any, code: Any, *, relative: bool) -> dict:
     _integer(state["steps"], "state.steps", nonnegative=True)
     _mapping(state["values"], "state.values")
     stats = _mapping(state["stats"], "state.stats")
+    if event_state is not None:
+        sidecar = _shape(
+            stats.get("committed_events"), {"version", "events"}, "state.stats.committed_events"
+        )
+        if type(sidecar["version"]) is not int or sidecar["version"] != 1:
+            raise InvalidState("state.stats.committed_events", "unsupported event sidecar version")
+        events = sidecar["events"]
+        if type(events) is not list or len(events) != event_state["next_sequence"]:
+            raise InvalidState(
+                "state.stats.committed_events", "event prefix must match authoritative cursor"
+            )
+        for sequence, encoded in enumerate(events):
+            try:
+                event = CommittedEvent.from_dict(encoded)
+            except (TypeError, ValueError) as exc:
+                raise InvalidState("state.stats.committed_events", str(exc)) from None
+            if event.sequence != sequence or event.job_execution_id != state["job_execution_id"]:
+                raise InvalidState(
+                    "state.stats.committed_events", "event sequence/job identity mismatch"
+                )
     if not stats.keys() >= _COUNTERS:
         raise InvalidState("state.stats", "missing runtime counters")
     # Only fields interpreted by the runtimes have a structural type contract.

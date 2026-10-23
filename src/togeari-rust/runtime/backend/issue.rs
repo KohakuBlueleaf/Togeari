@@ -112,7 +112,17 @@ impl Core {
             let mut j = job.borrow_mut();
             (j.oldest_open_key(), j.oldest_live_key())
         };
-        let speculative = open_key.is_some_and(|k| k < key) || live_key.is_some_and(|k| k < key);
+        // DONE semantic emits are not visible effects until their durable append
+        // is accepted at retirement. Keep younger external effects behind them.
+        let uncommitted_emit = job.borrow().window.live().iter().any(|prior| {
+            let prior = prior.borrow();
+            prior.key < key
+                && prior.ins.semantic_emit
+                && !matches!(prior.state, InfState::Retired | InfState::Squashed)
+        });
+        let speculative = open_key.is_some_and(|k| k < key)
+            || live_key.is_some_and(|k| k < key)
+            || uncommitted_emit;
         if ordered && speculative {
             return Ok(Gate::Wait);
         }
@@ -406,6 +416,10 @@ impl Core {
             let Some(job) = inf.borrow().job.upgrade() else {
                 continue;
             };
+            if job.borrow().event_cancel.is_some() {
+                job.borrow_mut().held.push(inf.clone());
+                continue;
+            }
             if self.checkpoint_hold(&job, &inf) {
                 continue;
             }
@@ -538,6 +552,20 @@ impl Core {
             .as_ref()
             .expect("issued values")
             .clone_ref(py);
+
+        if ins.semantic_emit {
+            if let Err(e) = self.prepare_event(py, job, inf) {
+                if is_exception(py, &e) {
+                    return self.fault(
+                        py,
+                        inf,
+                        Exc::Obj(e.value(py).clone().into_any().unbind()),
+                        true,
+                    );
+                }
+                return Err(e);
+            }
+        }
 
         // Inline: run on the dispatcher now
         if b.inline {

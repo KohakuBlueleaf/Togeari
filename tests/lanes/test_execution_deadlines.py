@@ -9,7 +9,7 @@ from togeari.core.contracts.results import ItemTimeout, Ok, UnitError
 from togeari.core.contracts.workitem import WorkItem
 from togeari.core.lanes.lane import Retry, State
 from togeari.core.lanes.native import NativeLane
-from togeari.policies import SizeOrWait
+from togeari.policies import BudgetFormer, SizeOrWait
 
 LIB = NodeLibrary("deadline_lane")
 
@@ -40,15 +40,76 @@ class Unit(EngineBase):
         self.cancelled.append(ticket)
 
 
-def prepare(core, *, attempt=None, kind="call", retry=None):
+def prepare(core, *, attempt=None, kind="call", retry=None, former=None):
     unit = Unit(kind)
     lane = Lane(
-        [unit], timeout_s=attempt, retry=retry, former=SizeOrWait(2, 0) if kind == "batch" else None
+        [unit],
+        timeout_s=attempt,
+        retry=retry,
+        former=former if former is not None else SizeOrWait(2, 0) if kind == "batch" else None,
     )
     machine = Machine(program="(1)inc(x)", libraries=[LIB], bind={"inc": Use(lane)}, core=core)
     lane.clock = lambda: 0.0
     assert isinstance(lane, NativeLane) == (core == "rust")
     return machine, lane, unit
+
+
+@pytest.mark.parametrize("core", ["python", "rust"])
+@pytest.mark.parametrize("crossing", ["estimate", "key"])
+@pytest.mark.parametrize("mixed", [False, True])
+def test_post_transform_deadline_boundary_has_no_attempt_and_preserves_live_batch(
+    core, crossing, mixed
+):
+    clock = [0.0]
+    prepared = []
+
+    def estimate(item):
+        if prepared and crossing == "estimate":
+            clock[0] = 1.25
+        return {"tokens": 1}
+
+    former = BudgetFormer({"tokens": 4}, estimate, size=4, wait_ms=0)
+    machine, lane, unit = prepare(core, attempt=2, kind="batch", former=former)
+    lane.clock = lambda: clock[0]
+
+    def key(item):
+        if prepared and crossing == "key":
+            clock[0] = 1.25
+        return "same"
+
+    def hook(lane, unit, items):
+        assert clock[0] == 0
+        prepared.append(True)
+        return items
+
+    unit.key = key
+    lane.hook_submit = hook
+    expired = work(1, 1)
+    live = work(10, 10)
+    try:
+        lane.enqueue(expired, 0)
+        if mixed:
+            lane.enqueue(live, 0)
+        lane.pump(0)
+        assert prepared and clock[0] == 1.25
+        assert expired.attempt_id is None
+        assert unit.submitted == ([[live]] if mixed else [])
+        [(got, result)] = lane.timers(clock[0])
+        assert got is expired and isinstance(result.error, ItemTimeout)
+        assert expired.ext["policy_failure"]["scope"] == "call"
+        assert lane.resource_view()["total"] == {"tokens": float(mixed)}
+        if mixed:
+            assert live.attempt_id is not None
+            assert live.ext["sent"] == 1.25
+            assert lane.next_deadline(clock[0]) == 3.25
+            [submission] = lane.subs.values()
+            submission = submission.id if isinstance(lane, NativeLane) else submission
+            assert lane.results(submission, [Ok(2)], 1.5) == [(live, Ok(2))]
+        assert lane.resource_view()["total"] == {"tokens": 0.0}
+        assert lane.inflight == 0 and lane.queued() == 0
+        assert lane.timers(20) == []
+    finally:
+        machine.stop()
 
 
 def work(cap=None, timeout=None):

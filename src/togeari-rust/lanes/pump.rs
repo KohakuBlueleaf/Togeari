@@ -898,6 +898,29 @@ impl LaneCore {
                 return Ok(());
             }
         }
+        // Resource estimates, compatibility keys and repacking consume the call budget too.
+        // Expired items remain held for normal timer settlement, without an attempt.
+        now = now.max(self.now(py)?);
+        let mut live = Vec::with_capacity(items.len());
+        for item in items {
+            let cap = item
+                .bind(py)
+                .getattr(intern!(py, "ext"))?
+                .call_method1(intern!(py, "get"), ("deadline_cap",))?;
+            if !cap.is_none() && now >= as_f64(&cap)? {
+                let mut st = self.st.borrow_mut();
+                let seq = st.next_seq();
+                st.held_index.insert(item.as_ptr() as usize, seq);
+                st.held_items.insert(seq, item);
+            } else {
+                live.push(item);
+            }
+        }
+        let items = live;
+        if items.is_empty() {
+            return Ok(());
+        }
+
         // Submission and in-flight accounting
         let sid = SUB_IDS.fetch_add(1, Ordering::Relaxed);
         let n = items.len();

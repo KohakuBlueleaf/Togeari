@@ -54,6 +54,12 @@ still bounded by the unchanged call deadline. `Lane.retry` remains the existing 
 retry/failover configuration, not an advisory hint; this change does not introduce per-call
 retry configuration or alter which errors are retryable.
 
+The lane refreshes its scheduling clock after `pre_submit` and again after resource
+re-estimation, compatibility-key evaluation and repacking, before allocating submission or
+attempt state. Items whose call caps have expired are held for ordinary timeout settlement;
+live batch members keep their order and resource charges. The per-attempt timeout starts
+at this final submission timestamp. This does not preempt callbacks while they run.
+
 A call cap of zero expires before engine submission. A lane attempt timeout of zero starts
 at submission and can expire that attempt immediately. No deadline interrupts Python code
 already executing inline: `Inline()` has no execution timeout. Its latency warning remains

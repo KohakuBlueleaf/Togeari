@@ -236,6 +236,20 @@ class Pump:
             if not items:
                 return
 
+        # Resource estimation, compatibility keys and repacking also consume the call budget.
+        # Keep expired items held for normal timer settlement, before allocating an attempt.
+        now = max(now, self.clock())
+        live = []
+        for item in items:
+            cap = item.ext.get("deadline_cap")
+            if cap is not None and now >= cap:
+                self._held_ids[id(item)] = item
+            else:
+                live.append(item)
+        items = live
+        if not items:
+            return
+
         # Submission and in-flight accounting
         sub = Submission(next(_sub_ids), unit, items, sent=now)
         st = self.state[id(unit)]

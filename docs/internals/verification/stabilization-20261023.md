@@ -4,8 +4,12 @@
 
 Baseline: KIR `7e27245c61ae1b47ebd5335f2a5031855fb3b7cb`, Togeari
 `67a08987d450777907f1b523396389ec0e69e645`, both 0.3.0, clean working trees.
-Only these repositories were changed. No public API or persisted-format change,
+Only these repositories were changed. No runtime API or persisted-format change,
 version bump, tag, package publication, or deferred architecture extension.
+After the first remote validation, the maintainer authorized raising the supported
+Python minimum to 3.11. Package metadata, CI/release matrices and installation
+documentation now reflect Python 3.11–3.14. Historical Python 3.10 results below
+remain recorded, but 3.10 is no longer a release-readiness requirement.
 
 | Package | Commit | Result |
 |---|---|---|

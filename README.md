@@ -122,14 +122,14 @@ flowchart LR
 ## Install
 
 ```
-pip install togeari              # core (kohakunode >= 0.2.2)
+pip install togeari              # core (kohakunode >= 0.3.0)
 pip install "togeari[web]"       # WebCallEngine (httpx)
 pip install "togeari[torch]"     # TorchEngine
 pip install "togeari[vault]"     # KohakuVault store, source and sink
 pip install "togeari[report]"    # zstd-compressed run report events
 ```
 
-Wheels cover CPython 3.10–3.14 on Linux x86_64 / aarch64, Windows x64 and macOS arm64; each
+Wheels cover CPython 3.11–3.14 on Linux x86_64 / aarch64, Windows x64 and macOS arm64; each
 carries the native extension `togeari._rs`, so the Rust core runs with nothing more to install.
 Elsewhere pip builds the sdist, which needs a Rust toolchain (`rustup`). From a clone (Windows
 PowerShell or bash), also with a Rust toolchain to build the extension:

@@ -105,5 +105,5 @@ The `extension-module` feature (on by default) leaves libpython unlinked, as a w
 CI builds the wheel with maturin on every OS and Python version of the matrix, installs it and
 runs the suite against it twice, on the default core (Rust) and with `TOGEARI_CORE=python`;
 a separate job runs `cargo fmt`, `clippy` and `cargo test`. A `v*`
-tag builds wheels for CPython 3.10–3.14 on Linux x86_64 and aarch64 (manylinux 2_28),
+tag builds wheels for CPython 3.11–3.14 on Linux x86_64 and aarch64 (manylinux 2_28),
 Windows x64 and macOS arm64, plus the sdist, and publishes them from environment `pypi`.

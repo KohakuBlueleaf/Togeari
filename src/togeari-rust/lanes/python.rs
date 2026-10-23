@@ -127,7 +127,7 @@ pub struct Head {
     bucket: Obj,
 }
 
-fn order_py<'py>(py: Python<'py>, o: &Order) -> PyResult<Bound<'py, PyTuple>> {
+pub(super) fn order_py<'py>(py: Python<'py>, o: &Order) -> PyResult<Bound<'py, PyTuple>> {
     let first: Bound<'py, PyAny> = match &o.0 {
         Num::I(i) => i.into_pyobject(py)?.into_any(),
         Num::F(f) => f.into_pyobject(py)?.into_any(),
@@ -335,6 +335,14 @@ impl PyLane {
                 .import("togeari.core.lanes.deadline")?
                 .into_any()
                 .unbind(),
+            resources: RefCell::new({
+                let r = g("_resources")?;
+                (!r.is_none()).then(|| r.unbind())
+            }),
+            resource_helpers: py
+                .import("togeari.core.lanes.resources")?
+                .into_any()
+                .unbind(),
             select_mod: py
                 .import("togeari.core.policies.select")?
                 .into_any()
@@ -385,8 +393,20 @@ impl PyLane {
             visit.call(&*clock)?;
         }
         c.builtins.visit(&visit)?;
-        for o in [&c.log, &c.spec_fn, &c.round, &c.select_mod, &c.deadlines] {
+        for o in [
+            &c.log,
+            &c.spec_fn,
+            &c.round,
+            &c.select_mod,
+            &c.deadlines,
+            &c.resource_helpers,
+        ] {
             visit.call(o)?;
+        }
+        if let Ok(resource) = c.resources.try_borrow() {
+            if let Some(r) = &*resource {
+                visit.call(r)?;
+            }
         }
         let r = &c.rc;
         for o in [
@@ -523,6 +543,100 @@ impl PyLane {
         self.c().requeue_front(py, item, now)
     }
 
+    #[pyo3(signature = (item, now, limit = 1024))]
+    fn wait_item<'py>(
+        &self,
+        py: Python<'py>,
+        item: &Bound<'py, PyAny>,
+        now: f64,
+        limit: usize,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let c = self.c();
+        c.wait(py);
+        let d = PyDict::new(py);
+        d.set_item("phase", "unknown")?;
+        d.set_item("truncated", false)?;
+        d.set_item("scanned", 0)?;
+        let st = c.st.borrow();
+        let p = item.as_ptr() as usize;
+        let mut scanned = 0;
+        macro_rules! scan {
+            () => {
+                if scanned >= limit {
+                    d.set_item("truncated", true)?;
+                    return Ok(d);
+                }
+                scanned += 1;
+                d.set_item("scanned", scanned)?;
+            };
+        }
+        scan!();
+        if let Some(seq) = st.held_index.get(&p) {
+            for std::cmp::Reverse((due, candidate)) in &st.held {
+                scan!();
+                if candidate == seq {
+                    d.set_item("phase", "retry_backoff")?;
+                    d.set_item("remaining_s", (due.0 - now).max(0.0))?;
+                    return Ok(d);
+                }
+            }
+            d.set_item("phase", "retry_backoff")?;
+            return Ok(d);
+        }
+        for sub in st.subs.values() {
+            scan!();
+            for candidate in &sub.items {
+                scan!();
+                if candidate.as_ptr() == item.as_ptr() {
+                    d.set_item("phase", "running")?;
+                    return Ok(d);
+                }
+            }
+        }
+        for q in std::iter::once(&st.q).chain(st.state.values().map(|u| &u.queue)) {
+            scan!();
+            if let Some(e) = q.index.get(&p).and_then(|id| q.entries.get(id)) {
+                let due = q.buckets.get(&e.bucket).and_then(|b| b.deadline);
+                if let Some(due) = due.filter(|d| *d > now) {
+                    d.set_item("phase", "batch_wait")?;
+                    d.set_item("remaining_s", due - now)?;
+                } else {
+                    d.set_item("phase", "lane_capacity")?;
+                    d.set_item("current", st.inflight)?;
+                    d.set_item("limit", st.cfg.max_inflight)?;
+                    d.set_item("unsupported", vec!["live engine capacity/admission not sampled"])?;
+                }
+                return Ok(d);
+            }
+        }
+        Ok(d)
+    }
+
+    fn resource_held(&self, py: Python<'_>) -> Vec<Obj> {
+        self.c().wait(py);
+        self.c()
+            .st
+            .borrow()
+            .held_items
+            .values()
+            .map(|item| item.clone_ref(py))
+            .collect()
+    }
+
+    fn resource_requeue(&self, py: Python<'_>, item: &Bound<'_, PyAny>, now: f64) -> PyResult<()> {
+        let c = self.c();
+        c.wait(py);
+        let order = item.getattr("_resource_order")?;
+        if order.is_none() {
+            return c.requeue_front(py, item, Some(now));
+        }
+        let order = order.cast::<PyTuple>()?;
+        let first = super::lane::neg_priority(&order.get_item(0)?.neg()?)?;
+        let seq = order.get_item(1)?.extract()?;
+        let fm = c.former_now(py)?;
+        c.route(py, fm.as_ref(), item.clone().unbind(), (first, seq), now)
+    }
+
     fn capacity_rose(&self, py: Python<'_>) {
         self.c().wait(py);
         self.c().st.borrow_mut().pump_needed = true;
@@ -533,6 +647,8 @@ impl PyLane {
     fn set_former(&self, py: Python<'_>, former: &Bound<'_, PyAny>, now: f64) -> PyResult<()> {
         let c = self.c();
         c.wait(py);
+        let resource = c.lane(py)?.getattr("_resources")?;
+        *c.resources.borrow_mut() = (!resource.is_none()).then(|| resource.unbind());
         c.st.borrow_mut().cfg.former = (!former.is_none()).then(|| former.clone().unbind());
         let fm = c.former_now(py)?;
         let sels = c.st.borrow().sels();
@@ -667,6 +783,10 @@ impl PyLane {
         d.set_item("inflight", c.st.borrow().inflight)?;
         d.set_item("units_up", c.v_units_up(py)?.len())?;
         d.set_item("waiting", c.v_load_waiting(py)?)?;
+        let resource = c.resources.borrow().as_ref().map(|r| r.clone_ref(py));
+        if let Some(r) = resource {
+            d.set_item("resources", r.bind(py).call_method0("snapshot")?)?;
+        }
         Ok(d)
     }
 

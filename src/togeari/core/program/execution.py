@@ -21,6 +21,7 @@ from togeari.core.construct.errors import ConstructionError, Problem
 from togeari.core.contracts.adapter import PythonAdapter
 from togeari.core.contracts.reuse import builtin_revision
 from togeari.core.lanes.lane import Lane
+from togeari.core.policies.resources import resource_former, resource_policy
 from togeari.core.program.bind import Inline, Use
 
 SCHEMA = "togeari.execution"
@@ -391,6 +392,22 @@ def _render_execution(region: Any, code: Any, machine: Any) -> dict:
                 _unknown(unknown, f"{path}.engines", "engine implementation/configuration unknown")
         lane = None if b.inline else b.lane
         retry = None if lane is None else lane.retry
+        resource = None if lane is None else resource_policy(lane.former)
+        estimator_changed = id(lane) in getattr(machine, "_execution_estimator_invalidated", set())
+        if (
+            resource is not None
+            and resource["estimator_revision"] is None
+            and (not covered or estimator_changed)
+        ):
+            _unknown(
+                unknown,
+                f"{path}.policy.resource_budget.estimator_revision",
+                (
+                    "resource estimator changed since bundle attestation"
+                    if estimator_changed
+                    else "resource estimator revision unknown; a binding revision may attest it"
+                ),
+            )
         calls.append(
             {
                 "position": position,
@@ -403,6 +420,7 @@ def _render_execution(region: Any, code: Any, machine: Any) -> dict:
                 "adapter": adapter,
                 "engines": engines,
                 "policy": {
+                    **({"resource_budget": resource} if resource is not None else {}),
                     "timeout_s": _number(b.policy.timeout_s, unknown, f"{path}.policy.timeout_s"),
                     "attempt_timeout_s": _number(
                         None if lane is None else lane.timeout_s,
@@ -469,8 +487,19 @@ def observe_execution(region: Any, code: Any, machine: Any) -> dict:
     static = _static_execution(region, code)
     lanes = static["lanes"]
     samples = {}
+    if not hasattr(machine, "_execution_estimators"):
+        machine._execution_estimators = {}
+        machine._execution_estimator_invalidated = set()
     for key, group in lanes.items():
         lane = group["lane"]
+        budget = resource_former(lane.former)
+        estimate = None if budget is None else budget.estimate
+        if (
+            key in machine._execution_estimators
+            and machine._execution_estimators[key] is not estimate
+        ):
+            machine._execution_estimator_invalidated.add(key)
+        machine._execution_estimators[key] = estimate
         samples[key] = {
             "policy": canonical_bytes(
                 [
@@ -484,11 +513,19 @@ def observe_execution(region: Any, code: Any, machine: Any) -> dict:
                 ]
             ),
             "units": tuple(sorted({id(unit) for unit in _eligible_units(lane)})),
+            "resource_policy": canonical_bytes(resource_policy(lane.former)),
+            "estimator": id(estimate),
         }
     samples["runtime_policy"] = _number(machine.knobs.get("step_budget"), [], "step_budget")
     previous = machine._execution_observed.get(region.index)
     epoch = machine._execution_epochs.setdefault(region.index, 0)
-    coverage = tuple(key in machine._execution_invalidated_lanes for key in lanes)
+    coverage = tuple(
+        (
+            key in machine._execution_invalidated_lanes,
+            key in machine._execution_estimator_invalidated,
+        )
+        for key in lanes
+    )
     if (
         previous == samples
         and region.execution_current is not None
@@ -498,7 +535,12 @@ def observe_execution(region: Any, code: Any, machine: Any) -> dict:
     changes = {"policy_changed": [], "unit_membership": []}
     if previous is not None:
         for key, group in lanes.items():
-            for field, kind in (("policy", "policy_changed"), ("units", "unit_membership")):
+            for field, kind in (
+                ("policy", "policy_changed"),
+                ("units", "unit_membership"),
+                ("resource_policy", "policy_changed"),
+                ("estimator", "policy_changed"),
+            ):
                 if previous[key][field] != samples[key][field]:
                     changes[kind].extend(group["positions"])
         if previous["runtime_policy"] != samples["runtime_policy"]:
@@ -512,7 +554,7 @@ def observe_execution(region: Any, code: Any, machine: Any) -> dict:
         history = machine._execution_transitions.setdefault(region.index, [])
         for kind, positions in changes.items():
             if positions:
-                history.append({"epoch": epoch, "kind": kind, "positions": sorted(positions)})
+                history.append({"epoch": epoch, "kind": kind, "positions": sorted(set(positions))})
         if changes["unit_membership"]:
             affected = set(changes["unit_membership"])
             machine._execution_invalidated.setdefault(region.index, set()).update(affected)
@@ -523,7 +565,13 @@ def observe_execution(region: Any, code: Any, machine: Any) -> dict:
     manifest = _render_execution(region, code, machine)
     manifest["epoch"] = epoch
     region.execution_current = manifest
-    region.execution_coverage = tuple(key in machine._execution_invalidated_lanes for key in lanes)
+    region.execution_coverage = tuple(
+        (
+            key in machine._execution_invalidated_lanes,
+            key in machine._execution_estimator_invalidated,
+        )
+        for key in lanes
+    )
     # Only internally built self-validation is cached; external candidates always validate.
     region.execution_decisions = {mode: compatibility(manifest, manifest, mode) for mode in MODES}
     return {"manifest": manifest, "epoch": epoch}

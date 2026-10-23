@@ -269,6 +269,8 @@ pub struct LaneCore {
     pub round: Obj,
     pub select_mod: Obj,
     pub deadlines: Obj,
+    pub resources: RefCell<Option<Obj>>,
+    pub resource_helpers: Obj,
     pub rc: ResultClasses,
 }
 
@@ -739,6 +741,10 @@ impl LaneCore {
         order: Order,
         now: f64,
     ) -> PyResult<()> {
+        if self.resources.borrow().is_some() {
+            item.bind(py)
+                .setattr("_resource_order", super::python::order_py(py, &order)?)?;
+        }
         let got = {
             let mut st = self.st.borrow_mut();
             st.queue(sel)
@@ -921,9 +927,41 @@ impl LaneCore {
         }
     }
 
+    pub fn resource_prepare(
+        &self,
+        py: Python<'_>,
+        item: &Bound<'_, PyAny>,
+        phase: &str,
+    ) -> PyResult<bool> {
+        let resource = self.resources.borrow().as_ref().map(|r| r.clone_ref(py));
+        match resource {
+            None => Ok(true),
+            Some(r) => r
+                .bind(py)
+                .call_method1("prepare", (item, phase))?
+                .is_truthy(),
+        }
+    }
+
+    pub fn resource_move(
+        &self,
+        py: Python<'_>,
+        item: &Bound<'_, PyAny>,
+        phase: Option<&str>,
+    ) -> PyResult<()> {
+        let resource = self.resources.borrow().as_ref().map(|r| r.clone_ref(py));
+        if let Some(r) = resource {
+            r.bind(py).call_method1("move", (item, phase))?;
+        }
+        Ok(())
+    }
+
     // ------------------------------------------------------------ queueing
     /// Queue ``item``; a ``WorkItem.deadline`` it carries also bounds its time queued.
     pub fn enqueue(&self, py: Python<'_>, item: &Bound<'_, PyAny>, now: f64) -> PyResult<()> {
+        if !self.resource_prepare(py, item, "queued")? {
+            return Ok(());
+        }
         let ext = item.getattr(intern!(py, "ext"))?.cast_into::<PyDict>()?;
         if !ext.contains("retries")? {
             ext.set_item("retries", 0)?;
@@ -948,6 +986,7 @@ impl LaneCore {
 
     /// Drop a queued or held item (squashed); True if it was there.
     pub fn remove(&self, py: Python<'_>, item: &Bound<'_, PyAny>) -> PyResult<bool> {
+        self.resource_move(py, item, None)?;
         let now = self.now(py)?;
         let p = ptr(item);
         let held = {
@@ -1036,6 +1075,9 @@ impl LaneCore {
             return Ok(Vec::new());
         }
         let (unit, items, unit_obj) = self.close(sid, now);
+        for item in &items {
+            self.resource_move(py, item.bind(py), None)?;
+        }
         self.st.borrow_mut().pump_needed = true;
 
         // A result count that differs from the item count fails every item
@@ -1140,6 +1182,12 @@ impl LaneCore {
     /// The earliest time the lane has something to do; a past time only when an action is
     /// possible now.
     pub fn next_deadline(&self, py: Python<'_>, now: f64) -> PyResult<Option<f64>> {
+        let resource = self.resources.borrow().as_ref().map(|r| r.clone_ref(py));
+        if let Some(r) = resource {
+            if r.bind(py).getattr("pending")?.is_truthy()? {
+                return Ok(Some(now));
+            }
+        }
         let mut ds: Vec<f64> = Vec::new();
         {
             let mut st = self.st.borrow_mut();
@@ -1678,7 +1726,11 @@ impl LaneCore {
     /// Health polls, retries past their backoff, item timeouts and the dead-lane limit; the
     /// ``(item, result)`` pairs to deliver.
     pub fn timers(&self, py: Python<'_>, now: f64) -> PyResult<Vec<(Obj, Obj)>> {
-        let mut out: Vec<(Obj, Obj)> = Vec::new();
+        let resource = self.resources.borrow().as_ref().map(|r| r.clone_ref(py));
+        let mut out: Vec<(Obj, Obj)> = match resource {
+            Some(r) => r.bind(py).call_method0("drain")?.extract()?,
+            None => Vec::new(),
+        };
 
         // Health polls of down units
         let polls: Vec<usize> = {
@@ -1759,6 +1811,7 @@ impl LaneCore {
                 continue;
             }
             ext.set_item("settled", true)?;
+            self.resource_move(py, itb, None)?;
             out.push((item.clone_ref(py), result.unbind()));
             if let Some(sid) = current {
                 expired.push(sid);
@@ -1849,6 +1902,7 @@ impl LaneCore {
             st.held.clear();
         }
         for it in &failed {
+            self.resource_move(py, it.bind(py), None)?;
             it.bind(py)
                 .getattr(intern!(py, "ext"))?
                 .set_item("settled", true)?;
@@ -1858,6 +1912,9 @@ impl LaneCore {
 
     /// Re-queue a retried item after the retry backoff.
     fn hold(&self, py: Python<'_>, item: Obj, now: f64) -> PyResult<()> {
+        if !self.resource_prepare(py, item.bind(py), "retry_held")? {
+            return Ok(());
+        }
         let retry = self.st.borrow().cfg.retry.clone_ref(py);
         let ms = retry.bind(py).getattr(intern!(py, "backoff_ms"))?;
         let wait = as_f64(&ms)? / 1000.0;
@@ -1883,6 +1940,9 @@ impl LaneCore {
             Some(n) => n,
             None => self.now(py)?,
         };
+        if !self.resource_prepare(py, item, "queued")? {
+            return Ok(());
+        }
         let s = self.st.borrow_mut().next_seq() as i64;
         let fm = self.former_now(py)?;
         self.route(py, fm.as_ref(), item.clone().unbind(), (Num::I(FRONT), -s), now)

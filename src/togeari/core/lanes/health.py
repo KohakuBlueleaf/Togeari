@@ -226,7 +226,7 @@ class Health:
         fails with ``ItemError(UnitUnavailable)`` and ``lane.dead`` is emitted with the
         count; items queued later fail at the next call while no unit is up.
         """
-        out: list[tuple[Any, Any]] = []
+        out: list[tuple[Any, Any]] = self._resources.drain() if self._resources is not None else []
 
         # Health polls of down units
         for st in self.state.values():
@@ -255,6 +255,8 @@ class Health:
             if result is None:
                 continue
             item.ext["settled"] = True
+            if self._resources is not None:
+                self._resources.move(item, None)
             out.append((item, result))
             if active is None or not active.open:
                 self.remove(item)
@@ -291,10 +293,14 @@ class Health:
         self._held_ids.clear()
         for it in failed:
             it.ext["settled"] = True
+            if self._resources is not None:
+                self._resources.move(it, None)
         return failed
 
     def _hold(self, item: Any, now: float) -> None:
         """Re-queue a retried item after the retry backoff."""
+        if self._resources is not None and not self._resources.prepare(item, "retry_held"):
+            return
         wait = self.retry.backoff_ms / 1000.0
         if wait <= 0:
             self.requeue_front(item, now)
@@ -305,4 +311,6 @@ class Health:
     def requeue_front(self, item: Any, now: float | None = None) -> None:
         """Put ``item`` back ahead of every queued item."""
         now = self.clock() if now is None else now
+        if self._resources is not None and not self._resources.prepare(item):
+            return
         self._route(item, (FRONT, -next(self._seq)), now)

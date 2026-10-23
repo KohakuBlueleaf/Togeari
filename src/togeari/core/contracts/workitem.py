@@ -44,6 +44,9 @@ class WorkItem:
         "_job_execution_id",
         "_invocation_id",
         "_attempt_id",
+        "_resource_estimates",
+        "_resource_order",
+        "_resource_wait",
     )
 
     def __init__(
@@ -79,6 +82,9 @@ class WorkItem:
         # The machine's inflight and the lane's bookkeeping; engines never look at them
         self.owner = owner
         self.ext: dict = {}
+        self._resource_estimates: dict = {}
+        self._resource_order = None
+        self._resource_wait = None
         identity_fields = getattr(owner, "_identity_fields", None)
         if callable(identity_fields):
             job_execution_id, invocation_id, attempt_id = identity_fields()

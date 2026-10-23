@@ -5,7 +5,7 @@ with their default methods, for policies written as subclasses.
 """
 
 from togeari.core.contracts.policies import READY, Former
-from togeari.core.policies.admission import All, Fixed, MemoryBound, TargetLoad
+from togeari.core.policies.admission import All, Fixed, MemoryBound, ResourcePressure, TargetLoad
 from togeari.core.policies.former import Bucketed, Greedy, SizeOrWait
 from togeari.core.policies.issue import (
     DeepestFirst,
@@ -14,6 +14,7 @@ from togeari.core.policies.issue import (
     LaneAware,
     OldestJobFirst,
 )
+from togeari.core.policies.resources import BudgetFormer
 from togeari.core.policies.select import (
     Affinity,
     ByHint,
@@ -28,6 +29,7 @@ __all__ = [
     "Affinity",
     "All",
     "Bucketed",
+    "BudgetFormer",
     "ByHint",
     "DeepestFirst",
     "Fifo",
@@ -39,6 +41,7 @@ __all__ = [
     "LeastLoaded",
     "MemoryBound",
     "OldestJobFirst",
+    "ResourcePressure",
     "RoundRobin",
     "Selector",
     "SizeOrWait",

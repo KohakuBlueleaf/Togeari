@@ -15,6 +15,7 @@ from typing import Any
 
 from togeari.core.contracts.policies import Former, Selector
 from togeari.core.lanes.lane import FORMING, Lane, _checked
+from togeari.core.lanes.resources import refresh
 
 try:
     from togeari import _rs
@@ -213,8 +214,20 @@ class NativeLane(Lane):
     def load_waiting(self) -> int:
         return self._native.load_waiting()
 
+    def _resource_held(self):
+        return self._native.resource_held()
+
+    def _wait_item(self, item, now, limit=1024):
+        return self._native.wait_item(item, now, limit)
+
+    def _resource_requeue(self, item, now):
+        self._native.resource_requeue(item, now)
+
     def signals(self) -> dict:
-        return self._native.signals()
+        signals = self._native.signals()
+        if self._resources is not None:
+            signals["resources"] = self._resources.snapshot()
+        return signals
 
     def take_waits(self) -> list[float]:
         return self._native.take_waits()
@@ -264,6 +277,7 @@ class NativeLane(Lane):
     @former.setter
     def former(self, former: Any) -> None:
         self._former = _checked(former, Former, "former")
+        refresh(self, self._former)
         self._native.set_former(self._former, self.clock())
 
     @property

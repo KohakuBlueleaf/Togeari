@@ -492,13 +492,75 @@ impl LaneCore {
             let Some(b) = b else { break };
 
             // The bucket's batch, then its ripeness again
-            out = match self.count(py, fm, qs, unit, b, now)? {
-                Want::N(n) if n > 0.0 => self.pop_count(py, sel, qs, unit, b, n, refused)?,
-                Want::Items(items) if !items.is_empty() => {
-                    self.pop_named(py, sel, qs, unit, b, items, refused)?
-                }
-                _ => Vec::new(),
+            let resource = self.resources.borrow().as_ref().map(|r| r.clone_ref(py));
+            let budget = match &resource {
+                Some(r) => Some(r.bind(py).getattr("policy")?),
+                None => None,
             };
+            if let Some(policy) = budget.filter(|p| !p.is_none()) {
+                let u = self.unit_obj(py, unit).expect("unit");
+                let limit: usize = policy.getattr("size")?.extract()?;
+                let max_batch: usize = u.bind(py).getattr("max_batch")?.extract()?;
+                let candidates =
+                    self.resource_candidates(py, sel, qs, unit, b, limit.min(max_batch), refused)?;
+                let view = self.view(py, qs, b)?;
+                let items = PyList::new(py, candidates.iter().map(|i| i.bind(py)))?;
+                let view = self
+                    .resource_helpers
+                    .bind(py)
+                    .getattr("Candidates")?
+                    .call1((view, &items))?;
+                let f = self
+                    .st
+                    .borrow()
+                    .cfg
+                    .former
+                    .as_ref()
+                    .expect("former")
+                    .clone_ref(py);
+                let chosen = f.bind(py).call_method1("take", (view, u.bind(py), now));
+                let chosen = match chosen {
+                    Ok(v) if v.is_instance_of::<PyList>() => v.extract::<Vec<Obj>>()?,
+                    _ => {
+                        let r = resource.as_ref().expect("resource");
+                        self.resource_helpers
+                            .bind(py)
+                            .call_method1("reject_selection", (r.bind(py), &items))?;
+                        for item in &candidates {
+                            self.remove(py, item.bind(py))?;
+                        }
+                        Vec::new()
+                    }
+                };
+                self.resource_helpers.bind(py).call_method1(
+                    "note_selection",
+                    (&items, PyList::new(py, chosen.iter().map(|i| i.bind(py)))?),
+                )?;
+                let pointers: std::collections::HashSet<usize> =
+                    candidates.iter().map(|i| i.as_ptr() as usize).collect();
+                let mut seen = std::collections::HashSet::new();
+                let mut st = self.st.borrow_mut();
+                if let Some((q, _)) = st.queue(qs) {
+                    let ids = chosen
+                        .iter()
+                        .filter_map(|i| {
+                            let p = i.as_ptr() as usize;
+                            (pointers.contains(&p) && seen.insert(p))
+                                .then(|| q.entry_in(p, b))
+                                .flatten()
+                        })
+                        .collect::<Vec<_>>();
+                    out = q.take_entries(py, &ids);
+                }
+            } else {
+                out = match self.count(py, fm, qs, unit, b, now)? {
+                    Want::N(n) if n > 0.0 => self.pop_count(py, sel, qs, unit, b, n, refused)?,
+                    Want::Items(items) if !items.is_empty() => {
+                        self.pop_named(py, sel, qs, unit, b, items, refused)?
+                    }
+                    _ => Vec::new(),
+                };
+            }
             if !out.is_empty() {
                 if let Some((q, _)) = self.st.borrow_mut().queue(qs) {
                     q.after_take(b);
@@ -518,6 +580,38 @@ impl LaneCore {
                 q.ripe_push(x);
             }
             q.ripe_compact();
+        }
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resource_candidates(
+        &self,
+        py: Python<'_>,
+        sel: &SelectNow,
+        qs: QSel,
+        unit: usize,
+        b: u64,
+        limit: usize,
+        refused: &mut Refused,
+    ) -> PyResult<Vec<Obj>> {
+        let mut inspected = Vec::new();
+        let mut out = Vec::new();
+        while out.len() < limit {
+            let next = self.st.borrow_mut().queue(qs).and_then(|(q, _)| {
+                q.pop_live(b)
+                    .and_then(|entry| q.item_of(py, entry.1).map(|item| (entry, item)))
+            });
+            let Some((entry, item)) = next else { break };
+            inspected.push(entry);
+            if self.admits_noting(py, sel, &item, unit, refused)? {
+                out.push(item);
+            }
+        }
+        if let Some((q, _)) = self.st.borrow_mut().queue(qs) {
+            for entry in inspected {
+                q.push_back(b, entry);
+            }
         }
         Ok(out)
     }
@@ -749,12 +843,20 @@ impl LaneCore {
         }
 
         // Plugins see (and may block) items after unit choice
+        let original = if self.resources.borrow().is_some() {
+            Some(PyList::new(py, live.iter().map(|i| i.bind(py)))?)
+        } else {
+            None
+        };
         let mut items = live;
         let mut now = now;
         let hook = lane.getattr(intern!(py, "hook_submit"))?;
         if !hook.is_none() {
             let list = PyList::new(py, items.iter().map(|i| i.bind(py)))?;
             let got = hook.call1((&lane, ub, list))?;
+            for item in &items {
+                self.resource_move(py, item.bind(py), None)?;
+            }
             if !got.is_truthy()? {
                 return Ok(());
             }
@@ -785,6 +887,17 @@ impl LaneCore {
             }
         }
 
+        if let Some(original) = original {
+            let current = PyList::new(py, items.iter().map(|i| i.bind(py)))?;
+            items = self
+                .resource_helpers
+                .bind(py)
+                .call_method1("post_transform", (&lane, original, current, ub, now))?
+                .extract()?;
+            if items.is_empty() {
+                return Ok(());
+            }
+        }
         // Submission and in-flight accounting
         let sid = SUB_IDS.fetch_add(1, Ordering::Relaxed);
         let n = items.len();
@@ -825,6 +938,7 @@ impl LaneCore {
             let enq = as_f64(&ext.call_method1(intern!(py, "get"), ("enqueued", now))?)?;
             self.st.borrow_mut().waits.push(now - enq);
             self.arm_timeout(py, it, sid, now)?;
+            self.resource_move(py, it.bind(py), Some("inflight"))?;
         }
         let batch = match ub.getattr_opt(intern!(py, "kind"))? {
             Some(k) => k.eq("batch")?,

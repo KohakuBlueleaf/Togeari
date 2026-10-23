@@ -13,6 +13,8 @@ from collections.abc import Callable
 from typing import Any
 
 from togeari.core.contracts.policies import READY
+from togeari.core.lanes.resources import Candidates, note_selection
+from togeari.core.policies.resources import resource_former
 
 # Order key of an item put back at the front of its queue.
 FRONT = -(1 << 62)
@@ -74,6 +76,22 @@ class Bucket:
     def items(self) -> list:
         return [e.item for _, e in sorted(self.heap) if e.live]
 
+    def candidates(self, limit: int, admits, unit) -> list:
+        """Bounded ordered access: pop/restore only the inspected prefix, never sort the bucket."""
+        inspected, out = [], []
+        try:
+            while self.heap and len(out) < limit:
+                entry = heapq.heappop(self.heap)
+                if not entry[1].live:
+                    continue
+                inspected.append(entry)
+                if admits(entry[1].item, unit):
+                    out.append(entry[1].item)
+        finally:
+            for entry in inspected:
+                heapq.heappush(self.heap, entry)
+        return out
+
     def compact(self) -> None:
         if len(self.heap) > 2 * self.size + _SLACK:
             self.heap = [x for x in self.heap if x[1].live]
@@ -100,6 +118,7 @@ class Queue:
         failed: Callable[[str, BaseException], None] | None = None,
     ):
         self.former = former
+        self.resource = resource_former(former)
         self.key_unit = key_unit
         self.cap = cap
         self.failed = failed
@@ -127,6 +146,8 @@ class Queue:
 
     def push(self, item: Any, order: tuple, now: float) -> None:
         former = self.former
+        if self.resource is not None:
+            item._resource_order = order
         key = None if former is None else self._ask("key", former.key, None, item, self.key_unit)
         b = self.buckets.get(key)
         if b is None:
@@ -166,6 +187,7 @@ class Queue:
         """Use ``former`` from now on; queued items are bucketed again."""
         items = self.drain()
         self.former = former
+        self.resource = resource_former(former)
         for order, item in items:
             self.push(item, order, now)
 
@@ -255,9 +277,16 @@ class Queue:
                 continue
 
             # The bucket's batch, then its ripeness again
-            want = count(b, unit, now)
-            if want:
-                out = self._pop(b, want, unit, admits)
+            if self.resource is not None:
+                view = Candidates(b, lambda limit, b=b: b.candidates(limit, admits, unit))
+                want = count(view, unit, now)
+                note_selection(view.observed, want)
+                if want:
+                    out = self._pop(b, want, unit, lambda item, unit: True)
+            else:
+                want = count(b, unit, now)
+                if want:
+                    out = self._pop(b, want, unit, admits)
             if out:
                 heapq.heappop(ripe)
                 b.ripe_at = None

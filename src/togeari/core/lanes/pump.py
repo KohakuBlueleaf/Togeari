@@ -7,9 +7,11 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from togeari.core.contracts.results import UnitError
+from togeari.core.contracts.resources import EstimateError
+from togeari.core.contracts.results import ItemError, UnitError
 from togeari.core.lanes.deadline import arm
 from togeari.core.lanes.health import State
+from togeari.core.lanes.resources import post_transform
 
 log = logging.getLogger("togeari.lane")
 _sub_ids = itertools.count(1)
@@ -155,6 +157,13 @@ class Pump:
             want = self.former.take(bucket, unit, now)
         except Exception as exc:  # noqa: BLE001
             self._policy_failed("former take", exc)
+            if self._resources is not None and self._resources.policy is not None:
+                for item in bucket.candidates(limit):
+                    self._resources.reject(
+                        item, ItemError(EstimateError("resource selection failed"))
+                    )
+                    self.remove(item)
+                return []
             return limit
         return want[:limit] if isinstance(want, list) else min(want or 0, limit)
 
@@ -200,9 +209,13 @@ class Pump:
         if not items:
             return
 
+        original = list(items) if self._resources is not None else None
         # Plugins see (and may block) items after unit choice
         if self.hook_submit is not None:
             items = self.hook_submit(self, unit, items)
+            if self._resources is not None:
+                for item in original:
+                    self._resources.move(item, None)
             if not items:
                 return
             # User preparation consumes the call budget, not the submitted-attempt budget.
@@ -215,6 +228,11 @@ class Pump:
                 else:
                     live.append(item)
             items = live
+            if not items:
+                return
+
+        if self._resources is not None:
+            items = post_transform(self, original, items, unit, now)
             if not items:
                 return
 
@@ -237,6 +255,8 @@ class Pump:
             it.ext["sent"] = now
             self.waits.append(now - it.ext.get("enqueued", now))
             self._arm_timeout(it, sub, now)
+            if self._resources is not None:
+                self._resources.move(it, "inflight")
         if len(self.waits) > _WAITS_MAX:
             del self.waits[: _WAITS_MAX // 2]
 
@@ -290,6 +310,9 @@ class Pump:
     def _close(self, sub: Submission, now: float) -> Any:
         """Close ``sub``: release in-flight counts and busy time; returns the unit's state."""
         sub.open = False
+        if self._resources is not None:
+            for item in sub.items:
+                self._resources.move(item, None)
         st = self.state[id(sub.unit)]
         self.subs.pop(sub.id, None)
         st.subs.pop(sub.id, None)

@@ -22,6 +22,7 @@ from togeari.core.lanes.deadline import current, expire
 from togeari.core.lanes.health import Health, Retry, State, UnitState
 from togeari.core.lanes.pump import Pump, Submission
 from togeari.core.lanes.queue import Queue
+from togeari.core.lanes.resources import configure, refresh
 from togeari.core.policies.select import LeastLoaded
 
 _lane_ids = itertools.count(1)
@@ -64,7 +65,7 @@ class Lane(Pump, Health):
             watchers[id(self)] = weakref.WeakMethod(self._execution_changed)
 
     def __setattr__(self, name, value):
-        watched = name in ("timeout_s", "retry", "lane_dead_s")
+        watched = name in ("timeout_s", "retry", "lane_dead_s", "former")
         previous = None
         if watched and self.__dict__.get("_execution_notify") is not None:
             self._execution_changed("policy_changed")
@@ -104,6 +105,8 @@ class Lane(Pump, Health):
 
         # Queues: the shared one and one per unit (early forming)
         self._former = _checked(former, Former, "former")
+        self._resources = None
+        configure(self, self._former)
         self._seq = itertools.count()
         key_unit = self.units[0] if self.units else None
         self._q = Queue(former, key_unit, self._cap(), self._policy_failed)
@@ -162,6 +165,7 @@ class Lane(Pump, Health):
     @former.setter
     def former(self, former: Any) -> None:
         self._former = _checked(former, Former, "former")
+        refresh(self, self._former)
         now = self.clock()
         for q in self._queues():
             q.set_former(self._former, now)
@@ -219,12 +223,29 @@ class Lane(Pump, Health):
                 total += int(unit.load().waiting)
         return total
 
+    def _resource_held(self):
+        return list(self._held_ids.values())
+
+    def _resource_requeue(self, item, now):
+        order = item._resource_order
+        if order is None:
+            order = (-item.priority, next(self._seq))
+        self._route(item, order, now)
+
+    def resource_view(self, item=None) -> dict:
+        return (
+            self._resources.view(item)
+            if self._resources is not None
+            else {"schema": 1, "enabled": False}
+        )
+
     def signals(self) -> dict:
         return {
             "queue": self.queued(),
             "inflight": self.inflight,
             "units_up": len(self.units_up()),
             "waiting": self.load_waiting(),
+            **({"resources": self._resources.snapshot()} if self._resources is not None else {}),
         }
 
     def take_waits(self) -> list[float]:
@@ -248,6 +269,8 @@ class Lane(Pump, Health):
     # ------------------------------------------------------------ queueing
     def enqueue(self, item: Any, now: float) -> None:
         """Queue ``item``; a ``WorkItem.deadline`` it carries also bounds its time queued."""
+        if self._resources is not None and not self._resources.prepare(item):
+            return
         item.ext.setdefault("retries", 0)
         item.ext["enqueued"] = now
         if "deadline_cap" not in item.ext:
@@ -259,6 +282,8 @@ class Lane(Pump, Health):
     def remove(self, item: Any) -> bool:
         """Drop a queued or held item (squashed); True if it was there."""
         now = self.clock()
+        if self._resources is not None:
+            self._resources.move(item, None)
         if self._held_ids.pop(id(item), None) is not None:
             return True
         return any(q.remove(item, now) for q in self._queues())
@@ -351,6 +376,8 @@ class Lane(Pump, Health):
         last pump; with no unit up, the dead-lane limit.
         """
         # Health polls
+        if self._resources is not None and self._resources.pending:
+            return now
         ds: list[float] = [st.next_poll for st in self.state.values() if st.state == State.DOWN]
 
         # Retries waiting for their backoff

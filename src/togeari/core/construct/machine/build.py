@@ -19,7 +19,7 @@ from togeari.core.lanes.lane import Lane
 from togeari.core.observe.bus import Bus
 from togeari.core.plugin.manager import PluginManager
 from togeari.core.plugin.tables import COMMANDS, QUERIES
-from togeari.core.policies.admission import Fixed
+from togeari.core.policies.admission import Fixed, validate_resource_admission
 from togeari.core.policies.issue import OldestJobFirst
 from togeari.core.program.bind import Defaults, Use
 from togeari.core.program.code import CodeMemory
@@ -158,6 +158,10 @@ class Machine(LoadStage, UnitStage, RunStage):
             self._commit(staged)
         if self.default_entry is None and self.code.entries:
             self.default_entry = next(iter(self.code.entries))
+
+        # Resource pressure requires a known lane and matching estimate dimensions.
+        for message in validate_resource_admission(self.knobs["admission"], self.lanes):
+            problems.add("admission", message)
 
         # Bindings not used by any node
         for pat in self.bind:

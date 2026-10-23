@@ -754,19 +754,29 @@ class Neighbour(threading.Thread):
 
 
 def neighbour_turns(offer_us) -> tuple[int, dict]:
-    """The neighbour's turns during one traced run at ``offer_us``, and the core's counts."""
+    """Count only inside native cycles, excluding trace setup, teardown and sink draining."""
     p = entry_program(0, jobs=16)
     m = gen_make(p, gil_offer_us=offer_us)("rust")
     old = sys.getswitchinterval()
     sys.setswitchinterval(1.0)
     n = Neighbour()
+    cycle = m.dispatcher.cycle
+    turns = 0
+
+    def measured_cycle():
+        nonlocal turns
+        # The trace driver always queues a wake before cycle: inbox waiting cannot
+        # release the GIL here. Count only the native call, not run_trace's stop/join.
+        start = n.turns
+        cycle()
+        turns += n.turns - start
+
+    m.dispatcher.cycle = measured_cycle
     try:
         n.start()
         while n.turns == 0:
             time.sleep(0.001)
-        start = n.turns
         t = run_trace(lambda: m, p.inputs, seed=7)
-        turns = n.turns - start
     finally:
         n.stop.set()
         sys.setswitchinterval(old)
@@ -776,12 +786,13 @@ def neighbour_turns(offer_us) -> tuple[int, dict]:
 
 @pytest.mark.serial
 def test_an_offer_really_lets_a_waiting_thread_run():
-    """Offers are real GIL releases: a neighbour thread gets far more turns at 0 (every region
-    released) than at inf (every region held, no offer), whatever the counters say. How many
-    releases hand over the GIL depends on the platform's scheduler: on Linux the releasing
-    thread usually takes it back before the neighbour wakes, so a run of about 570 offers gives
-    it 3 to 18 turns and a held run 0 to 3; and now and then a forced switch hands the neighbour
-    thousands of turns in either mode. The check compares the medians of ten runs each."""
+    """Offers really release the GIL, not just increment counters.
+
+    Compare turns only during native cycles with a nonempty inbox. Trace teardown can
+    release the GIL for unrelated thread joins even with offers disabled, so counting the
+    entire run would measure scheduler-dependent cleanup rather than native offers. Keep
+    the ten-run median and ratio requirement; no platform-specific relaxed threshold.
+    """
     runs = {offer_us: [neighbour_turns(offer_us) for _ in range(10)] for offer_us in (0, math.inf)}
     every = statistics.median(turns for turns, _ in runs[0])
     never = statistics.median(turns for turns, _ in runs[math.inf])

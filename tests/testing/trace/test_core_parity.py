@@ -762,14 +762,20 @@ def neighbour_turns(offer_us) -> tuple[int, dict]:
     n = Neighbour()
     cycle = m.dispatcher.cycle
     turns = 0
+    measured = 0
 
     def measured_cycle():
-        nonlocal turns
-        # The trace driver always queues a wake before cycle: inbox waiting cannot
-        # release the GIL here. Count only the native call, not run_trace's stop/join.
+        nonlocal turns, measured
+        # A queued wake does NOT prevent Inbox.wait from releasing the GIL:
+        # native cycle chooses that path by next_timeout, before inspecting the inbox.
+        # Measure only the exact zero-timeout branch, which uses take_all instead.
+        if m.dispatcher.next_timeout() != 0:
+            cycle()
+            return
         start = n.turns
         cycle()
         turns += n.turns - start
+        measured += 1
 
     m.dispatcher.cycle = measured_cycle
     try:
@@ -781,6 +787,7 @@ def neighbour_turns(offer_us) -> tuple[int, dict]:
         n.stop.set()
         sys.setswitchinterval(old)
         n.join()
+    assert measured > 0, "no busy native cycles measured"
     return turns, t.machine.dispatcher.native_stats()
 
 
@@ -788,9 +795,9 @@ def neighbour_turns(offer_us) -> tuple[int, dict]:
 def test_an_offer_really_lets_a_waiting_thread_run():
     """Offers really release the GIL, not just increment counters.
 
-    Compare turns only during native cycles with a nonempty inbox. Trace teardown can
-    release the GIL for unrelated thread joins even with offers disabled, so counting the
-    entire run would measure scheduler-dependent cleanup rather than native offers. Keep
+    Compare turns only during native cycles whose next_timeout is exactly zero. Other
+    cycles release the GIL in Inbox.wait even when an event is already queued. Trace
+    teardown also releases it for unrelated joins, so neither belongs in this measure. Keep
     the ten-run median and ratio requirement; no platform-specific relaxed threshold.
     """
     runs = {offer_us: [neighbour_turns(offer_us) for _ in range(10)] for offer_us in (0, math.inf)}

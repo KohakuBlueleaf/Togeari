@@ -305,6 +305,31 @@ impl Core {
             rec.bind(py).append(t)?;
         }
         let origin = ins.py.bind(py).call_method0(intern!(py, "origin_dict"))?;
+        let item = x.borrow().item.as_ref().map(|i| i.clone_ref(py));
+        let policy = match item {
+            Some(item) => item
+                .bind(py)
+                .getattr(intern!(py, "ext"))?
+                .call_method1(intern!(py, "get"), ("policy_failure",))?,
+            None => py.None().into_bound(py),
+        };
+        if !policy.is_none() {
+            let failure = policy.cast::<PyDict>()?.copy()?;
+            failure.set_item("node", ins.node.bind(py))?;
+            failure.set_item("addr", ins.addr)?;
+            failure.set_item("key", key.to_py(py))?;
+            failure.set_item("origin", &origin)?;
+            let index = job.borrow().record.as_ref().map(|r| r.bind(py).len() - 1);
+            failure.set_item("record_index", index)?;
+            let failures = job
+                .borrow_mut()
+                .stats
+                .extra
+                .entry("policy_failures".into())
+                .or_insert_with(|| PyList::empty(py).into_any().unbind())
+                .clone_ref(py);
+            failures.bind(py).cast::<PyList>()?.append(failure)?;
+        }
         job.borrow_mut()
             .stats
             .extra
@@ -317,6 +342,9 @@ impl Core {
         info.set_item("job", jid)?;
         info.set_item("key", jkey.bind(py))?;
         info.set_item("origin", &origin)?;
+        if !policy.is_none() {
+            info.set_item("policy_failure", policy.cast::<PyDict>()?.copy()?)?;
+        }
         info.update(err.bind(py).as_mapping())?;
         let where_ = PyDict::new(py);
         where_.set_item("entry", entry.py_name.bind(py))?;
@@ -334,6 +362,9 @@ impl Core {
             f.set_item("key", key.to_py(py))?;
             f.set_item("squashed", job.borrow().stats.squashed)?;
             f.set_item("origin", &origin)?;
+            if !policy.is_none() {
+                f.set_item("policy_failure", policy.cast::<PyDict>()?.copy()?)?;
+            }
             for (k, v) in err.bind(py).iter() {
                 f.set_item(format!("error_{}", k.str()?), v)?;
             }

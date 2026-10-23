@@ -6,6 +6,7 @@ from typing import Any
 from togeari.core.contracts.digest import digest
 from togeari.core.contracts.results import Blocked, Cancelled, ItemError, Ok, UnitError
 from togeari.core.contracts.workitem import WorkItem
+from togeari.core.lanes.deadline import replace as replace_deadline
 from togeari.core.plugin.base import PluginBlockError
 from togeari.core.runtime.kir import RuntimeFault
 from togeari.core.runtime.state import (
@@ -92,7 +93,7 @@ class WritebackStage:
             # A replacement item keeps the machine's owner and the lane's bookkeeping
             if new is not it:
                 new.owner = it.owner
-                new.ext = {**it.ext, **new.ext}
+                replace_deadline(it, new)
                 if inf is not None:
                     inf.item = new
             kept.append(new)
@@ -118,6 +119,11 @@ class WritebackStage:
                 queued_s=queued,
                 service_s=(self.clock() - sent) if sent else None,
                 result=type(result).__name__,
+                **(
+                    {"policy_failure": dict(item.ext["policy_failure"])}
+                    if "policy_failure" in item.ext
+                    else {}
+                ),
             )
 
         # A cancel the machine did not ask for fails the statement

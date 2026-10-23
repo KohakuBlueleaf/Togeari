@@ -331,6 +331,10 @@ impl PyLane {
                 .getattr("_spec")?
                 .unbind(),
             round: py.import("builtins")?.getattr("round")?.unbind(),
+            deadlines: py
+                .import("togeari.core.lanes.deadline")?
+                .into_any()
+                .unbind(),
             select_mod: py
                 .import("togeari.core.policies.select")?
                 .into_any()
@@ -381,7 +385,7 @@ impl PyLane {
             visit.call(&*clock)?;
         }
         c.builtins.visit(&visit)?;
-        for o in [&c.log, &c.spec_fn, &c.round, &c.select_mod] {
+        for o in [&c.log, &c.spec_fn, &c.round, &c.select_mod, &c.deadlines] {
             visit.call(o)?;
         }
         let r = &c.rc;

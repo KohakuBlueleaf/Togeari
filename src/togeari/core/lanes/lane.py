@@ -17,6 +17,7 @@ from typing import Any
 
 from togeari.core.contracts.policies import Former, Selector
 from togeari.core.contracts.results import ItemError, Ok, UnitError, UnitUnavailable
+from togeari.core.lanes.deadline import current, expire
 from togeari.core.lanes.health import Health, Retry, State, UnitState
 from togeari.core.lanes.pump import Pump, Submission
 from togeari.core.lanes.queue import Queue
@@ -273,7 +274,14 @@ class Lane(Pump, Health):
         unit_error = None
         for it, r in zip(sub.items, results):
             if it.ext.get("settled"):
+                if isinstance(r, UnitError):
+                    unit_error = r
                 continue
+            if isinstance(r, UnitError):
+                unit_error = r
+            expired = expire(it, now, True)
+            if expired is not None:
+                r = expired
             match r:
                 case UnitError():
                     unit_error = r
@@ -350,13 +358,15 @@ class Lane(Pump, Health):
         return min(ds) if ds else None
 
     def _timing(self, item: Any, sub: Any) -> bool:
-        """Whether a timeout entry still applies: its submission is open, or, for an entry
-        armed at enqueue (``sub`` None), the item still waits in the lane."""
-        if item.ext.get("settled"):
+        """An attempt timer applies while its submission is open; the original call cap
+        stays active across queueing, attempts and backoff until settlement or squash."""
+        item = current(item)
+        if item.ext.get("settled") or item.ext.get("squashed"):
             return False
         if sub is not None:
             return sub.open
-        return self._waiting(item)
+        # The original call cap remains armed through submissions and retry backoff.
+        return True
 
     def _waiting(self, item: Any) -> bool:
         return id(item) in self._held_ids or any(id(item) in q.index for q in self._queues())

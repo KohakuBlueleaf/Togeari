@@ -1,17 +1,32 @@
 """A machine's construction, as data: the core, programs, entries, bindings, lanes, units,
 policies, knobs.
 
-Read on the dispatcher thread or while the dispatcher is not running.
+Read on the dispatcher thread or while the dispatcher is not running. Policy
+rows explain resolved configuration, not a complete execution identity. Advisory
+scheduling preferences can still affect timing; no timing-invariance claim is made.
+
+``bindings`` describes construction configuration. Binding configuration is fixed
+for a machine: mutating ``machine.bind`` or a ``Use`` object is not a supported
+rebind of already loaded regions. Program ``calls`` report the actual resolved
+``Bound`` values, not a reinterpretation of that mutable configuration. Documented
+lane-policy commands are separate from program rebinding.
 """
 
 from typing import Any
 
+from togeari.core.contracts.execution import ExecutionPolicy
 from togeari.core.plugin.base import PluginContext
+from togeari.core.plugin.tables import bound_calls
 from togeari.plugins.common.machine import describe, plain
 
 
 def binding(b: Any) -> dict:
-    return {"type": type(b).__name__, **{k: plain(v) for k, v in vars(b).items()}}
+    values = {k: plain(v) for k, v in vars(b).items()}
+    policy = getattr(b, "policy", None)
+    if isinstance(policy, ExecutionPolicy):
+        # None means unspecified; {timeout_s: None} explicitly disables legacy hints.
+        values["policy"] = {"timeout_s": policy.timeout_s}
+    return {"type": type(b).__name__, **values}
 
 
 def lane(view: dict) -> dict:
@@ -28,6 +43,17 @@ def lane(view: dict) -> dict:
         "retry": describe(config["retry"]),
         "timeout_s": config["timeout_s"],
         "lane_dead_s": config["lane_dead_s"],
+        "observable_policy": {
+            "timeout_s": config["timeout_s"],
+            "retry": describe(config["retry"]),
+            "lane_dead_s": config["lane_dead_s"],
+        },
+        "advisory": {
+            "former": describe(config["former"]),
+            "select": describe(config["select"]),
+            "forming": config["forming"],
+            "max_inflight": config["max_inflight"],
+        },
     }
 
 
@@ -48,6 +74,7 @@ def machine_spec(ctx: PluginContext) -> dict:
             "inputs": [p.name for p in r.job.params],
             "outputs": r.job.outputs,
             "warnings": list(r.job.warnings),
+            "calls": bound_calls(code, r),
         }
         for r in code.regions
     }

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from togeari.core.contracts.results import UnitError
+from togeari.core.lanes.deadline import arm
 from togeari.core.lanes.health import State
 
 log = logging.getLogger("togeari.lane")
@@ -187,9 +188,33 @@ class Pump:
 
     # ------------------------------------------------------------ submissions
     def _submit(self, unit: Any, items: list, now: float) -> None:
+        # Expired call caps never reach a unit; timers settle them from the held set.
+        live = []
+        for item in items:
+            cap = item.ext.get("deadline_cap")
+            if cap is not None and now >= cap:
+                self._held_ids[id(item)] = item
+            else:
+                live.append(item)
+        items = live
+        if not items:
+            return
+
         # Plugins see (and may block) items after unit choice
         if self.hook_submit is not None:
             items = self.hook_submit(self, unit, items)
+            if not items:
+                return
+            # User preparation consumes the call budget, not the submitted-attempt budget.
+            now = max(now, self.clock())
+            live = []
+            for item in items:
+                cap = item.ext.get("deadline_cap")
+                if cap is not None and now >= cap:
+                    self._held_ids[id(item)] = item
+                else:
+                    live.append(item)
+            items = live
             if not items:
                 return
 
@@ -248,18 +273,10 @@ class Pump:
             )
 
     def _arm_timeout(self, item: Any, sub: Submission, now: float) -> None:
-        """The item's deadline in flight: ``sent + timeout_s``, or the ``WorkItem.deadline`` it
-        carried when queued (the statement's ``@hint timeout_s``), whichever is earlier."""
-        ends = [item.ext.get("deadline_cap")]
-        if self.timeout_s is not None:
-            ends.append(now + self.timeout_s)
-        ends = [t for t in ends if t is not None]
-        if not ends:
+        """Arm the min of the original call cap and this attempt's submitted-time cap."""
+        deadline = arm(item, now, self.timeout_s)
+        if deadline is None:
             return
-        deadline = min(ends)
-        item.ext["timeout_s"] = round(deadline - now, 6)
-        item.ext["deadline"] = deadline
-        item.deadline = deadline
         heapq.heappush(self._timeouts, (deadline, next(self._seq), item, sub))
 
         # Entries of settled items are dropped once they outnumber the items in flight

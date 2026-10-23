@@ -11,6 +11,7 @@
 | [Modules and origins](modules-and-origins.md) | importable KIR subgraphs, dependency identity, source attribution, portable replay archives |
 | [Typed records](records.md) | immutable schemas and values, ordinary worker calls, explicit codec boundaries, storage and replay |
 | [Ordered collection](collect.md) | native result-producing iteration, carried state, precise faults, mutation restriction and fallback replay |
+| [Execution policy](execution-policy.md) | explicit call deadlines, lane attempt limits, retry scope, failure causes and legacy timeout-hint migration |
 | [Conformance](conformance.md) | recording, `conform()` in replay and re-execute modes, `togeari conform`, reading records with `Archive`, `togeari doctor` |
 | [Examples](examples.md) | what each example shows and how to run it |
 

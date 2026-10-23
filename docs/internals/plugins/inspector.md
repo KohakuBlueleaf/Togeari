@@ -38,6 +38,22 @@ thread (`togeari-inspector`). Requests reach the machine only through `ctx.inspe
 
 Errors answer `{"error": message}`.
 
+## Effective call policy
+
+`GET /queries/programs` retains its existing region/source/entry/hash/address,
+input/output, dependency and origin fields, and adds a `calls` list per program.
+Each row has `addr`, `node`, `origin`, selected binding `pattern`, `inline`,
+`lane` (null for inline), and `execution_policy: {source, timeout_s}`.
+The source is `binding`, `legacy_hint`, or `none`; zero timeout is distinct from
+null. An explicitly empty binding policy overrides a legacy timeout hint.
+
+These are detached copies of the currently resolved per-instruction `Bound`
+values, shared with the [run-report policy view](report.md). They do not infer a
+new policy from mutable configuration. Bindings are fixed for a machine;
+mutating `m.bind` or a `Use` object is not a supported rebind of existing regions.
+The documented lane-policy commands are separate. This explanatory query is not
+a complete execution identity or execution manifest.
+
 ## Access
 
 Every request is checked before it is served (`_refused`):

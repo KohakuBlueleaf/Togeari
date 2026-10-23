@@ -164,8 +164,23 @@ class FaultStage:
             x.instr.record_origin(job.stats.setdefault("record_origins", []), len(job.record))
             job.record.append((x.instr.node, x.dig, "error", err, None))
         origin = x.instr.origin_dict()
+        policy = x.item.ext.get("policy_failure") if x.item is not None else None
+        policy_fields = {}
+        if policy is not None:
+            policy = dict(policy)
+            policy_fields["policy_failure"] = policy
+            job.stats.setdefault("policy_failures", []).append(
+                {
+                    **policy,
+                    "node": x.instr.node,
+                    "addr": x.instr.addr,
+                    "key": x.key,
+                    "record_index": len(job.record) - 1 if job.record is not None else None,
+                    "origin": origin,
+                }
+            )
         job.stats["fault_origin"] = origin
-        info = {"job": job.id, "key": job.key, "origin": origin, **err}
+        info = {"job": job.id, "key": job.key, "origin": origin, **err, **policy_fields}
         self.plugins.notify("on_fault", info, where=self.where(job))
         if self.bus.wants("fault.taken", job.id):
             self.bus.emit(
@@ -175,6 +190,7 @@ class FaultStage:
                 key=x.key,
                 squashed=job.stats["squashed"],
                 origin=origin,
+                **policy_fields,
                 **{f"error_{k}": v for k, v in err.items()},
             )
         names, frames, prefix, counter = x.snapshot

@@ -114,6 +114,34 @@ def q_units(m: Any) -> list[dict]:
     return [u for lane in q_lanes(m) for u in lane["units"]]
 
 
+def bound_calls(code: Any, region: Any) -> list[dict]:
+    """Detached, explanatory placement/policy rows; not an execution identity.
+
+    Report the resolved per-call policy, not a merged lane deadline: call timeouts
+    and lane timeouts have different clock origins and are enforced together at runtime.
+    """
+    rows = []
+    for ins in code.calls(region):
+        bound = ins.binding
+        if bound is None:
+            continue
+        rows.append(
+            {
+                "addr": ins.addr,
+                "node": ins.node,
+                "origin": copy.deepcopy(ins.origin_dict()),
+                "pattern": bound.pattern,
+                "inline": bound.inline,
+                "lane": None if bound.inline else bound.lane.name,
+                "execution_policy": {
+                    "source": bound.policy_source,
+                    "timeout_s": bound.policy.timeout_s,
+                },
+            }
+        )
+    return rows
+
+
 def q_programs(m: Any) -> list[dict]:
     return [
         {
@@ -125,6 +153,7 @@ def q_programs(m: Any) -> list[dict]:
             "inputs": [p.name for p in r.job.params],
             "outputs": r.job.outputs,
             "dependencies": copy.deepcopy(r.job.dependencies),
+            "calls": bound_calls(m.code, r),
             "origins": {
                 str(addr): m.code.mem[addr].origin_dict()
                 for addr in range(r.start, r.end)

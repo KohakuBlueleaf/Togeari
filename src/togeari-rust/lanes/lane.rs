@@ -268,6 +268,7 @@ pub struct LaneCore {
     pub spec_fn: Obj,
     pub round: Obj,
     pub select_mod: Obj,
+    pub deadlines: Obj,
     pub rc: ResultClasses,
 }
 
@@ -1060,9 +1061,17 @@ impl LaneCore {
         let mut unit_error: Option<Bound<'_, PyAny>> = None;
         for (it, r) in items.iter().zip(results.iter()) {
             let ext = it.bind(py).getattr(intern!(py, "ext"))?;
+            if r.is_instance(rc.unit_error.bind(py))? {
+                unit_error = Some(r.clone());
+            }
             if truthy_get(&ext, "settled")? {
                 continue;
             }
+            let enforced = self
+                .deadlines
+                .bind(py)
+                .call_method1("expire", (it.bind(py), now, true))?;
+            let r = if enforced.is_none() { r } else { &enforced };
             if r.is_instance(rc.unit_error.bind(py))? {
                 unit_error = Some(r.clone());
                 if truthy_get(&ext, "squashed")? {
@@ -1198,20 +1207,25 @@ impl LaneCore {
         Ok(ds.into_iter().reduce(f64::min))
     }
 
-    /// Whether a timeout entry still applies: its submission is open, or, for an entry armed at
-    /// enqueue, the item still waits in the lane.
+    /// Attempt timers require an open submission; the original call cap stays active
+    /// through queueing, attempts and backoff until settlement or squash.
     pub fn timing(&self, py: Python<'_>, seq: u64, sub: Option<u64>) -> PyResult<bool> {
         let item = match self.st.borrow().timeout_items.get(&seq) {
             Some(i) => i.clone_ref(py),
             None => return Ok(false),
         };
-        if flag(py, &item, "settled")? {
+        let item = self
+            .deadlines
+            .bind(py)
+            .call_method1("current", (item,))?
+            .unbind();
+        if flag(py, &item, "settled")? || flag(py, &item, "squashed")? {
             return Ok(false);
         }
         let st = self.st.borrow();
         Ok(match sub {
             Some(s) => st.subs.contains_key(&s),
-            None => st.waiting(item.as_ptr() as usize),
+            None => true, // The initial call deadline survives every attempt/backoff.
         })
     }
 
@@ -1723,29 +1737,33 @@ impl LaneCore {
             let (true, Some(item)) = (timing, item) else {
                 continue;
             };
+            let item = self
+                .deadlines
+                .bind(py)
+                .call_method1("current", (item,))?
+                .unbind();
             let itb = item.bind(py);
             let ext = itb.getattr(intern!(py, "ext"))?;
+            let current = match sub {
+                Some(sid) => Some(sid),
+                None => ext
+                    .call_method1(intern!(py, "get"), ("sub",))?
+                    .extract::<Option<u64>>()?
+                    .filter(|sid| self.st.borrow().subs.contains_key(sid)),
+            };
+            let result = self
+                .deadlines
+                .bind(py)
+                .call_method1("expire", (itb, now, current.is_some()))?;
+            if result.is_none() {
+                continue;
+            }
             ext.set_item("settled", true)?;
-            let node = itb.getattr(intern!(py, "node"))?;
-            match sub {
-                None => {
-                    self.v_remove(py, itb)?;
-                    let err = rc
-                        .item_timeout
-                        .bind(py)
-                        .call1((format!("{}: past its deadline while queued", node.str()?),))?;
-                    out.push((item.clone_ref(py), rc.item_error.bind(py).call1((err,))?.unbind()));
-                }
-                Some(sid) => {
-                    let limit = ext.call_method1(intern!(py, "get"), ("timeout_s",))?;
-                    let err = rc.item_timeout.bind(py).call1((format!(
-                        "{}: over {}s",
-                        node.str()?,
-                        limit.str()?
-                    ),))?;
-                    out.push((item.clone_ref(py), rc.item_error.bind(py).call1((err,))?.unbind()));
-                    expired.push(sid);
-                }
+            out.push((item.clone_ref(py), result.unbind()));
+            if let Some(sid) = current {
+                expired.push(sid);
+            } else {
+                self.v_remove(py, itb)?;
             }
         }
         for sid in expired {

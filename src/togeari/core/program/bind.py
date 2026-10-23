@@ -1,13 +1,14 @@
 """Bindings: node-name patterns -> a lane (with adapter and store mode) or inline (spec/02 §2.4)."""
 
 import fnmatch
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from kohakunode.sig.env import Resolved
 from kohakunode.sig.std import INTERNAL
 
 from togeari.core.construct.errors import Problems
+from togeari.core.contracts.execution import ExecutionPolicy
 from togeari.core.program.code import CodeMemory, Region
 from togeari.core.program.decode.instr import Instr
 
@@ -16,12 +17,17 @@ STORE_MODES = (None, "content", "positional")
 
 @dataclass
 class Use:
-    """Bind nodes to a lane (or one engine, as shorthand for a one-unit lane)."""
+    """Bind nodes to a lane (or one engine, as shorthand for a one-unit lane).
+
+    An explicit policy, including an empty one, overrides legacy timeout hints.
+    Without one, legacy hints are resolved once at binding time with a warning.
+    """
 
     target: Any
     adapter: Any = None
     store: str | None = None
     idempotent: bool = False
+    policy: ExecutionPolicy | None = None
 
 
 @dataclass
@@ -43,6 +49,8 @@ class Bound:
     store: str | None = None
     idempotent: bool = False
     warn_us: float | None = None
+    policy: ExecutionPolicy = field(default_factory=ExecutionPolicy)
+    policy_source: str = "none"
 
 
 @dataclass
@@ -110,6 +118,38 @@ def check_unit(ins: Instr, adapter: Any, unit: Any, protocol: str) -> list[str]:
     return out
 
 
+def _execution_policy(
+    explicit: ExecutionPolicy | None, hint: dict, problems: Problems, where: str
+) -> tuple[ExecutionPolicy, str]:
+    """Resolve lane policy once; malformed legacy values become construction diagnostics."""
+    if explicit is not None:
+        if not isinstance(explicit, ExecutionPolicy):
+            problems.add(where, "Use.policy must be an ExecutionPolicy or None")
+            return ExecutionPolicy(), "none"
+        if "timeout_s" in hint:
+            problems.warn(where, "binding ExecutionPolicy overrides legacy @hint timeout_s")
+        return explicit, "binding"
+    if "timeout_s" not in hint:
+        return ExecutionPolicy(), "none"
+    problems.warn(
+        where, "legacy @hint timeout_s is deprecated; use Use(..., policy=ExecutionPolicy(...))"
+    )
+    try:
+        value = hint["timeout_s"]
+        # Preserve historical conversion (including numeric strings and bools),
+        # then enforce the new finite/nonnegative construction-time contract.
+        policy = ExecutionPolicy(None if value is None else float(value))
+    except (TypeError, ValueError, OverflowError) as exc:
+        problems.add(where, f"invalid legacy @hint timeout_s: {exc}")
+        return ExecutionPolicy(), "none"
+    return policy, "legacy_hint"
+
+
+def _warn_inline_timeout(hint: dict, problems: Problems, where: str) -> None:
+    if "timeout_s" in hint:
+        problems.warn(where, "legacy @hint timeout_s is ignored for Inline execution")
+
+
 def bind_region(
     code: CodeMemory,
     region: Region,
@@ -127,16 +167,17 @@ def bind_region(
             problems.add(src, f"node {ins.node!r} is unknown")
             continue
         resolved = region.job.env.resolve(ins.node)
+        where = str(ins.span) if ins.span else src
         if (
             ins.node in ("kir.collect_items", "kir.collect_append")
             and isinstance(resolved, Resolved)
             and resolved.library is INTERNAL
         ):
+            _warn_inline_timeout(ins.hint, problems, where)
             ins.binding = Bound(ins.node, True, fn=region.job.env.impl(ins.node))
             continue
         names = names_of(ins, region)
         pat, ties = match(patterns, names)
-        where = str(ins.span) if ins.span else src
         if pat is None:
             problems.add(where, f"node {ins.node!r} is not bound")
             continue
@@ -151,6 +192,7 @@ def bind_region(
 
         # Inline: the library function on the dispatcher
         if isinstance(b, Inline):
+            _warn_inline_timeout(ins.hint, problems, where)
             if fn is None:
                 problems.add(where, f"node {ins.node!r} is inline but has no Python implementation")
                 continue
@@ -160,6 +202,7 @@ def bind_region(
         # A lane: adapter and units must agree
         if not isinstance(b, Use):
             b = Use(b)
+        policy, policy_source = _execution_policy(b.policy, ins.hint, problems, where)
         lane = lane_of(b.target)
         adapter = adapter_for(b.adapter, defaults.adapter, fn)
         for msg in adapter.check(ins.signature):
@@ -175,5 +218,13 @@ def bind_region(
             problems.warn("bind", f"node {ins.node!r} is ordered; its store={store!r} is ignored")
             store = None
         ins.binding = Bound(
-            pat, False, fn=fn, lane=lane, adapter=adapter, store=store, idempotent=b.idempotent
+            pat,
+            False,
+            fn=fn,
+            lane=lane,
+            adapter=adapter,
+            store=store,
+            idempotent=b.idempotent,
+            policy=policy,
+            policy_source=policy_source,
         )

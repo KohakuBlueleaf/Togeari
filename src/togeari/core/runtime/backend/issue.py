@@ -211,7 +211,8 @@ class IssueStage:
                     return
                 self.stats["store_misses"] += 1
 
-        # Lane: a work item queued for the lane's units
+        # Lane: the call budget begins before item preparation and policy callbacks.
+        now = self.clock()
         item = WorkItem(
             ins.node,
             inf.values,
@@ -220,10 +221,11 @@ class IssueStage:
             priority=self.issue_priority(inf),
             owner=inf,
         )
-        timeout = ins.hint.get("timeout_s")
-        now = self.clock()
+        timeout = b.policy.timeout_s
         if timeout is not None:
-            item.deadline = now + float(timeout)
+            item.deadline = now + timeout
+            item.ext["call_timeout_s"] = timeout
+            item.ext["policy_source"] = b.policy_source
         item.ext["job_key"] = inf.job.key
         item.ext["job"] = inf.job.id
         item.ext["hint"] = ins.hint

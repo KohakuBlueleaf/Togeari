@@ -560,7 +560,8 @@ impl Core {
             }
         }
 
-        // Lane: a work item queued for the lane's units
+        // The call budget starts before preparation and policy callbacks.
+        let t = self.now(py)?;
         let priority = self.issue_priority(py, now, inf)?;
         let (jid, jkey, entry_name) = {
             let j = job.borrow();
@@ -602,17 +603,12 @@ impl Core {
             (ins.node.bind(py), values.bind(py), b.adapter.as_ref().map(|a| a.bind(py))),
             Some(&kw),
         )?;
-        let t = self.now(py)?;
-        if let Some(h) = &ins.hint_timeout {
-            if !h.bind(py).is_none() {
-                let s: f64 = py
-                    .get_type::<pyo3::types::PyFloat>()
-                    .call1((h.bind(py),))?
-                    .extract()?;
-                item.setattr(intern!(py, "deadline"), t + s)?;
-            }
-        }
         let ext = item.getattr(intern!(py, "ext"))?;
+        if let Some(timeout) = b.timeout_s {
+            item.setattr(intern!(py, "deadline"), t + timeout)?;
+            ext.set_item("call_timeout_s", timeout)?;
+            ext.set_item("policy_source", &b.policy_source)?;
+        }
         ext.set_item(intern!(py, "job_key"), jkey)?;
         ext.set_item(intern!(py, "job"), jid)?;
         ext.set_item(intern!(py, "hint"), ins.hint.bind(py))?;

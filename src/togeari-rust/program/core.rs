@@ -123,6 +123,8 @@ pub struct Binding {
     pub store: StoreMode,
     pub idempotent: bool,
     pub warn_us: Option<f64>,
+    pub timeout_s: Option<f64>,
+    pub policy_source: String,
 }
 
 /// One decoded statement and, for a control instruction, its decode tables.
@@ -135,7 +137,6 @@ pub struct Instr {
     pub cases: Vec<(Obj, i64)>,
     pub default: Option<i64>,
     pub hint: Py<PyDict>,
-    pub hint_timeout: Option<Obj>,
     pub hint_priority: Option<Obj>,
     // ``int(hint priority)`` (0 without one) when it is an int Rust holds
     pub hint_rank: Option<i64>,

@@ -17,6 +17,7 @@ from togeari.core.contracts.engine import (
     StreamEngine,
     Work,
 )
+from togeari.core.contracts.execution import ExecutionPolicy
 from togeari.core.contracts.io import MISS, JobRecord, Sink, Source, SourceItem, Store
 from togeari.core.contracts.policies import Admission, Former, Issue, Selector
 from togeari.core.contracts.results import (
@@ -43,6 +44,7 @@ __all__ = [
     "Done",
     "Engine",
     "EngineBase",
+    "ExecutionPolicy",
     "Former",
     "Issue",
     "ItemError",

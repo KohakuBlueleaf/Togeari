@@ -159,16 +159,8 @@ impl Core {
             // A replacement item keeps the machine's owner and the lane's bookkeeping
             if !new.is(&it) {
                 new.setattr(intern!(py, "owner"), &owner)?;
-                let ext = PyDict::new(py);
-                ext.update(
-                    it.getattr(intern!(py, "ext"))?
-                        .cast::<pyo3::types::PyMapping>()?,
-                )?;
-                ext.update(
-                    new.getattr(intern!(py, "ext"))?
-                        .cast::<pyo3::types::PyMapping>()?,
-                )?;
-                new.setattr(intern!(py, "ext"), ext)?;
+                py.import("togeari.core.lanes.deadline")?
+                    .call_method1("replace", (&it, &new))?;
                 if let Some(inf) = self.owned_inf(&owner)? {
                     inf.borrow_mut().item = Some(new.clone().unbind());
                 }
@@ -229,6 +221,10 @@ impl Core {
             f.set_item("queued_s", queued)?;
             f.set_item("service_s", service)?;
             f.set_item("result", result.get_type().name()?)?;
+            let policy = ext.call_method1(intern!(py, "get"), ("policy_failure",))?;
+            if !policy.is_none() {
+                f.set_item("policy_failure", policy.cast::<PyDict>()?.copy()?)?;
+            }
             self.emit(py, "lane.result", &f)?;
         }
 

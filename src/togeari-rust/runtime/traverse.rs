@@ -298,7 +298,7 @@ impl Tr<'_> {
         v.call(&i.py)?;
         v.call(&i.hint)?;
         v.call(&i.node)?;
-        for o in [&i.hint_timeout, &i.hint_priority].into_iter().flatten() {
+        for o in [&i.hint_priority].into_iter().flatten() {
             v.call(o)?;
         }
         for (c, _) in &i.cases {

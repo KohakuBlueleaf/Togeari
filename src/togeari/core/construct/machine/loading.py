@@ -1,6 +1,7 @@
 """Loading programs: stage (decode, bind, check), then commit (make visible), at construction
 or while running (the `load` command)."""
 
+import logging
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +13,8 @@ from togeari.core.lanes.lane import Lane
 from togeari.core.program.bind import bind_region
 from togeari.core.program.code import Region
 from togeari.core.program.job import build_job_programs
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -160,7 +163,7 @@ class LoadStage:
         fut: Future = Future()
         units = [u for lane in staged.lanes for u in lane.units]
         if not units or not self.units_started:
-            fut.set_result(self._commit(staged))
+            fut.set_result(self._commit_loaded(staged, problems))
             return fut
 
         # Staged names and programs are taken until the units have started
@@ -173,10 +176,18 @@ class LoadStage:
                 self._discard(staged)
                 fut.set_exception(ConstructionError(failures))
             else:
-                fut.set_result(self._commit(staged))
+                fut.set_result(self._commit_loaded(staged, problems))
 
         self._start_off_thread(units, started, fut)
         return fut
+
+    def _commit_loaded(self, staged: Staged, problems: Problems) -> list[str]:
+        """Publish successful dynamic-load warnings once, never pending or failed staging."""
+        names = self._commit(staged)
+        self.warnings.extend(problems.warnings)
+        for warning in problems.warnings:
+            log.warning("%s", warning)
+        return names
 
     def _discard(self, staged: Staged) -> None:
         """Drop a failed load's new regions from code memory, newest first."""

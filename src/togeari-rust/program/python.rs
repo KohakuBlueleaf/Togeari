@@ -107,6 +107,11 @@ fn binding(b: &Bound<'_, PyAny>) -> PyResult<Option<Binding>> {
         store,
         idempotent: b.getattr(intern!(py, "idempotent"))?.is_truthy()?,
         warn_us: b.getattr(intern!(py, "warn_us"))?.extract()?,
+        timeout_s: b
+            .getattr(intern!(py, "policy"))?
+            .getattr(intern!(py, "timeout_s"))?
+            .extract()?,
+        policy_source: b.getattr(intern!(py, "policy_source"))?.extract()?,
     }))
 }
 
@@ -151,7 +156,6 @@ fn instr(code: &mut Code, ins: &Bound<'_, PyAny>) -> PyResult<Instr> {
         mutates.push(port.unbind());
     }
     let hint = g("hint")?.cast_into::<PyDict>()?;
-    let hint_timeout = hint.get_item("timeout_s")?.map(|v| v.unbind());
     let hint_priority = hint.get_item("priority")?.map(|v| v.unbind());
     let hint_rank = match &hint_priority {
         None => Some(0),
@@ -192,7 +196,6 @@ fn instr(code: &mut Code, ins: &Bound<'_, PyAny>) -> PyResult<Instr> {
         cases,
         default: opt_i64(&g("default")?)?,
         hint: hint.unbind(),
-        hint_timeout,
         hint_priority,
         hint_rank,
         node: g("node")?.str()?.unbind(),

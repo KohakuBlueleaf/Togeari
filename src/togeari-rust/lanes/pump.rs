@@ -728,8 +728,29 @@ impl LaneCore {
         };
         let ub = unit_obj.bind(py);
 
+        // Expired call caps wait only for timer settlement, never engine submission.
+        let mut live = Vec::with_capacity(items.len());
+        for item in items {
+            let cap = item
+                .bind(py)
+                .getattr(intern!(py, "ext"))?
+                .call_method1(intern!(py, "get"), ("deadline_cap",))?;
+            if !cap.is_none() && now >= as_f64(&cap)? {
+                let mut st = self.st.borrow_mut();
+                let seq = st.next_seq();
+                st.held_index.insert(item.as_ptr() as usize, seq);
+                st.held_items.insert(seq, item);
+            } else {
+                live.push(item);
+            }
+        }
+        if live.is_empty() {
+            return Ok(());
+        }
+
         // Plugins see (and may block) items after unit choice
-        let mut items = items;
+        let mut items = live;
+        let mut now = now;
         let hook = lane.getattr(intern!(py, "hook_submit"))?;
         if !hook.is_none() {
             let list = PyList::new(py, items.iter().map(|i| i.bind(py)))?;
@@ -741,6 +762,27 @@ impl LaneCore {
                 .try_iter()?
                 .map(|x| x.map(|x| x.unbind()))
                 .collect::<PyResult<Vec<_>>>()?;
+            // Preparation uses the call budget; each attempt starts after the hook.
+            now = now.max(self.now(py)?);
+            let mut live = Vec::with_capacity(items.len());
+            for item in items {
+                let cap = item
+                    .bind(py)
+                    .getattr(intern!(py, "ext"))?
+                    .call_method1(intern!(py, "get"), ("deadline_cap",))?;
+                if !cap.is_none() && now >= as_f64(&cap)? {
+                    let mut st = self.st.borrow_mut();
+                    let seq = st.next_seq();
+                    st.held_index.insert(item.as_ptr() as usize, seq);
+                    st.held_items.insert(seq, item);
+                } else {
+                    live.push(item);
+                }
+            }
+            items = live;
+            if items.is_empty() {
+                return Ok(());
+            }
         }
 
         // Submission and in-flight accounting
@@ -860,21 +902,15 @@ impl LaneCore {
     /// carried when queued, whichever is earlier.
     fn arm_timeout(&self, py: Python<'_>, item: &Obj, sid: u64, now: f64) -> PyResult<()> {
         let itb = item.bind(py);
-        let ext = itb.getattr(intern!(py, "ext"))?;
-        let cap = ext.call_method1(intern!(py, "get"), ("deadline_cap",))?;
-        let mut ends: Vec<f64> = Vec::new();
-        if !cap.is_none() {
-            ends.push(as_f64(&cap)?);
-        }
-        if let Some(t) = self.st.borrow().cfg.timeout_s {
-            ends.push(now + t);
-        }
-        let Some(deadline) = ends.into_iter().reduce(|a, b| if b < a { b } else { a }) else {
+        let timeout = self.st.borrow().cfg.timeout_s;
+        let deadline = self
+            .deadlines
+            .bind(py)
+            .call_method1("arm", (itb, now, timeout))?;
+        if deadline.is_none() {
             return Ok(());
-        };
-        ext.set_item("timeout_s", self.round.bind(py).call1((deadline - now, 6))?)?;
-        ext.set_item("deadline", deadline)?;
-        itb.setattr(intern!(py, "deadline"), deadline)?;
+        }
+        let deadline = as_f64(&deadline)?;
         let rebuild = {
             let mut st = self.st.borrow_mut();
             let s = st.next_seq();

@@ -40,7 +40,7 @@ class UnitUnavailable(RuntimeError):
 
 
 class ItemTimeout(TimeoutError):
-    """The item ran past the lane's ``timeout_s``."""
+    """A call or attempt deadline expired (also usable as an ordinary host exception)."""
 
 
 class Blocked(RuntimeError):

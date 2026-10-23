@@ -10,7 +10,8 @@ import heapq
 from dataclasses import dataclass, field
 from typing import Any
 
-from togeari.core.contracts.results import Cancelled, ItemError, ItemTimeout, UnitUnavailable
+from togeari.core.contracts.results import Cancelled, ItemError, UnitUnavailable
+from togeari.core.lanes.deadline import current, expire
 from togeari.core.lanes.queue import FRONT, Queue
 
 # Health-poll backoff of a down unit: first wait and ceiling, in seconds.
@@ -227,15 +228,18 @@ class Health:
             _, _, item, sub = heapq.heappop(tq)
             if not self._timing(item, sub):
                 continue
-            item.ext["settled"] = True
-            if sub is None:
-                self.remove(item)
-                err = ItemTimeout(f"{item.node}: past its deadline while queued")
-                out.append((item, ItemError(err)))
+            item = current(item)
+            # The persistent call-cap entry may fire while the item is in flight.
+            active = sub or self.subs.get(item.ext.get("sub"))
+            result = expire(item, now, active is not None and active.open)
+            if result is None:
                 continue
-            limit = item.ext.get("timeout_s")
-            out.append((item, ItemError(ItemTimeout(f"{item.node}: over {limit}s"))))
-            expired.append(sub)
+            item.ext["settled"] = True
+            out.append((item, result))
+            if active is None or not active.open:
+                self.remove(item)
+            else:
+                expired.append(active)
         for sub in expired:
             if sub.open and all(it.ext.get("settled") for it in sub.items):
                 with contextlib.suppress(Exception):

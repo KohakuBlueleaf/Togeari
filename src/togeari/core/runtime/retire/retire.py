@@ -106,7 +106,10 @@ class RetireStage:
         if token["status"] == "committed":
             return True
         if token["status"] == "failed":
-            self.fault(inf, RuntimeError(token.get("error", "event journal rejected append")), True)
+            # Commitment infrastructure failures are terminal, not source-node exceptions.
+            self.fault(
+                inf, RuntimeFault(token.get("error", "event journal rejected append")), False
+            )
             self.dirty[job.id] = None
         return False
 

@@ -52,6 +52,17 @@ Cancellation during an accepted append must resolve possible commitment; bounded
 shutdown may report an unknown append outcome, not falsely claim no event existed.
 Unacknowledged durable events are recovered from the journal on restart.
 
+Failure stages remain distinct on both cores:
+
+- Invalid or oversized payloads rejected before append are catchable node-validation failures.
+- A failed commitment token (definitive append conflict or journal recovery failure) is a
+  terminal `KirRuntimeError`, not catchable by KIR `@except`. The diagnostic retains the
+  rejection cause and source attribution. Younger ordered effects do not execute, and
+  previously committed events remain the prefix; rejection invents no committed event.
+- Transient append errors retain the existing retry behavior and stable event identity.
+- Sink errors after commitment retry delivery/acknowledgment without undoing the prefix.
+- Ambiguous append outcomes during shutdown remain explicitly unknown, not absent.
+
 `CommittedEvent.to_dict()` returns a detached envelope containing `schema`,
 `version`, `job_execution_id`, `sequence`, `event_id`, `invocation_id`, `topic`,
 `encoded_payload`, and `origin`. Sequence starts at zero per logical job, and event

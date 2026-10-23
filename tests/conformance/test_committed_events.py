@@ -14,7 +14,7 @@ from kohakunode.records import decode_portable
 from togeari import ConstructionError, Inline, Machine, Use
 from togeari.conformance import conform
 from togeari.core.contracts.engine import EngineBase
-from togeari.core.contracts.events import EventOutput
+from togeari.core.contracts.events import EventConflict, EventOutput
 from togeari.core.contracts.results import ItemError, Ok
 from togeari.core.runtime.checkpoints import checkpoint_key
 from togeari.io.events import SQLiteEventJournal
@@ -399,6 +399,58 @@ def test_invalid_or_oversized_emit_is_catchable_and_never_appends(core, payload,
         assert journal.events == [] and sink.delivered.empty()
         assert len(record.record) == 1
         assert conform(machine.code.entries["main"].region.job, record, {"payload": payload}).ok
+    finally:
+        stop(machine, journal, sink)
+
+
+class RejectingJournal(Journal):
+    """Definitive append rejection or startup recovery failure, never transient retry."""
+
+    def __init__(self, stage):
+        super().__init__()
+        self.stage = stage
+
+    def append(self, event):
+        if event.topic == "rejected":
+            raise EventConflict("fixture append conflict")
+        super().append(event)
+
+    def pending(self, limit=64, max_bytes=None):
+        if self.stage == "recovery":
+            raise OSError("fixture recovery unavailable")
+        return super().pending(limit, max_bytes)
+
+
+@pytest.mark.parametrize("core", ["python", "rust"])
+@pytest.mark.parametrize("stage", ["append", "recovery"])
+def test_failed_event_commit_is_terminal_not_catchable(core, stage):
+    prefix = '    ("prefix", 1)emit()\n' if stage == "append" else ""
+    source = "@def ()main(result):\n" + prefix + """    result = 0
+    @try:
+        ("rejected", 2)emit()
+        (11)ordered_note(result)
+    @except caught:
+        (22)ordered_note(result)
+    (33)ordered_note(result)
+"""
+    ORDERED.clear()
+    machine, journal, sink = make(core, source, journal=RejectingJournal(stage))
+    try:
+        record = machine.submit({}, key="commit-rejected").result(5)
+        assert not record.ok
+        assert record.failure["kind"] == "KirRuntimeError"
+        cause = "fixture append conflict" if stage == "append" else "fixture recovery unavailable"
+        assert cause in record.failure["message"]
+        assert record.failure["node"].endswith("emit")
+        assert ORDERED == []
+        committed = record.stats["committed_events"]["events"]
+        assert [event["topic"] for event in committed] == (["prefix"] if prefix else [])
+        assert [event.topic for event in journal.events] == (["prefix"] if prefix else [])
+        if prefix:
+            journal.acknowledged.get(timeout=5)
+        status = machine.inspect("event_output").result(5)["status"]
+        assert status["pending_events"] == 0
+        assert status["pending_bytes"] == 0
     finally:
         stop(machine, journal, sink)
 

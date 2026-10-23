@@ -17,6 +17,7 @@
 | [Result reuse](result-reuse.md) | deterministic eligibility, content v2 and invocation-safe positional v3 keys, live configuration transitions and migration |
 | [Requested checkpoints](checkpoints.md) | coherent retirement cuts, pinned artifacts, asynchronous persistence and explicit compatible resume |
 | [Resource budgets](resource-budgets.md) | additive budget-aware batches, cheap estimates, lifecycle accounting and new-job backpressure |
+| [Explaining waits](explaining-waits.md) | bounded causal snapshots linking input, control, effect, lane and checkpoint waits to source origins |
 | [Conformance](conformance.md) | recording, `conform()` in replay and re-execute modes, `togeari conform`, reading records with `Archive`, `togeari doctor` |
 | [Examples](examples.md) | what each example shows and how to run it |
 

@@ -24,6 +24,53 @@ dispatcher reads or writes job state.
 | `plugins` | — | `name`, `priority`, `enabled`, `errors`, `hook_s` (time per hook) |
 | `knobs` | — | the registry; non-scalar values (policies) as their class name |
 | `stats` | — | a deep copy of the dispatcher totals; `inline_s` as total seconds per node |
+| `waits` | `job=None`, `limit=256` | version-1 detached causal metadata graph; numeric resident-job filter, total entity+relation bound, explicit truncation/unsupported capabilities |
+
+## Wait snapshot schema
+
+`core/observe/waits.py` owns the shared renderer. Python reads live runtime
+metadata; native `_wait_state(job, limit)` supplies the same private metadata DTO.
+Private WorkItem references are used only to inspect cached core lane state and
+never appear in the result. No payload, adapter preparation, policy/selector or
+engine-capacity callback is executed.
+
+```json
+{
+  "schema": 1,
+  "run_id": "machine-query-local-uuid32",
+  "snapshot_id": 1,
+  "job": null,
+  "entities": [],
+  "relations": [],
+  "truncated": false,
+  "unsupported": []
+}
+```
+
+Entities have `id`, `kind`, `state` plus relevant instruction `addr`, `region`,
+logical `key`, verbatim `origin`, and invocation/attempt metadata. Kinds include
+`job`, `inflight`, `strand`, `slot`, `window`, `lane`, `checkpoint`, and `summary`.
+All IDs have a run prefix; dynamic slot/inflight/strand tokens retain runtime IDs.
+A strand at a future control PC has `phase="not_materialized"`, not a fake call.
+
+Relations have `id`, `from`, `to`, `reason`, and `detail`; direction is waits-on.
+Reasons are `input`, `control`, `effect`, `window`, `lane_capacity`, `batch_wait`,
+`resource_budget`, `retry_backoff`, `checkpoint`, or `unknown`. Relation identity
+uses endpoints/reason/port/gate, excluding changing remaining-time/counter details.
+Every endpoint is included; omitted evidence produces a truncation summary rather
+than dangling references. `limit` bounds entities and relations combined and also
+bounds metadata traversal. Infrastructure origins are null.
+
+Input/control slots are resolved through forwarding and older mutation versions
+without heap cleanup. Producers come from actual window outputs/version slots;
+phi and collection ownership comes from actual strand frames/spawners. Effect
+and window predicates mirror inspection-safe readiness conditions, not scheduler
+gates that change state. Ordinary pause and terminal resource rejection are not
+checkpoint/resource waits. Cached estimates alone are not budget-blocking evidence.
+
+The query is opt-in and intended for dispatcher-safe inspection, not normal-cycle
+or counters-only work. See [Explaining waits](../../guides/explaining-waits.md)
+for interpretation and limitations.
 
 ## Commands
 

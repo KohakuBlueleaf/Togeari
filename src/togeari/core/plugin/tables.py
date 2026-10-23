@@ -9,6 +9,7 @@ import reprlib
 from typing import Any
 
 from togeari.core.construct.knobs import checked
+from togeari.core.observe.waits import waits
 from togeari.core.program.execution import current_execution, observe_execution
 
 # Input reprs of the `job` query: bounded in size and depth, whatever the value
@@ -218,7 +219,12 @@ def q_checkpoints(m: Any, job: int | None = None, checkpoint_id: str | None = No
     return m.checkpoints.query(job=job, checkpoint_id=checkpoint_id)
 
 
+def q_waits(m: Any, job: int | None = None, limit: int = 256) -> dict:
+    return waits(m, job=job, limit=limit)
+
+
 QUERIES = {
+    "waits": q_waits,
     "checkpoints": q_checkpoints,
     "jobs": q_jobs,
     "job": q_job,

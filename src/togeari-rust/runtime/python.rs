@@ -526,6 +526,17 @@ impl PyCore {
         self.c().checkpoint_cancel(py, requestid)
     }
 
+    #[pyo3(signature = (jobid=None, limit=1000))]
+    fn _wait_state(
+        &self,
+        py: Python<'_>,
+        jobid: Option<u64>,
+        limit: usize,
+    ) -> PyResult<Py<PyDict>> {
+        self.c().outside_region(py);
+        self.c().wait_state(py, jobid, limit)
+    }
+
     /// Owner bridge: the live native inflight, never plugin/WorkItem ext, owns attempts.
     fn _begin_attempt(&self, py: Python<'_>, inf: u64) -> PyResult<String> {
         self.c().outside_region(py);

@@ -14,7 +14,6 @@ import importlib.util
 import math
 import random
 import re
-import statistics
 import sys
 import threading
 import time
@@ -738,75 +737,69 @@ def test_gil_offers_follow_the_knob_with_or_without_acting_listeners(offer_us, a
         assert s["offers"] <= wall / (offer_us * 1e-6) + 1, (s, wall)
 
 
-class Neighbour(threading.Thread):
-    """A Python thread that counts its turns, giving the GIL back after each: with a long
-    switch interval it runs only when the dispatcher thread really lets go of the GIL."""
-
-    def __init__(self):
-        super().__init__(daemon=True)
-        self.turns = 0
-        self.stop = threading.Event()
-
-    def run(self):
-        while not self.stop.is_set():
-            self.turns += 1
-            time.sleep(0)
-
-
-def neighbour_turns(offer_us) -> tuple[int, dict]:
-    """Count only inside native cycles, excluding trace setup, teardown and sink draining."""
-    p = entry_program(0, jobs=16)
-    m = gen_make(p, gil_offer_us=offer_us)("rust")
-    old = sys.getswitchinterval()
-    sys.setswitchinterval(1.0)
-    n = Neighbour()
-    cycle = m.dispatcher.cycle
-    turns = 0
-    measured = 0
-
-    def measured_cycle():
-        nonlocal turns, measured
-        # A queued wake does NOT prevent Inbox.wait from releasing the GIL:
-        # native cycle chooses that path by next_timeout, before inspecting the inbox.
-        # Measure only the exact zero-timeout branch, which uses take_all instead.
-        if m.dispatcher.next_timeout() != 0:
-            cycle()
-            return
-        start = n.turns
-        cycle()
-        turns += n.turns - start
-        measured += 1
-
-    m.dispatcher.cycle = measured_cycle
-    try:
-        n.start()
-        while n.turns == 0:
-            time.sleep(0.001)
-        t = run_trace(lambda: m, p.inputs, seed=7)
-    finally:
-        n.stop.set()
-        sys.setswitchinterval(old)
-        n.join()
-    assert measured > 0, "no busy native cycles measured"
-    return turns, t.machine.dispatcher.native_stats()
-
-
 @pytest.mark.serial
-def test_an_offer_really_lets_a_waiting_thread_run():
-    """Offers really release the GIL, not just increment counters.
+@pytest.mark.parametrize("offer_us", [0, math.inf])
+def test_an_offer_really_lets_a_waiting_thread_run(offer_us):
+    """Causal handoff inside the real region, not a scheduler-dependent turn ratio.
 
-    Compare turns only during native cycles whose next_timeout is exactly zero. Other
-    cycles release the GIL in Inbox.wait even when an event is already queued. Trace
-    teardown also releases it for unrelated joins, so neither belongs in this measure. Keep
-    the ten-run median and ratio requirement; no platform-specific relaxed threshold.
+    Inbox waits and host callbacks can release the GIL even with offers disabled.
+    The private probe instead waits in a Rust-only region closure for a neighbour's
+    Python acknowledgment. Held control cannot acknowledge until that closure exits.
+    No switch-interval manipulation, engines, callbacks or trace teardown intervene.
     """
-    runs = {offer_us: [neighbour_turns(offer_us) for _ in range(10)] for offer_us in (0, math.inf)}
-    every = statistics.median(turns for turns, _ in runs[0])
-    never = statistics.median(turns for turns, _ in runs[math.inf])
-    assert all(s["offers"] > 0 for _, s in runs[0]), runs[0]
-    assert all(s["offers"] == 0 for _, s in runs[math.inf]), runs[math.inf]
-    turns = {k: [t for t, _ in v] for k, v in runs.items()}
-    assert every >= 2 and every > 2 * never, (every, never, turns)
+    native = pytest.importorskip("togeari._rs")
+    probe = native._GilHandoffProbe()
+    m = Machine(program="x = 1", core="rust", gil_offer_us=offer_us)
+    replies = []
+    errors = []
+
+    def neighbour():
+        try:
+            entered = probe.wait_entered(20)
+            replies.append(entered and probe.acknowledge())
+        except BaseException as error:  # noqa: BLE001 - report worker failures on the test thread
+            errors.append(error)
+
+    thread = threading.Thread(target=neighbour, daemon=True)
+    try:
+        thread.start()
+        deadline = time.monotonic() + 10
+        while not probe.ready and time.monotonic() < deadline:
+            thread.join(0.001)
+        assert probe.ready, "neighbour did not reach its native wait"
+        before = m.dispatcher.native_stats()
+        acknowledged = m.dispatcher._test_gil_region(probe, 5)
+        after = m.dispatcher.native_stats()
+        assert acknowledged is (offer_us == 0)
+        assert after["regions"] - before["regions"] == 1
+        assert after["offers"] - before["offers"] == int(offer_us == 0)
+        assert after["regions_released"] - before["regions_released"] == int(offer_us == 0)
+        assert after["regions_held"] - before["regions_held"] == int(offer_us == math.inf)
+        thread.join(10)
+        assert not thread.is_alive() and not errors, errors
+        assert replies == [offer_us == 0]
+        assert not probe.acknowledge(), "late acknowledgment accepted"
+        assert not m.dispatcher._test_gil_region(probe, 0), "probe reused"
+    finally:
+        probe.close()
+        thread.join(10)
+        m.stop(drain=False)
+
+
+@pytest.mark.parametrize("timeout", [-1, float("nan"), math.inf, 1e300])
+def test_gil_handoff_probe_rejects_invalid_timeouts(timeout):
+    native = pytest.importorskip("togeari._rs")
+    probe = native._GilHandoffProbe()
+    m = Machine(program="x = 1", core="rust")
+    try:
+        with pytest.raises(ValueError):
+            probe.wait_entered(timeout)
+        with pytest.raises(ValueError):
+            m.dispatcher._test_gil_region(probe, timeout)
+        assert not probe.ready
+    finally:
+        probe.close()
+        m.stop(drain=False)
 
 
 @pytest.mark.parametrize("core", ["python", "rust"])

@@ -231,6 +231,15 @@ impl Inbox {
 // ------------------------------------------------------------ the core
 #[pymethods]
 impl PyCore {
+    fn _test_gil_region(
+        &self,
+        py: Python<'_>,
+        probe: &super::handoff::GilHandoffProbe,
+        timeout_s: f64,
+    ) -> PyResult<bool> {
+        self.c().test_gil_region(py, probe, timeout_s)
+    }
+
     fn expire_event_commits(&self, py: Python<'_>) -> PyResult<Obj> {
         let core = self.c();
         let affected = core.event_manager(py)?.call_method0("force_unknown")?;
@@ -760,6 +769,7 @@ fn live_objects<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCore>()?;
     m.add_class::<Inbox>()?;
+    m.add_class::<super::handoff::GilHandoffProbe>()?;
     m.add_class::<Owner>()?;
     m.add_function(wrap_pyfunction!(live_objects, m)?)?;
     Ok(())

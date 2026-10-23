@@ -8,6 +8,7 @@ pub mod cycle;
 pub mod events;
 pub mod frontend;
 pub mod gate;
+pub mod handoff;
 pub mod host;
 pub mod inbox;
 pub mod pool;

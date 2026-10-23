@@ -272,6 +272,18 @@ impl Core {
         self.note_offer();
     }
 
+    /// Private integration-test seam: same knob, region gate and release path as production.
+    pub(crate) fn test_gil_region(
+        &self,
+        py: Python<'_>,
+        probe: &super::handoff::GilHandoffProbe,
+        timeout_s: f64,
+    ) -> PyResult<bool> {
+        let timeout = super::handoff::duration(timeout_s)?;
+        self.regions_ok(py)?;
+        Ok(self.region(py, || probe.region(timeout)))
+    }
+
     // ------------------------------------------------------------ the cycle
     pub fn cycle(&self, py: Python<'_>) -> PyResult<()> {
         let shell = self.shell(py)?;

@@ -10,6 +10,7 @@ from typing import Any
 
 from togeari.core.construct.units import stop_all
 from togeari.core.contracts.io import SourceItem
+from togeari.core.runtime.checkpoints import checkpoint_key
 from togeari.core.runtime.handles import SINK_END, DispatcherDied, JobHandle, Reply, RunState
 
 _keys = itertools.count(1)
@@ -143,6 +144,25 @@ class RunStage:
         self._post(("submit", SourceItem(key, dict(inputs), entry, auto_key=auto), h))
         return h
 
+    def resume(
+        self, checkpoint_id: str, inputs: dict, *, key: str, entry: str | None = None
+    ) -> JobHandle:
+        """Resume only this pinned artifact, validating original key/inputs before execution.
+
+        Omitted ``entry`` comes from the artifact, not this machine's default. The configured
+        store must contain the trusted artifact. Missing or incompatible artifacts fail the
+        job; they never fall back to automatic snapshots or a fresh execution.
+        """
+        checkpoint_key(checkpoint_id)
+        if type(key) is not str:
+            raise TypeError("resume key must be the original string job key")
+        handle = JobHandle(key)
+        self._ensure_thread()
+        self._post(
+            ("submit", SourceItem(key, dict(inputs), entry, checkpoint=checkpoint_id), handle)
+        )
+        return handle
+
     def inspect(self, query: str, /, **args: Any) -> Reply:
         r = Reply()
         self._ensure_thread()
@@ -189,6 +209,8 @@ class RunStage:
         d = self.dispatcher
         thread = d.thread
         if thread is not None and thread.is_alive():
+            # Cancel pending checkpoint admission before stop waits for the job pool to drain.
+            d.inbox.put(("call", self.checkpoints.close))
             d.inbox.put(("stop", drain, Reply()))
             thread.join(timeout if drain else min(timeout, STOP_CANCEL_S))
             if thread.is_alive():
@@ -197,6 +219,7 @@ class RunStage:
             if thread.is_alive():
                 d.abandon(TimeoutError("the dispatcher did not stop in time"))
 
+        self.checkpoints.close()
         self.plugins.notify("on_machine_stop")
         self.bus.emit("machine.stop")
         self.plugins.unload_all()

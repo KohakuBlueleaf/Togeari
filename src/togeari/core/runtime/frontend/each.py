@@ -99,7 +99,7 @@ class EachOps:
             if collector is not None:
                 st.names.set(ins.collect_target, collector.output)
             st.pc = ins.after
-        elif ins.has_exit:
+        elif ins.has_exit or (st.job.cut is not None and collector is None):
             self.each_in_order(st, ins, items, key)
         else:
             self.each_at_once(st, ins, items, key, collector)

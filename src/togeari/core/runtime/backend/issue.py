@@ -142,6 +142,8 @@ class IssueStage:
     def issue_one(self, inf: Inflight) -> None:
         ins = inf.instr
         job = inf.job
+        if job.cut is not None and not self.checkpoint_issue_allowed(inf):
+            return
 
         # Effects and in-place changes wait for (or copy around) older work
         g = Gate.GO

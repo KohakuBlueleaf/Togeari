@@ -73,6 +73,7 @@ impl Core {
         key: &Key,
         keep: bool,
     ) -> PyResult<()> {
+        self.checkpoint_fault(py, job, key)?;
         let cap = if keep {
             self.h.knob_f64(py, K::SquashReuse)?.unwrap_or(0.0)
         } else {
@@ -319,6 +320,7 @@ impl Core {
     pub fn take_fault(&self, py: Python<'_>, job: &JobRef, x: &InfRef) -> PyResult<()> {
         job.borrow_mut().window.pop_first();
         x.borrow_mut().state = InfState::Retired;
+        job.borrow_mut().checkpoint_watermark = Some(x.borrow().key.clone());
         self.disown(x, "retired");
         let (err, control, ins, key, dig) = {
             let b = x.borrow();

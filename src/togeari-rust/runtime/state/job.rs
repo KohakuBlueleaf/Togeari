@@ -126,6 +126,17 @@ impl<T> Ord for HeapItem<T> {
     }
 }
 
+/// A conservative requested checkpoint drains through this logical frontier.
+pub struct CutRequest {
+    pub id: String,
+    pub deadline: f64,
+    pub step_budget: i64,
+    pub start_steps: i64,
+    pub extra_steps: i64,
+    pub frontier: Option<Key>,
+    pub held: Vec<InfRef>,
+}
+
 pub struct Job {
     pub id: u64,
     /// Authoritative UUID for this execution; restored checkpoints retain it.
@@ -173,6 +184,8 @@ pub struct Job {
     pub inputs_dig: Option<Py<PyBytes>>,
     pub memo: Option<Memo>,
     pub collectors: Vec<CollectorRef>,
+    pub cut: Option<CutRequest>,
+    pub checkpoint_watermark: Option<Key>,
 }
 
 pub type JobRef = Rc<RefCell<Job>>;
@@ -220,6 +233,8 @@ impl Job {
             inputs_dig: None,
             memo: None,
             collectors: Vec::new(),
+            cut: None,
+            checkpoint_watermark: None,
         }))
     }
 

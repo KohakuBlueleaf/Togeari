@@ -48,6 +48,8 @@ class FaultStage:
     def squash_younger(self, job: Job, key: tuple, keep: bool = False) -> None:
         """Squash every younger statement and strand; with ``keep``, completed results stay
         for the refetch (``squash_reuse``)."""
+        if job.cut is not None:
+            self.checkpoint_fault(job, key)
         cap = self.knobs["squash_reuse"] if keep else 0
         for x in job.window.cut_after(key):
             if cap:
@@ -172,6 +174,7 @@ class FaultStage:
     def take_fault(self, job: Job, x: Inflight) -> None:
         job.window.pop_first()
         x.state = InfState.RETIRED
+        job.checkpoint_watermark = x.key
         err = x.fault["error"]
         if not x.control and job.record is not None:
             x.instr.record_origin(job.stats.setdefault("record_origins", []), len(job.record))

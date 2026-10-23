@@ -24,6 +24,7 @@ from togeari.core.policies.issue import OldestJobFirst
 from togeari.core.program.bind import Defaults, Use
 from togeari.core.program.code import CodeMemory
 from togeari.core.program.execution import MODES, binding_fingerprint, initial_binding_units
+from togeari.core.runtime.checkpoints import CheckpointManager
 from togeari.core.runtime.dispatcher import Dispatcher
 from togeari.core.runtime.native import NativeDispatcher
 
@@ -167,6 +168,7 @@ class Machine(LoadStage, UnitStage, RunStage):
 
         # Units start, all at once, every failure listed; none start in check mode
         self.dispatcher = (NativeDispatcher if self.core == "rust" else Dispatcher)(self, seed)
+        self.checkpoints = CheckpointManager(self)
         if start_units and not _NO_START.get():
             units = [u for lane in self.lanes for u in lane.units]
             failures = start_units_of(units, self.start_timeout_s, self._lane_of_unit)

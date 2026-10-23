@@ -128,6 +128,7 @@ impl Core {
                 queued: false,
             }));
             job.borrow_mut().collectors.push(c.clone());
+            self.checkpoint_extend_collectors(job);
             self.collect_finalize(py, job, &c)?;
             Some(c)
         } else {
@@ -142,7 +143,7 @@ impl Core {
                     .set(ins.collect_target.expect("collect target"), c.borrow().output.clone());
             }
             st.borrow_mut().pc = ins.after.expect("an each's after address");
-        } else if ins.has_exit {
+        } else if ins.has_exit || (job.borrow().cut.is_some() && collector.is_none()) {
             self.each_in_order(py, st, ins, Rc::new(items), key)?;
         } else {
             self.each_at_once(py, job, st, ins, Rc::new(items), n, key, collector)?;
@@ -405,6 +406,9 @@ impl Core {
         job: &JobRef,
         sp: &StrandRef,
     ) -> PyResult<i64> {
+        if let Some(cut) = &mut job.borrow_mut().cut {
+            cut.extra_steps = cut.extra_steps.saturating_add(1);
+        }
         let e = sp.borrow().spawn.clone().expect("a spawner");
         let i = sp.borrow().counter;
         let jid = job.borrow().id;

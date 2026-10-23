@@ -196,6 +196,7 @@ impl Core {
                 }
                 job.borrow_mut().window.pop_first();
                 x.borrow_mut().state = InfState::Retired;
+                job.borrow_mut().checkpoint_watermark = Some(x.borrow().key.clone());
                 pass.retired += 1;
                 self.retire_one(py, job, &x, caps)?;
                 if x.borrow().versions.is_some() {
@@ -246,6 +247,10 @@ impl Core {
             pass.stage = Stage::Finish;
         }
         if pass.stage == Stage::Finish {
+            if job.borrow().cut.is_some() {
+                let Some(py) = py else { return Ok(need) };
+                self.checkpoint_progress(py)?;
+            }
             let done = {
                 let j = job.borrow();
                 j.window.is_empty() && j.strands.is_empty()

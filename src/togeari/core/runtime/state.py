@@ -533,6 +533,8 @@ class Job:
         "freed",
         "memo",
         "collectors",
+        "cut",
+        "checkpoint_watermark",
     )
 
     def __init__(self, key: str, entry, inputs: dict):
@@ -602,6 +604,8 @@ class Job:
         # Results kept from squashed statements (`retire.faults.Memo`), made at the first one
         self.memo = None
         self.collectors: dict[tuple, Collector] = {}
+        self.cut = None
+        self.checkpoint_watermark: tuple | None = None
 
     # ------------------------------------------------------------ strands
     def add_strand(self, st: Strand) -> None:

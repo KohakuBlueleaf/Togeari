@@ -116,9 +116,24 @@ impl Core {
         handle: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
         let shell = self.shell(py)?;
+        let checkpoints = self.h.machine.bind(py).getattr("checkpoints")?;
         if shell.getattr(intern!(py, "stopping"))?.is_truthy()? {
+            checkpoints.call_method1("discard_resume", (item,))?;
             return self.reject(py, item, "Cancelled", "the machine is stopping", handle, None);
         }
+        let callback_kw = PyDict::new(py);
+        callback_kw.set_item("handle", handle)?;
+        let callback = py
+            .import("functools")?
+            .getattr("partial")?
+            .call((shell.getattr("start_job")?,), Some(&callback_kw))?;
+        if checkpoints
+            .call_method1("prepare_resume", (item, handle, callback))?
+            .is_truthy()?
+        {
+            return Ok(());
+        }
+        let original_item = item.clone();
         let default_entry = self
             .h
             .machine
@@ -144,6 +159,7 @@ impl Core {
         let item = match got {
             Ok(i) => i,
             Err(e) if e.is_instance(py, self.h.plugin_block_error.bind(py)) => {
+                checkpoints.call_method1("discard_resume", (&original_item,))?;
                 let msg = e.value(py).str()?.to_string();
                 return self.reject(py, item, "Blocked", &msg, handle, None);
             }
@@ -151,8 +167,44 @@ impl Core {
         };
         let key = item.getattr(intern!(py, "key"))?;
         if self.keys.bind(py).contains(&key)? {
+            checkpoints.call_method1("discard_resume", (&original_item,))?;
             let msg = format!("job key {} is already running", key.repr()?);
             return self.reject(py, &item, "DuplicateKey", &msg, handle, None);
+        }
+        let checkpoint = match checkpoints.call_method1("validate_resume", (&original_item, &item))
+        {
+            Ok(prepared) => {
+                if prepared.is_none() {
+                    None
+                } else {
+                    Some(prepared.cast_into::<PyDict>()?)
+                }
+            }
+            Err(error) if is_exception(py, &error) => {
+                return self.reject(
+                    py,
+                    &item,
+                    "CheckpointIncompatible",
+                    &error.value(py).str()?.to_string(),
+                    handle,
+                    None,
+                );
+            }
+            Err(error) => return Err(error),
+        };
+        if let Some(prepared) = &checkpoint {
+            let decision = snapshot_field(prepared, "decision")?.cast_into::<PyDict>()?;
+            if !snapshot_field(&decision, "allow")?.extract::<bool>()? {
+                let rejected = self
+                    .h
+                    .snapshot_rejection
+                    .bind(py)
+                    .call1((&decision,))?
+                    .cast_into::<PyDict>()?;
+                let failure = snapshot_field(&rejected, "failure")?.cast_into::<PyDict>()?;
+                let message: String = snapshot_field(&failure, "message")?.extract()?;
+                return self.reject(py, &item, "CheckpointIncompatible", &message, handle, None);
+            }
         }
         let name = entry_of(&item)?;
         let entry = self
@@ -304,11 +356,24 @@ impl Core {
 
         // A present incompatible candidate is not a cache miss: reject before admission
         // and before engines/on_job_start can repeat any external effects.
-        let restored = match self.resume_snapshot(py, &job)? {
-            SnapshotAdmission::New => false,
-            SnapshotAdmission::Resumed => true,
-            SnapshotAdmission::Reject(decision) => {
-                return self.reject_snapshot(py, &item, decision.bind(py), handle, &name_s);
+        let restored = if let Some(prepared) = checkpoint {
+            let state = snapshot_field(&prepared, "state")?.cast_into::<PyDict>()?;
+            let decision = snapshot_field(&prepared, "decision")?.cast_into::<PyDict>()?;
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("execution_hash", &job.borrow().invocation_execution_hash)?;
+            self.h
+                .warn_unverified
+                .bind(py)
+                .call((self.h.machine.bind(py), &decision), Some(&kwargs))?;
+            self.apply_prepared_snapshot(py, &job, &state, &decision)?;
+            true
+        } else {
+            match self.resume_snapshot(py, &job)? {
+                SnapshotAdmission::New => false,
+                SnapshotAdmission::Resumed => true,
+                SnapshotAdmission::Reject(decision) => {
+                    return self.reject_snapshot(py, &item, decision.bind(py), handle, &name_s);
+                }
             }
         };
 
@@ -602,6 +667,7 @@ impl Core {
         outputs: Bound<'_, PyDict>,
         missing: Bound<'_, PyList>,
     ) -> PyResult<()> {
+        self.checkpoint_finish(py, job, "terminal", &PyDict::new(py))?;
         job.borrow_mut().ended = true;
         let strands: Vec<_> = job.borrow().strands.values().cloned().collect();
         for st in strands {

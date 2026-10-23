@@ -37,6 +37,7 @@ class RetireStage:
                 continue
             w.pop_first()
             x.state = InfState.RETIRED
+            job.checkpoint_watermark = x.key
             retired += 1
             self.retire_one(job, x)
             if x.versions:
@@ -64,6 +65,8 @@ class RetireStage:
                     self.ready.append(inf)
         if retired and job.runnable:
             self.dirty[job.id] = None
+        if job.cut is not None:
+            self.progress_checkpoint(job)
         if not w and not job.strands:
             self.finish(job)
 

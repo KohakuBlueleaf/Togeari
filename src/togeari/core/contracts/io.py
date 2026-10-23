@@ -11,13 +11,15 @@ class SourceItem:
     """One job to run; ``entry`` None means the machine's default entry.
 
     ``auto_key`` marks a key the source or the machine made (a source's item index, or the
-    process-wide counter of keyless submits) rather than one given.
+    process-wide counter of keyless submits) rather than one given. ``checkpoint`` explicitly
+    resumes a pinned artifact; absence means a normal submission, never a pinned-artifact search.
     """
 
     key: str
     inputs: dict
     entry: str | None = None
     auto_key: bool = False
+    checkpoint: str | None = None
 
 
 @dataclass

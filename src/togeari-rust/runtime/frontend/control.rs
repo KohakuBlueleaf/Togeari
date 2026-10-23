@@ -197,6 +197,7 @@ impl Core {
             && caps.run_ahead
             && ins.structured
             && !job.borrow().paused
+            && job.borrow().cut.is_none()
             && Core::own_frame(st, ins.addr).is_none();
         if can_park {
             self.park(py, job, st, ins, &s)?;

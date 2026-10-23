@@ -18,12 +18,15 @@ from togeari.core.runtime.frontend.fetch import FrontEnd
 from togeari.core.runtime.handles import DispatcherDied, JobHandle, Reply, RunState
 from togeari.core.runtime.loop import LoopStage
 from togeari.core.runtime.pool.jobs import JobsStage
+from togeari.core.runtime.retire.checkpoint import CheckpointStage
 from togeari.core.runtime.retire.faults import FaultStage
 from togeari.core.runtime.retire.retire import RetireStage
 from togeari.core.runtime.state import Inflight, Job
 
 
-class Dispatcher(IssueStage, WritebackStage, FaultStage, RetireStage, JobsStage, LoopStage):
+class Dispatcher(
+    IssueStage, WritebackStage, FaultStage, RetireStage, JobsStage, LoopStage, CheckpointStage
+):
     def __init__(self, machine: Any, seed: int = 0):
         self.m = machine
         self.code = machine.code
@@ -41,6 +44,7 @@ class Dispatcher(IssueStage, WritebackStage, FaultStage, RetireStage, JobsStage,
 
         # Job pool and scheduling sets; jobs to fetch for, in the order they became dirty
         self.jobs: dict[int, Job] = {}
+        self.checkpoint_requests: dict[str, Job] = {}
         self.keys: set[str] = set()
         self.ready: list[Inflight] = []
         self.dirty: dict[int, None] = {}

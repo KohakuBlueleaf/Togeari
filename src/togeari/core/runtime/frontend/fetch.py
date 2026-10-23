@@ -86,6 +86,8 @@ class FrontEnd(ControlOps, EachOps):
 
     def blocked_by_caps(self, st: Strand) -> bool:
         job = st.job
+        if job.cut is not None and not self.d.checkpoint_fetch_allowed(st):
+            return True
         k = self.knobs
         if job.unfinished < k["window"] and len(job.window) - job.unfinished < k["retire_buffer"]:
             return False
@@ -104,12 +106,18 @@ class FrontEnd(ControlOps, EachOps):
     def run(self, st: Strand, budget: int) -> int:
         """Fetch from one strand until it stops; returns the instructions it ran."""
         if st.spawn is not None:
-            return 0 if self.blocked_by_caps(st) else self.spawn_next(st)
+            if self.blocked_by_caps(st) or (
+                st.job.cut is not None and not self.d.checkpoint_step(st.job)
+            ):
+                return 0
+            return self.spawn_next(st)
         job = st.job
         limit = self.knobs["step_budget"]
         n = 0
         while st.state == StrandState.RUNNABLE and n < budget:
             if self.blocked_by_caps(st):
+                break
+            if job.cut is not None and not self.d.checkpoint_step(job):
                 break
             if not self.pop_frames(st):
                 n += 1

@@ -214,7 +214,12 @@ def q_stats(m: Any) -> dict:
     return s
 
 
+def q_checkpoints(m: Any, job: int | None = None, checkpoint_id: str | None = None) -> list:
+    return m.checkpoints.query(job=job, checkpoint_id=checkpoint_id)
+
+
 QUERIES = {
+    "checkpoints": q_checkpoints,
     "jobs": q_jobs,
     "job": q_job,
     "lanes": q_lanes,
@@ -329,7 +334,23 @@ def c_plugin_disable(m: Any, name: str) -> bool:
     return m.plugins.disable(name)
 
 
+# Pinned checkpoint operations return futures when they need store IO off the dispatcher.
+def c_checkpoint_job(m: Any, id: int, timeout_s: float = 30.0, step_budget: int = 100_000):
+    return m.checkpoints.request(id, timeout_s=timeout_s, step_budget=step_budget)
+
+
+def c_cancel_checkpoint(m: Any, checkpoint_id: str) -> bool:
+    return m.checkpoints.cancel(checkpoint_id)
+
+
+def c_delete_checkpoint(m: Any, checkpoint_id: str):
+    return m.checkpoints.delete(checkpoint_id)
+
+
 COMMANDS = {
+    "checkpoint_job": c_checkpoint_job,
+    "cancel_checkpoint": c_cancel_checkpoint,
+    "delete_checkpoint": c_delete_checkpoint,
     "attach": c_attach,
     "detach": c_detach,
     "cancel_job": c_cancel_job,

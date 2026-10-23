@@ -11,6 +11,7 @@ from togeari.core.contracts.io import JobRecord, SourceItem
 from togeari.core.contracts.views import PoolView
 from togeari.core.plugin.base import PluginBlockError
 from togeari.core.program.execution import observe_execution, warn_unverified
+from togeari.core.runtime.checkpoints import CheckpointResumeError
 from togeari.core.runtime.kir import fresh
 from togeari.core.runtime.pool.signals import Signals
 from togeari.core.runtime.retire import snapshot
@@ -30,8 +31,13 @@ class JobsStage:
 
     # ------------------------------------------------------------ start
     def start_job(self, item: SourceItem, handle: Any = None) -> None:
+        manager = self.m.checkpoints
+        original_item = item
         if self.stopping:
+            manager.discard_resume(original_item)
             self.reject(item, "Cancelled", "the machine is stopping", handle)
+            return
+        if manager.prepare_resume(item, handle, lambda prepared: self.start_job(prepared, handle)):
             return
         try:
             item = self.plugins.transform(
@@ -41,10 +47,33 @@ class JobsStage:
                 where={"entry": item.entry or self.m.default_entry},
             )
         except PluginBlockError as exc:
+            manager.discard_resume(original_item)
             self.reject(item, "Blocked", str(exc), handle)
             return
         if item.key in self.keys:
+            manager.discard_resume(original_item)
             self.reject(item, "DuplicateKey", f"job key {item.key!r} is already running", handle)
+            return
+        try:
+            checkpoint = manager.validate_resume(original_item, item)
+        except CheckpointResumeError as exc:
+            self.reject(
+                item,
+                "CheckpointIncompatible",
+                str(exc),
+                handle,
+                stats={"checkpoint_restore": {"status": "rejected", "code": exc.code}},
+            )
+            return
+        if checkpoint is not None and not checkpoint["decision"]["allow"]:
+            decision = checkpoint["decision"]
+            self.reject(
+                item,
+                "CheckpointIncompatible",
+                "; ".join(issue["message"] for issue in decision["issues"]),
+                handle,
+                stats={"checkpoint_restore": {"status": "rejected", "issues": decision["issues"]}},
+            )
             return
         name = item.entry or self.m.default_entry
         entry = self.code.entries.get(name)
@@ -104,7 +133,13 @@ class JobsStage:
         # Resume from a snapshot of an earlier run of this job
         snap = self.snapshot_key(job) if self.knobs["snapshot_every"] else None
         restored = False
-        if snap is not None:
+        if checkpoint is not None:
+            snapshot.apply_prepared(job, checkpoint["state"], checkpoint["decision"])
+            warn_unverified(self.m, checkpoint["decision"], execution_hash=job.execution_hash)
+            job.stats["execution"] = pinned_execution
+            job.stats["execution_epoch"] = observation["epoch"]
+            restored = True
+        elif snap is not None:
             self.warn_auto_key(job)
             old_key = snapshot.legacy_snapshot_key(
                 entry.region.semantic_hash, job.key, job.inputs_dig
@@ -215,6 +250,9 @@ class JobsStage:
     def end_job(self, job: Job, outputs: dict, missing: list) -> None:
         """End a job: its strands end, unfinished work is squashed, its record goes out."""
         job.ended = True
+        self.checkpoint_terminal(
+            job, "cancelled" if job.failure and job.failure["kind"] == "Cancelled" else "terminal"
+        )
         for st in list(job.strands.values()):
             job.end_strand(st)
         for x in job.window.clear():

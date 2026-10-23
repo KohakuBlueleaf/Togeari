@@ -168,6 +168,11 @@ impl<'a> Tr<'a> {
         for x in j.window.items.iter().chain(j.held.iter()) {
             self.stack.push(Node::Inf(x.clone()));
         }
+        if let Some(cut) = &j.cut {
+            for inf in &cut.held {
+                self.stack.push(Node::Inf(inf.clone()));
+            }
+        }
         for e in j.wheap.iter() {
             self.stack.push(Node::Inf(e.0 .2 .0.clone()));
         }
@@ -460,6 +465,9 @@ impl Core {
             let strands: Vec<StrandRef> = j.strands.values().cloned().collect();
             let mut window = j.window.clear();
             window.append(&mut j.held);
+            if let Some(mut cut) = j.cut.take() {
+                window.append(&mut cut.held);
+            }
             j.sheap.clear();
             j.wheap.clear();
             j.runnable.clear();

@@ -406,6 +406,9 @@ impl Core {
             let Some(job) = inf.borrow().job.upgrade() else {
                 continue;
             };
+            if self.checkpoint_hold(&job, &inf) {
+                continue;
+            }
             if job.borrow().paused {
                 job.borrow_mut().held.push(inf.clone());
                 continue;

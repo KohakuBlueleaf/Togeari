@@ -508,6 +508,24 @@ impl PyCore {
         *self.c().clock.borrow_mut() = clock;
     }
 
+    fn begin_checkpoint(
+        &self,
+        py: Python<'_>,
+        jobid: u64,
+        requestid: String,
+        deadline: f64,
+        step_budget: i64,
+    ) -> PyResult<Py<PyDict>> {
+        self.c().outside_region(py);
+        self.c()
+            .checkpoint_begin(py, jobid, requestid, deadline, step_budget)
+    }
+
+    fn cancel_checkpoint(&self, py: Python<'_>, requestid: &str) -> PyResult<Py<PyDict>> {
+        self.c().outside_region(py);
+        self.c().checkpoint_cancel(py, requestid)
+    }
+
     /// Owner bridge: the live native inflight, never plugin/WorkItem ext, owns attempts.
     fn _begin_attempt(&self, py: Python<'_>, inf: u64) -> PyResult<String> {
         self.c().outside_region(py);

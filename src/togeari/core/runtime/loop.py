@@ -37,7 +37,7 @@ class LoopStage:
         if self.dirty or self.ready:
             return 0.0
         now = self.clock()
-        nearest = None
+        nearest = self.checkpoint_deadline()
         for lane in self.lanes:
             d = lane.next_deadline(now)
             if d is not None and (nearest is None or d < nearest):
@@ -162,6 +162,10 @@ class LoopStage:
         t1 = time.perf_counter()
         phase["drain"] = phase.get("drain", 0.0) + t1 - t_cycle
 
+        # Requested cuts also progress on control-only cycles and timer wakes.
+        for job in list(self.checkpoint_requests.values()):
+            self.progress_checkpoint(job)
+
         # Fetch for jobs with runnable strands
         dirty, self.dirty = self.dirty, {}
         for jid in dirty:
@@ -169,6 +173,8 @@ class LoopStage:
             if job is not None and not job.ended and not job.paused:
                 try:
                     self.front.advance(job)
+                    if job.cut is not None:
+                        self.progress_checkpoint(job)
                 except Exception as exc:  # noqa: BLE001
                     self.job_error(job, exc)
         t2 = time.perf_counter()
@@ -232,7 +238,9 @@ class LoopStage:
 
     def after_cycle(self) -> None:
         """Run done, stop done, idle flag."""
-        settled = not self.jobs and not self.sink_pending
+        manager = getattr(self.m, "checkpoints", None)
+        pending_resumes = manager.pending_resumes if manager is not None else 0
+        settled = not self.jobs and not self.sink_pending and not pending_resumes
         idle = settled and self.source_buf is None
         if self.run is not None and (idle or (self.stopping and settled)):
             self.release_source()
@@ -288,6 +296,9 @@ class LoopStage:
             return
         log.critical("dispatcher stopped on an error", exc_info=exc)
         self.running = False
+        manager = getattr(self.m, "checkpoints", None)
+        if manager is not None:
+            manager.close()
         self.bus.emit("machine.error", error=f"{type(exc).__name__}: {exc}")
         failure = {
             "kind": "DispatcherDied",

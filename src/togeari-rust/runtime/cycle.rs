@@ -29,7 +29,7 @@ impl Core {
             return Ok(Some(0.0));
         }
         let now = self.now(py)?;
-        let mut nearest: Option<f64> = None;
+        let mut nearest: Option<f64> = self.checkpoint_deadline();
         for lane in self.h.lanes.bind(py).try_iter()? {
             let lane = lane?;
             let d = match self.native_for(py, &lane, NEXT_DEADLINE)? {
@@ -314,6 +314,7 @@ impl Core {
         if shell.getattr(intern!(py, "sink_pending"))?.is_truthy()? {
             shell.call_method0(intern!(py, "flush_sink"))?;
         }
+        self.checkpoint_progress(py)?;
         let t1 = self.perf();
         self.add_phase("drain", t1 - t_cycle);
 
@@ -342,6 +343,7 @@ impl Core {
                 }
             }
         }
+        self.checkpoint_progress(py)?;
         let t2 = self.perf();
         self.add_phase("fetch", t2 - t1);
 
@@ -393,6 +395,7 @@ impl Core {
                 }
             }
         }
+        self.checkpoint_progress(py)?;
         let t5 = self.perf();
         self.add_phase("retire", t5 - t4);
 
@@ -630,7 +633,15 @@ impl Core {
     /// Run done, stop done, idle flag.
     pub fn after_cycle(&self, py: Python<'_>) -> PyResult<()> {
         let shell = self.shell(py)?;
+        let pending_resumes = self
+            .h
+            .machine
+            .bind(py)
+            .getattr("checkpoints")?
+            .getattr("pending_resumes")?
+            .is_truthy()?;
         let settled = self.jobs.borrow().is_empty()
+            && !pending_resumes
             && !shell.getattr(intern!(py, "sink_pending"))?.is_truthy()?;
         let idle = settled && shell.getattr(intern!(py, "source_buf"))?.is_none();
         let stopping = shell.getattr(intern!(py, "stopping"))?.is_truthy()?;

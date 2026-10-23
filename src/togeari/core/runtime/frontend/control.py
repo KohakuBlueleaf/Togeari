@@ -97,6 +97,7 @@ class ControlOps:
             and self.knobs["run_ahead"]
             and tables.structured(ins.addr)
             and not st.job.paused
+            and st.job.cut is None
             and self.own_frame(st, ins.addr) is None
         )
         if can_park:

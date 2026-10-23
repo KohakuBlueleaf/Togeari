@@ -121,6 +121,10 @@ impl Core {
                 && ins.op == Op::Call
                 && !ins.ordered
                 && ins.mutates.is_empty()
+                && ins
+                    .binding
+                    .as_ref()
+                    .is_some_and(|binding| binding.deterministic)
                 && ins.binding.as_ref().map(|bd| bd.store) != Some(StoreMode::Positional)
                 && b.values.is_some();
             if !reusable {
@@ -133,12 +137,15 @@ impl Core {
                 .unwrap_or_else(|| py.None());
             (result, b.values.as_ref().expect("values").clone_ref(py), ins.addr)
         };
+        if !self.memo_execution_matches(py, job, addr)? {
+            return Ok(());
+        }
         let size = self.value_bytes(py, result.bind(py))?;
         if cap_bytes.is_some_and(|c| size as f64 > c) {
             return Ok(());
         }
         let (dig, weak) = self.h.dg.digest_with_weak(values.bind(py).as_any())?;
-        if !weak.is_empty() {
+        if !weak.is_empty() || !self.memo_execution_matches(py, job, addr)? {
             return Ok(());
         }
         let dig = PyBytes::new(py, &dig).unbind();
@@ -172,6 +179,24 @@ impl Core {
         Ok(())
     }
 
+    fn memo_execution_matches(&self, py: Python<'_>, job: &JobRef, addr: i64) -> PyResult<bool> {
+        let region = self.h.code.bind(py).call_method1("region_of", (addr,))?;
+        let stats = PyDict::new(py);
+        {
+            let job = job.borrow();
+            for key in ["execution", "execution_epoch"] {
+                if let Some(value) = job.stats.extra.get(key) {
+                    stats.set_item(key, value.bind(py))?;
+                }
+            }
+        }
+        self.h
+            .memo_execution
+            .bind(py)
+            .call1((region, self.h.code.bind(py), self.h.machine.bind(py), stats))?
+            .extract()
+    }
+
     fn memo_dropped(&self, job: &JobRef, size: i64) {
         job.borrow_mut().bytes -= size;
         self.pool_bytes.set(self.pool_bytes.get() - size);
@@ -185,7 +210,23 @@ impl Core {
         inf: &InfRef,
         dig: &[u8],
     ) -> PyResult<bool> {
-        let addr = inf.borrow().ins.addr;
+        let addr = {
+            let inf = inf.borrow();
+            if !inf
+                .ins
+                .binding
+                .as_ref()
+                .is_some_and(|binding| binding.deterministic)
+                || inf.ins.ordered
+                || !inf.ins.mutates.is_empty()
+            {
+                return Ok(false);
+            }
+            inf.ins.addr
+        };
+        if !self.memo_execution_matches(py, job, addr)? {
+            return Ok(false);
+        }
         let found = job
             .borrow_mut()
             .memo
@@ -197,7 +238,11 @@ impl Core {
 
         // The entry left the memo; its value goes through writeback like a store hit
         self.memo_dropped(job, size);
-        inf.borrow_mut().reused = true;
+        {
+            let mut inf = inf.borrow_mut();
+            inf.reused = true;
+            inf.resolution = "squash_reuse";
+        }
         job.borrow_mut().stats.reused += 1;
         self.stats.borrow_mut().reused += 1;
         job.borrow_mut().issue(inf);
@@ -302,7 +347,19 @@ impl Core {
                 ],
             )?;
             self.record_origin(py, job, &ins, rec.bind(py).len())?;
+            self.record_invocation(py, job, x, rec.bind(py).len())?;
             rec.bind(py).append(t)?;
+            let limit = self.h.knob(py, K::RecordLimit)?;
+            if !limit.is_none() && rec.bind(py).len() as f64 > crate::lanes::lane::as_f64(&limit)? {
+                let message = PyString::new(py, &format!("more than {} calls", limit.str()?));
+                let mut job = job.borrow_mut();
+                job.record = None;
+                job.stats.extra.shift_remove("record_origins");
+                job.stats.extra.shift_remove("record_invocations");
+                job.stats
+                    .extra
+                    .insert("record_skipped".into(), message.into_any().unbind());
+            }
         }
         let origin = ins.py.bind(py).call_method0(intern!(py, "origin_dict"))?;
         let item = x.borrow().item.as_ref().map(|i| i.clone_ref(py));

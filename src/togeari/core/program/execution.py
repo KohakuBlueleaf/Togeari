@@ -13,14 +13,13 @@ import math
 import struct
 from typing import Any
 
-from kohakunode.records import RecordOperation
 from kohakunode.sig.env import Resolved
 from kohakunode.sig.model import REQUIRED
 from kohakunode.sig.records import thaw_default
-from kohakunode.sig.std import INTERNAL, STD
 
 from togeari.core.construct.errors import ConstructionError, Problem
 from togeari.core.contracts.adapter import PythonAdapter
+from togeari.core.contracts.reuse import builtin_revision
 from togeari.core.lanes.lane import Lane
 from togeari.core.program.bind import Inline, Use
 
@@ -30,15 +29,8 @@ LAYOUT_VERSION = 1
 MODES = ("warn", "strict")
 log = logging.getLogger("togeari.persistence")
 
-# Maintained implementation contracts: bump when these implementations change semantics.
-# Exact implementation objects/classes only; a name or a subclass is not a builtin proof.
-_BUILTINS = {
-    (id(lib), name): (fn, f"{lib.name}.{name}/1")
-    for lib in (STD, INTERNAL)
-    for name, fn in lib.impls.items()
-}
+# Bump this maintained adapter revision when its implementation semantics change.
 _ADAPTER_REVISION = "togeari.PythonAdapter/1"
-_RECORD_REVISION = "kir.RecordOperation/1"
 
 
 def canonical_bytes(value: Any) -> bytes:
@@ -267,15 +259,7 @@ def layout_hash(region: Any, code: Any) -> str:
 
 
 def _builtin(region: Any, ins: Any) -> str | None:
-    fn = ins.binding.fn
-    if type(fn) is RecordOperation:
-        return _RECORD_REVISION
-    resolved = region.job.env.resolve(ins.node)
-    if isinstance(resolved, Resolved):
-        known = _BUILTINS.get((id(resolved.library), resolved.signature.name))
-        if known is not None and known[0] is fn:
-            return known[1]
-    return None
+    return builtin_revision(region.job.env.resolve(ins.node), ins.binding.fn)
 
 
 def _eligible_units(lane: Any) -> list:
@@ -440,6 +424,12 @@ def _render_execution(region: Any, code: Any, machine: Any) -> dict:
                         unknown,
                         f"{path}.policy.lane_dead_s",
                     ),
+                },
+                "deterministic": b.deterministic,
+                "reuse": {
+                    "content": b.deterministic and not ins.ordered and not ins.mutates,
+                    "squash": b.deterministic and not ins.ordered and not ins.mutates,
+                    "positional": not ins.ordered and not ins.mutates,
                 },
                 "effects": {
                     "ordered": ins.ordered,
@@ -685,6 +675,7 @@ def binding_fingerprint(bind: dict, defaults: Any) -> str:
                 "warn_us",
                 "store",
                 "idempotent",
+                "deterministic",
             ):
                 row[field] = _literal(getattr(binding, field, None), [], field)
             if isinstance(binding, Use):

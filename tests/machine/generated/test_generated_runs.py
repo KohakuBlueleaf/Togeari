@@ -164,7 +164,7 @@ def test_positional_store_rerun_conforms(seed):
     inputs_of = {j.key: j.inputs for j in jobs}
     store = MemoryStore()
 
-    # The same jobs twice, each on a new machine over one store: the second run is served
+    # Fresh logical runs never consume prior positional results, even with equal keys/inputs.
     hits = []
     for _ in range(2):
         m = build(
@@ -182,7 +182,7 @@ def test_positional_store_rerun_conforms(seed):
             hits.append(m.inspect("stats").result()["store_hits"])
         finally:
             m.stop(drain=False, timeout=5)
-    assert hits[0] == 0 and hits[1] > 0, (hits, len(store))
+    assert hits == [0, 0], (hits, len(store))
 
 
 @pytest.mark.parametrize("seed", SEEDS)

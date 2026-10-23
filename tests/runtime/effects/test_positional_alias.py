@@ -26,12 +26,14 @@ def test_a_positional_result_changed_in_place_later_is_stored_unchanged():
         )
         try:
             outputs.append(m.submit({"x": 7}, key="k").result(5).outputs)
+            assert m.inspect("stats").result()["store_hits"] == 0
         finally:
             m.stop()
 
-    # The first run stores `mklist`'s list before `push` changed it; reruns serve that list
+    # Each fresh run stores its own invocation's pre-mutation result. Equal keys
+    # do not authorize recovery; only a compatible identity-bearing snapshot does.
     assert outputs == [{"n": 2, "xs": [7, 99]}] * 3
-    assert list(store.data.values()) == [[7]]
+    assert list(store.data.values()) == [[7], [7], [7]]
 
 
 class Tag:

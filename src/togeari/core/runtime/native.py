@@ -49,13 +49,25 @@ class ReadyInf:
 
 
 class InfView:
-    __slots__ = ("instr", "key", "state", "item")
+    __slots__ = ("instr", "key", "state", "item", "invocation_id", "attempt_ids", "resolution")
 
-    def __init__(self, instr: Any, key: tuple, state: str, item: Any):
+    def __init__(
+        self,
+        instr: Any,
+        key: tuple,
+        state: str,
+        item: Any,
+        invocation_id: str | None,
+        attempt_ids: list[str],
+        resolution: str,
+    ):
         self.instr = instr
         self.key = key
         self.state = state
         self.item = item
+        self.invocation_id = invocation_id
+        self.attempt_ids = list(attempt_ids)
+        self.resolution = resolution
 
 
 class StrandView:
@@ -120,6 +132,10 @@ class JobView:
     @property
     def held(self) -> list:
         return [None] * self._info(8, 0)
+
+    @property
+    def job_execution_id(self) -> str | None:
+        return self._info(9, None)
 
     @property
     def ended(self) -> bool:

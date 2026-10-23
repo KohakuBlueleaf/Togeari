@@ -1,4 +1,4 @@
-//! Snapshot v2 uses the shared Python codec for identity, shape and relocation checks.
+//! Snapshot v3 uses the shared Python codec for identity, shape and relocation checks.
 //! Native conversion is detached: no job or name-interner mutation until it succeeds.
 
 use std::rc::Rc;
@@ -41,6 +41,7 @@ fn optional_int(state: &Bound<'_, PyDict>, key: &str) -> PyResult<Option<i64>> {
 
 /// Fully converted native state. Strings are not interned until this is complete.
 struct PreparedSnapshot {
+    job_execution_id: String,
     pc: i64,
     prefix: Rc<[i64]>,
     counter: i64,
@@ -61,6 +62,7 @@ impl PreparedSnapshot {
         if !required(decision, "allow")?.extract::<bool>()? {
             return Err(PyValueError::new_err("cannot apply a rejected snapshot"));
         }
+        let job_execution_id: String = required(state, "job_execution_id")?.extract()?;
         let pc = required(state, "pc")?.extract()?;
         let prefix = tuple_ints(&required(state, "prefix")?)?;
         let counter = required(state, "counter")?.extract()?;
@@ -128,6 +130,13 @@ impl PreparedSnapshot {
             )
         };
         stats.update(&required(state, "stats")?.cast_into::<PyDict>()?)?;
+        stats.extra.insert(
+            "job_execution_id".into(),
+            PyString::new(py, &job_execution_id).into_any().unbind(),
+        );
+        stats
+            .extra
+            .insert("identity_version".into(), 1_i64.into_pyobject(py)?.into_any().unbind());
         // Saved epochs are machine-local and never replace this admission's identity.
         stats.extra.shift_remove("execution");
         stats.extra.shift_remove("execution_epoch");
@@ -156,6 +165,11 @@ impl PreparedSnapshot {
             Some(record.cast_into::<PyList>()?.unbind())
         };
         let record = if recording { record } else { None };
+        if record.is_none() {
+            // Record-aligned metadata cannot outlive a record omitted at this admission.
+            stats.extra.shift_remove("record_invocations");
+            stats.extra.shift_remove("record_origins");
+        }
         if recording && record.is_none() {
             stats.extra.insert(
                 "record_skipped".into(),
@@ -164,7 +178,17 @@ impl PreparedSnapshot {
                     .unbind(),
             );
         }
-        Ok(Self { pc, prefix, counter, frames: Rc::new(frames), values, stats, steps, record })
+        Ok(Self {
+            job_execution_id,
+            pc,
+            prefix,
+            counter,
+            frames: Rc::new(frames),
+            values,
+            stats,
+            steps,
+            record,
+        })
     }
 }
 
@@ -273,6 +297,7 @@ impl Core {
         state.set_item("values", values)?;
         let entry = {
             let job = job.borrow();
+            state.set_item("job_execution_id", &job.job_execution_id)?;
             state.set_item("stats", job.stats.to_dict(py)?)?;
             state.set_item("steps", job.steps)?;
             state.set_item("record", job.record.as_ref().map(|record| record.bind(py)))?;
@@ -322,6 +347,7 @@ impl Core {
             job.end_strand(&old);
         }
         job.add_strand(&strand);
+        job.job_execution_id = prepared.job_execution_id;
         job.snap_at = prepared.stats.retired;
         job.stats = prepared.stats;
         job.steps = prepared.steps;

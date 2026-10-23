@@ -212,7 +212,14 @@ impl Core {
 
         // A job: one strand at the entry address; sampled for recording and for events
         let id = crate::runtime::state::next_id();
-        let job = Job::new(id, key.clone().unbind(), entry.clone(), inputs.clone().unbind());
+        let job_execution_id: String = self.h.new_job_execution_id.bind(py).call0()?.extract()?;
+        let job = Job::new(
+            id,
+            key.clone().unbind(),
+            entry.clone(),
+            inputs.clone().unbind(),
+            job_execution_id.clone(),
+        );
         let auto_key = item.getattr(intern!(py, "auto_key"))?.is_truthy()?;
         let observed = self
             .h
@@ -232,6 +239,8 @@ impl Core {
             .bind(py)
             .call1((snapshot_field(&observed, "manifest")?,))?
             .unbind();
+        let invocation_execution_hash: String = execution.bind(py).get_item("hash")?.extract()?;
+        let invocation_program_hash: String = entry.region_hash.bind(py).extract()?;
         let execution_epoch: i64 = snapshot_field(&observed, "epoch")?.extract()?;
         let execution_epoch = execution_epoch.into_pyobject(py)?.into_any().unbind();
         {
@@ -239,6 +248,15 @@ impl Core {
             j.start_time = self.perf();
             j.handle = handle.map(|h| h.clone().unbind());
             j.auto_key = auto_key;
+            j.invocation_program_hash = invocation_program_hash;
+            j.invocation_execution_hash = invocation_execution_hash;
+            j.stats.extra.insert(
+                "job_execution_id".into(),
+                PyString::new(py, &job_execution_id).into_any().unbind(),
+            );
+            j.stats
+                .extra
+                .insert("identity_version".into(), 1_i64.into_pyobject(py)?.into_any().unbind());
             j.stats.program = Some(entry.region_hash.clone_ref(py));
             j.stats.extra.insert("execution".into(), execution);
             j.stats
@@ -411,11 +429,16 @@ impl Core {
             .ok_or_else(|| PyValueError::new_err("snapshot store unavailable"))?;
         self.warn_auto_key(py, job);
         let errors = PyList::empty(py);
+        let kwargs = PyDict::new(py);
+        kwargs.set_item("v2_key", self.v2_snapshot_key(py, job)?)?;
         let candidate = self
             .h
             .snapshot_candidate
             .bind(py)
-            .call1((store.bind(py), new_key.bind(py), old_key.bind(py), errors.getattr("append")?))?
+            .call(
+                (store.bind(py), new_key.bind(py), old_key.bind(py), errors.getattr("append")?),
+                Some(&kwargs),
+            )?
             .cast_into::<PyDict>()?;
         for error in errors.iter() {
             self.store_error(py, "get", &PyErr::from_value(error))?;

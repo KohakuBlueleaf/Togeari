@@ -128,6 +128,11 @@ impl<T> Ord for HeapItem<T> {
 
 pub struct Job {
     pub id: u64,
+    /// Authoritative UUID for this execution; restored checkpoints retain it.
+    pub job_execution_id: String,
+    /// Admission-pinned hashes, cached as native strings for GIL-free call fetch.
+    pub invocation_program_hash: String,
+    pub invocation_execution_hash: String,
     pub key: Obj,
     pub entry: Rc<Entry>,
     // The job's inputs: the mapping it was given
@@ -173,10 +178,19 @@ pub struct Job {
 pub type JobRef = Rc<RefCell<Job>>;
 
 impl Job {
-    pub fn new(id: u64, key: Obj, entry: Rc<Entry>, inputs: Obj) -> JobRef {
+    pub fn new(
+        id: u64,
+        key: Obj,
+        entry: Rc<Entry>,
+        inputs: Obj,
+        job_execution_id: String,
+    ) -> JobRef {
         super::born(super::JOBS);
         Rc::new(RefCell::new(Job {
             id,
+            job_execution_id,
+            invocation_program_hash: String::new(),
+            invocation_execution_hash: String::new(),
             key,
             entry,
             inputs,

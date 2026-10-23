@@ -28,6 +28,11 @@ def snapshot_key(region_hash: str, job_key: str, inputs_digest: bytes) -> bytes:
     return digest(("togeari.snapshot", VERSION, region_hash, job_key, inputs_digest))
 
 
+def v2_snapshot_key(region_hash: str, job_key: str, inputs_digest: bytes) -> bytes:
+    """Probe the previous envelope locator only to diagnose missing execution identity."""
+    return digest(("togeari.snapshot", 2, region_hash, job_key, inputs_digest))
+
+
 def legacy_snapshot_key(region_hash: str, job_key: str, inputs_digest: bytes) -> bytes:
     """The v1 locator is probed only to diagnose migration, never to apply its state."""
     return digest(("snapshot", region_hash, job_key, inputs_digest))
@@ -41,7 +46,7 @@ def capture(job: Any, code: Any = None, manifest: dict | None = None) -> bytes |
     if job.window or len(live) != 1 or live[0].spawn is not None:
         return None
     if code is None:
-        raise ValueError("snapshot v2 capture requires the actual CodeMemory")
+        raise ValueError("snapshot v3 capture requires the actual CodeMemory")
     if manifest is None:
         manifest = job.entry.region.execution
     st = live[0]
@@ -79,6 +84,7 @@ def capture(job: Any, code: Any = None, manifest: dict | None = None) -> bytes |
         for f in frames_now
     ]
     state = {
+        "job_execution_id": job.job_execution_id,
         "pc": pc,
         "prefix": prefix,
         "counter": counter,
@@ -102,6 +108,8 @@ def apply_prepared(job: Any, state: dict, decision: dict) -> None:
         **job.stats,
         **state["stats"],
         "resumed": True,
+        "job_execution_id": state["job_execution_id"],
+        "identity_version": 1,
         "snapshot_restore": {"status": decision["status"], "issues": decision["issues"]},
     }
     # Runtime decision caches must be rebuilt under this machine's warning/mode context.
@@ -115,9 +123,13 @@ def apply_prepared(job: Any, state: dict, decision: dict) -> None:
     record = state["record"] if job.record is not None else None
     if job.record is not None and record is None:
         stats["record_skipped"] = "resumed without a record"
+    if record is None:
+        stats.pop("record_invocations", None)
+        stats.pop("record_origins", None)
     # Nothing below consumes unvalidated types or addresses.
     for previous in list(job.strands.values()):
         job.end_strand(previous)
+    job.job_execution_id = state["job_execution_id"]
     job.stats = stats
     job.record = record
     job.steps = state["steps"]
@@ -135,7 +147,7 @@ def restore(
     """Low-level compatibility wrapper; False means denied, never permission to restart.
 
     Admission uses ``prepare_restore`` directly so absence and denial cannot be
-    confused. V2 restoration requires actual code and the current entry manifest.
+    confused. V3 restoration requires actual code and the current entry manifest.
     """
     if code is None:
         return False
@@ -163,11 +175,17 @@ def snapshot_rejection(decision: dict) -> dict:
     }
 
 
-def load_candidate(store: Any, new_key: bytes, old_key: bytes, on_error=None) -> dict:
-    """Probe v2 first, v1 only on absence; a read error or legacy hit is a denial."""
+def load_candidate(
+    store: Any, new_key: bytes, old_key: bytes, on_error=None, *, v2_key: bytes | None = None
+) -> dict:
+    """Probe v3 first, older locators only on absence; errors/legacy hits are denials."""
     if store is None:
         return {"action": "new", "blob": None, "decision": None}
-    for key, legacy in ((new_key, False), (old_key, True)):
+    candidates = [(new_key, False)]
+    if v2_key is not None:
+        candidates.append((v2_key, True))
+    candidates.append((old_key, True))
+    for key, legacy in candidates:
         try:
             blob = store.get(key)
         except Exception as exc:  # noqa: BLE001
@@ -184,7 +202,7 @@ def load_candidate(store: Any, new_key: bytes, old_key: bytes, on_error=None) ->
                 "unsupported_version",
                 "migration_needed",
                 "version",
-                "v1 snapshots require offline migration",
+                "v1/v2 snapshots lack job execution identity and require offline migration",
             )
             return {"action": "reject", "blob": None, "decision": decision}
         return {"action": "candidate", "blob": blob, "decision": None}

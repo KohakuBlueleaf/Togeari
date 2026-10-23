@@ -10,8 +10,8 @@ See [execution identity](../../../guides/execution-identity.md) for the public c
 
 ## Locator, envelope and lifetime
 
-The v2 locator is
-`digest(("togeari.snapshot", 2, program_hash, job_key, inputs_digest))`.
+The v3 locator is
+`digest(("togeari.snapshot", 3, program_hash, job_key, inputs_digest))`.
 Weak job input digests disable snapshot lookup/capture. Execution compatibility is
 validated inside the candidate envelope rather than hiding a mismatch as a new key.
 
@@ -20,14 +20,15 @@ Envelope fields:
 | Field | Meaning |
 |---|---|
 | `schema` | `togeari.snapshot` |
-| `version` | 2 |
+| `version` | 3 |
 | `addressing` | `region-relative-v1` |
 | `execution` | declared execution manifest/completeness |
-| `state` | continuation, values, frames, stats, steps and conformance record |
+| `state` | authoritative `job_execution_id`, continuation, values, frames, stats, steps and conformance record |
 
-The old locator `digest(("snapshot", program_hash, job_key, inputs_digest))` is probed
-only when v2 is absent, to report migration-needed v1 data. V1 is never applied or
-relocated by guessing its former code-memory base. Incompatible v2 never falls back.
+When v3 is absent, version-2 and then old `digest(("snapshot", program_hash,
+job_key, inputs_digest))` locators are probed only to report migration-needed data.
+V1 lacks relocatable addresses; v2 lacks authoritative logical-run identity. Neither
+is applied by guessing missing state, and an incompatible v3 candidate never falls back.
 
 A successful write advances `snap_at` and `stats.snapshots`; store failure does not.
 Successful job completion deletes a snapshot it created/resumed (or writes `None`
@@ -44,8 +45,10 @@ After retirement, `capture(job, code, manifest)` returns bytes or `None` off a b
 4. Remaining joined frames have representable sequential continuations.
 5. Execution identity/history permits persistence under the selected mode.
 
-The raw state fields are `pc`, `prefix`, `counter`, `frames`, `values`, `stats`,
-`steps`, and `record`. Frames carry `reconv`, `saved`, `branch`, `kind`, `each`,
+The raw state fields are `job_execution_id`, `pc`, `prefix`, `counter`, `frames`,
+`values`, `stats`, `steps`, and `record`. The logical-run ID is a required canonical
+32-hex token, preserved by compatible restore rather than freshly generated.
+Frames carry `reconv`, `saved`, `branch`, `kind`, `each`,
 `items`, `i`, `base`, and `joined`. The codec converts **only** `pc` and frame
 `reconv`/`branch`/`each` to offsets from the entry region start. Logical order keys,
 iteration bases, saved prefixes and counters are not instruction addresses.
@@ -53,14 +56,14 @@ iteration bases, saved prefixes and counters are not instruction addresses.
 Pickle protocol 5 preserves the entire user-value alias graph. Capture validation
 or serialization failure is reported explicitly and disables further opportunistic
 attempts for that job as appropriate; it does not claim a completed persistence.
-The internal low-level capture helper requires the actual `CodeMemory` for v2.
+The internal low-level capture helper requires the actual `CodeMemory`.
 
 ## Candidate selection and preflight
 
-`load_candidate(store, new_key, old_key, on_error=None)` returns an explicit action:
+`load_candidate(store, new_key, old_key, on_error=None, v2_key=...)` returns an explicit action:
 
-- `new`: both candidate locators are genuinely absent (`MISS`/`None`).
-- `candidate`: v2 bytes exist and need preflight.
+- `new`: all supplied candidate locators are genuinely absent (`MISS`/`None`).
+- `candidate`: v3 bytes exist and need preflight.
 - `reject`: read failure or legacy candidate, with a structured decision.
 
 `prepare_restore(blob, entry, code, current_manifest, mode)` is shared between
@@ -74,7 +77,7 @@ The returned state has validated absolute addresses in the **current** region.
 Joined iteration reconvergence is recomputed after relocation. Logical keys and
 five-field record tuples are unchanged. User values are not copied separately.
 
-A present incompatible, corrupt, unsupported, v1 or unreadable candidate rejects only
+A present incompatible, corrupt, unsupported, legacy or unreadable candidate rejects only
 that job as `SnapshotIncompatible`, with `stats.snapshot_restore` issues. It does not
 restart potentially effectful work, enter the job pool, start engine calls, or notify
 `on_job_start`. Normal cache read errors may remain misses; snapshot reads deliberately
@@ -91,7 +94,11 @@ storage guarantee).
 Restored values become ready slots without independent deep copies. Frames have no
 live scheduler joins. Recording continues the saved prefix when available; otherwise
 `record_skipped` explains the absence. `resumed=True` and `snapshot_restore` retain
-the compatibility status. Machine-local `program_region`, admission execution and
+the compatibility status. Invocation sidecars are validated against recorded-call length,
+ID formats and attempt/resolution consistency. If recording is disabled on restore,
+recording sidecars are discarded with the trace rather than leaving an invalid prefix.
+The authoritative logical-run ID comes from validated state, not mutable stats.
+Machine-local `program_region`, admission execution and
 epoch come from the current job, not the old process's stats.
 
 The low-level `restore(...)->bool` wrapper remains for internal callers; `False`

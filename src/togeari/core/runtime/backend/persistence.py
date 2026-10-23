@@ -16,6 +16,21 @@ def _denied(status, code, path, message):
     }
 
 
+def memo_execution(region, code, machine, stats: dict) -> bool:
+    """In-memory deterministic reuse requires unchanged admission history, not completeness."""
+    current = current_execution(region, code, machine)
+    admission = stats.get("execution")
+    epoch = stats.get("execution_epoch")
+    return (
+        isinstance(admission, dict)
+        and type(epoch) is int
+        and epoch == current["epoch"]
+        and admission.get("hash") == current["hash"]
+        and not admission.get("completeness", {}).get("transitions")
+        and not current["completeness"]["transitions"]
+    )
+
+
 def result_execution(region, code, machine, stats: dict) -> str | None:
     """Check trusted admission identity/history, then cached current-manifest completeness.
 

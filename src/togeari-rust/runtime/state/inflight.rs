@@ -73,6 +73,10 @@ pub struct Inflight {
     pub job: Weak<RefCell<Job>>,
     pub ins: Rc<Instr>,
     pub key: Key,
+    /// Logical operation identity is assigned at fetch, before any input/record decisions.
+    pub invocation_id: Option<String>,
+    pub attempt_ids: Vec<String>,
+    pub resolution: &'static str,
 
     // Input slots (in the call's argument order) and output slots, `mutates` versions
     pub inputs: Vec<SlotRef>,
@@ -114,6 +118,9 @@ impl Inflight {
             job: Rc::downgrade(job),
             ins,
             key,
+            invocation_id: None,
+            attempt_ids: Vec::new(),
+            resolution: "not_submitted",
             inputs: Vec::new(),
             outs: Vec::new(),
             versions: None,

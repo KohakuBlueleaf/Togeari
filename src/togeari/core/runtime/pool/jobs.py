@@ -78,6 +78,8 @@ class JobsStage:
         job.auto_key = item.auto_key
         job.stats["program"] = entry.region.semantic_hash
         observation = observe_execution(entry.region, self.code, self.m)
+        job.program_hash = entry.region.semantic_hash
+        job.execution_hash = observation["manifest"]["hash"]
         # Observation is a borrowed read-only cache. One detached admission copy
         # can safely escape through this job's eventual output stats.
         pinned_execution = copy.deepcopy(observation["manifest"])
@@ -108,7 +110,13 @@ class JobsStage:
                 entry.region.semantic_hash, job.key, job.inputs_dig
             )
             candidate = snapshot.load_candidate(
-                self.store, snap, old_key, on_error=lambda e: self.store_error("get", e)
+                self.store,
+                snap,
+                old_key,
+                on_error=lambda e: self.store_error("get", e),
+                v2_key=snapshot.v2_snapshot_key(
+                    entry.region.semantic_hash, job.key, job.inputs_dig
+                ),
             )
             decision = candidate["decision"]
             if candidate["action"] == "candidate":

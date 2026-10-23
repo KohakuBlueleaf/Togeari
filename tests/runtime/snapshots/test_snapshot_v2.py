@@ -41,6 +41,7 @@ def raw_state(machine, frame_kind=None):
     region = entry.region
     job = Job("job", entry, {})
     raw = {
+        "job_execution_id": job.job_execution_id,
         "pc": entry.addr,
         "prefix": (3, 2),
         "counter": 7,
@@ -89,7 +90,9 @@ def test_relative_addresses_preserve_all_logical_keys_when_region_moves(machine,
     raw = raw_state(machine, frame_kind)
     blob = blob_for(machine, raw)
     envelope = pickle.loads(blob)
-    assert envelope["version"] == 2 and envelope["addressing"] == "region-relative-v1"
+    assert (
+        envelope["version"] == snapshot.VERSION and envelope["addressing"] == "region-relative-v1"
+    )
     assert "version" not in envelope["state"]
     assert envelope["state"]["prefix"] == raw["prefix"]
     prefix = "@def ()padding(value):\n    a = 1\n    b = 2\n    (a, b)add(value)\n"
@@ -420,7 +423,15 @@ def test_all_core_snapshot_pairs_resume_after_region_relocation(producer, consum
     blob = store.get(key)
     assert type(blob) is bytes
     envelope = pickle.loads(blob)
-    assert envelope["version"] == 2
+    assert envelope["version"] == snapshot.VERSION
+    saved_uid = envelope["state"]["job_execution_id"]
+    assert saved_uid == first.stats["job_execution_id"]
+    saved_record = envelope["state"]["record"]
+    saved_invocations = envelope["state"]["stats"]["record_invocations"]
+    assert saved_record and len(saved_record) == len(saved_invocations)
+    prior_attempts = {
+        attempt for item in first.stats["record_invocations"] for attempt in item["attempt_ids"]
+    }
     restart_x = envelope["state"]["values"]["x"]
     assert 0 < restart_x <= 4
     calls.clear()
@@ -433,6 +444,15 @@ def test_all_core_snapshot_pairs_resume_after_region_relocation(producer, consum
         assert second.outputs == {"x": 8}
         assert second.stats["resumed"] is True
         assert second.stats["snapshot_restore"]["status"] == "compatible"
+        assert second.stats["job_execution_id"] == saved_uid
+        prefix_count = len(saved_record)
+        assert second.record[:prefix_count] == saved_record
+        assert second.stats["record_invocations"][:prefix_count] == saved_invocations
+        assert len(second.record) == len(second.stats["record_invocations"])
+        suffix = second.stats["record_invocations"][prefix_count:]
+        assert suffix and all(item["resolution"] == "executed" for item in suffix)
+        later_attempts = {attempt for item in suffix for attempt in item["attempt_ids"]}
+        assert later_attempts and not later_attempts & prior_attempts
         assert calls == list(range(restart_x, 8))
         assert conform(second_machine.code.entries["main"].region.job, second, {"n": 8}).ok
         assert store.get(key) is MISS

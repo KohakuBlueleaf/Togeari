@@ -6,6 +6,8 @@ Completed calls the squash drops keep their results for their refetch (``squash_
 from togeari.core.contracts.digest import digest_with_weak
 from togeari.core.contracts.results import Ok
 from togeari.core.program.decode.instr import Op
+from togeari.core.runtime.backend.persistence import memo_execution
+from togeari.core.runtime.identity import record_invocation
 from togeari.core.runtime.kir import UNDEF, RuntimeFault
 from togeari.core.runtime.state import (
     Inflight,
@@ -60,6 +62,13 @@ class FaultStage:
             job.final_names = None
             job.final_key = None
 
+    def memo_reuse_allowed(self, inf: Inflight) -> bool:
+        """Determinism is tied to this admitted execution contract, not later lane changes."""
+        if not inf.instr.binding.deterministic:
+            return False
+        job = inf.job
+        return memo_execution(job.entry.region, self.code, self.m, job.stats)
+
     def keep_for_reuse(self, x: Inflight, cap: int, cap_bytes: int | None) -> None:
         """Keep the result of a completed call the squash drops, by address and inputs digest,
         for its refetch; at most ``cap`` entries and ``cap_bytes`` bytes per job (None: no
@@ -76,15 +85,16 @@ class FaultStage:
             and not ins.ordered
             and not ins.mutates
             and ins.binding.store != "positional"
+            and ins.binding.deterministic
             and x.values is not None
         )
-        if not reusable:
+        if not reusable or not self.memo_reuse_allowed(x):
             return
         size = value_bytes(x.result)
         if cap_bytes is not None and size > cap_bytes:
             return
         dig, weak = digest_with_weak(x.values)
-        if weak:
+        if weak or not self.memo_reuse_allowed(x):
             return
 
         # The entry, and its bytes on the job until it is used or dropped
@@ -109,6 +119,8 @@ class FaultStage:
         """Complete ``inf`` with a kept result of the same statement and inputs; False if none.
         Each kept result serves one refetch."""
         job = inf.job
+        if not self.memo_reuse_allowed(inf):
+            return False
         found = job.memo.take(inf.instr.addr, dig)
         if found is None:
             return False
@@ -117,6 +129,7 @@ class FaultStage:
         value, size = found
         self.memo_dropped(job, size)
         inf.reused = True
+        inf.resolution = "squash_reuse"
         job.stats["reused"] += 1
         self.stats["reused"] += 1
         job.issue(inf)
@@ -162,7 +175,20 @@ class FaultStage:
         err = x.fault["error"]
         if not x.control and job.record is not None:
             x.instr.record_origin(job.stats.setdefault("record_origins", []), len(job.record))
+            record_invocation(
+                job.stats.setdefault("record_invocations", []),
+                len(job.record),
+                x.invocation_id,
+                x.attempt_ids,
+                x.resolution,
+            )
             job.record.append((x.instr.node, x.dig, "error", err, None))
+            limit = self.knobs["record_limit"]
+            if limit is not None and len(job.record) > limit:
+                job.record = None
+                job.stats.pop("record_origins", None)
+                job.stats.pop("record_invocations", None)
+                job.stats["record_skipped"] = f"more than {limit} calls"
         origin = x.instr.origin_dict()
         policy = x.item.ext.get("policy_failure") if x.item is not None else None
         policy_fields = {}

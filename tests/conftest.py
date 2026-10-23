@@ -32,8 +32,10 @@ IMPURE = frozenset(
     name for lib in (LIB, STD) for name, sig in lib.signatures.items() if sig.ordered or sig.mutates
 )
 
-# Nodes a store may serve: the generator's nodes without effects
-STORABLE = tuple(name for name in LIB.signatures if name not in IMPURE)
+# Audited generator implementations are deterministic functions of inputs.
+# `flaky` raises only for x % 4 == 1, not randomly; effects emit/bump stay excluded.
+DETERMINISTIC = frozenset({"inc", "mix", "small", "flaky", "total", "pick"})
+STORABLE = tuple(name for name in LIB.signatures if name in DETERMINISTIC)
 
 # Every builtin unit selector
 SELECTORS = {
@@ -190,7 +192,11 @@ def build(
     lane_of = {"inc": "call", "mix": "batch", "flaky": "stream", "small": "call"}
     lane_of |= {"total": "stream", "pick": "batch", "emit": "call", "bump": "call"}
     bind = {
-        name: Use(lanes[k], store=store_mode if name in STORABLE else None)
+        name: Use(
+            lanes[k],
+            store=store_mode if name in STORABLE else None,
+            deterministic=True if name in DETERMINISTIC else None,
+        )
         for name, k in lane_of.items()
     }
     bind["kir.std.*"] = Inline() if inline_std else Use(lanes["call"])

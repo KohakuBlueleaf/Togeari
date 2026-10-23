@@ -21,7 +21,7 @@ engine's responsibility.
 | `shares_memory` | — | `True` when it runs in the machine's process and sees the caller's objects |
 | `start()`, `stop()` | construction, `machine.stop()` | connect, spawn, load; may be slow (run off the dispatcher) |
 | `ready()` | while starting, and polled with backoff while the unit is down | report health |
-| `spec()` | when the unit joins a lane | identity only: what makes two units interchangeable (it enters content store keys); counters and footprints go in `load().extra` |
+| `spec()` | when the unit joins a lane | report configuration, not automatic portable revision identity; see [Execution identity](execution-identity.md). Counters and footprints go in `load().extra` |
 | `capacity()` | each pump | how many more submits it accepts now |
 | `load()` | admission, selectors, reports | `Load(running, waiting, extra)` |
 | `submit(work, done)` | the pump | hand the work to the engine's own threads and return a ticket at once |
@@ -120,6 +120,34 @@ class ThreadedEngine(EngineBase):
   allows. An engine that can stop work answers `Cancelled()` instead.
 - `UnitError(exc, retry_after=None)` takes the unit out of service until `ready()` is true
   again; the lane retries the item elsewhere. `ItemError` fails only the item.
+
+## Invocation and attempt identity
+
+Machine-owned work items expose read-only `job_execution_id`, `invocation_id` and
+`attempt_id` properties. The first two identify the logical run and dynamic call; retries
+keep them. Each actual per-item `submit` gets a fresh attempt ID, including a submit that
+raises. Each member of a batch has its own attempt ID. Queue waiting, plugin blocking,
+expiry before submission and cache hits create no new attempt.
+
+Logical IDs are available before `pre_submit`, even without recording. The attempt ID is
+assigned after plugin transforms and deadline checks, just before your engine is called.
+On a retry hook it may still show the previous actual attempt until the next submit occurs.
+These are correlation tokens, not a promise of deterministic sampling or exactly-once
+external effects; equal payloads remain separate requests.
+
+The owning inflight is authoritative. After the complete pre-submit plugin chain, both
+same-object mutations and replacement items have their owner and ID transport restored.
+Spoofed ID entries in `ext` are not another identity channel. Protection is at the engine
+and record boundary, not between individual plugins in the chain. Internal identity
+setters are runtime machinery, not plugin APIs. There is no public mutable attempt-history
+list on a work item. A machine's `pre_submit` replacement must be an exact `WorkItem`,
+not a subclass overriding transport properties or methods; otherwise the item fails with
+`Blocked` before submission. Migrate plugin subclasses to base work items with plugin data
+in `ext`. Standalone lane contracts outside a machine are not restricted by this boundary.
+
+Ownerless `WorkItem`s constructed for engine tests may have logical IDs set to `None`;
+standalone lane submissions still receive fresh attempt IDs. See
+[Invocation identity](invocation-identity.md) for record sidecars and restore semantics.
 
 ## Behaviour every engine keeps
 

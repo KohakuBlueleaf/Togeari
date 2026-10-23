@@ -82,6 +82,43 @@ impl Core {
         Ok(())
     }
 
+    /// Aligned sidecar for logical invocations; replay's five-field tuples remain unchanged.
+    pub(crate) fn record_invocation(
+        &self,
+        py: Python<'_>,
+        job: &JobRef,
+        inf: &InfRef,
+        index: usize,
+    ) -> PyResult<()> {
+        let (invocation, attempts, resolution) = {
+            let inf = inf.borrow();
+            (
+                inf.invocation_id.clone().ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(
+                        "recorded call has no invocation identity",
+                    )
+                })?,
+                inf.attempt_ids.clone(),
+                inf.resolution,
+            )
+        };
+        let sidecar = job
+            .borrow_mut()
+            .stats
+            .extra
+            .entry("record_invocations".into())
+            .or_insert_with(|| PyList::empty(py).into_any().unbind())
+            .clone_ref(py);
+        self.h.record_invocation.bind(py).call1((
+            sidecar.bind(py),
+            index,
+            invocation,
+            attempts,
+            resolution,
+        ))?;
+        Ok(())
+    }
+
     /// Whether retiring ``x`` needs Python: a record, the alias check, a positional store.
     fn retire_needs_gil(&self, job: &JobRef, x: &InfRef, caps: &RetireCaps) -> bool {
         if caps.assert_alias || job.borrow().record.is_some() {
@@ -346,6 +383,7 @@ impl Core {
             };
             let rec = rec.bind(py);
             self.record_origin(py, job, &ins, rec.len())?;
+            self.record_invocation(py, job, x, rec.len())?;
             rec.append(t)?;
             let limit = self.h.knob(py, K::RecordLimit)?;
             if !limit.is_none() && rec.len() as f64 > crate::lanes::lane::as_f64(&limit)? {
@@ -353,6 +391,7 @@ impl Core {
                 let mut j = job.borrow_mut();
                 j.record = None;
                 j.stats.extra.shift_remove("record_origins");
+                j.stats.extra.shift_remove("record_invocations");
                 j.stats
                     .extra
                     .insert("record_skipped".into(), msg.into_any().unbind());
@@ -423,7 +462,7 @@ impl Core {
 
     /// The job's snapshot key; None without a store or with weak inputs.
     pub fn snapshot_key(&self, py: Python<'_>, job: &JobRef) -> PyResult<Option<Py<PyAny>>> {
-        self.snapshot_locator(py, job, false)
+        self.snapshot_locator(py, job, 3)
     }
 
     /// Legacy lookup is diagnosis only; it never authorizes applying old absolute addresses.
@@ -432,14 +471,22 @@ impl Core {
         py: Python<'_>,
         job: &JobRef,
     ) -> PyResult<Option<Py<PyAny>>> {
-        self.snapshot_locator(py, job, true)
+        self.snapshot_locator(py, job, 1)
+    }
+
+    pub(crate) fn v2_snapshot_key(
+        &self,
+        py: Python<'_>,
+        job: &JobRef,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        self.snapshot_locator(py, job, 2)
     }
 
     fn snapshot_locator(
         &self,
         py: Python<'_>,
         job: &JobRef,
-        legacy: bool,
+        version: u8,
     ) -> PyResult<Option<Py<PyAny>>> {
         let (dig, jkey, addr) = {
             let j = job.borrow();
@@ -454,10 +501,10 @@ impl Core {
             return Ok(None);
         }
         let region = self.code.borrow().region_of(addr).expect("a region");
-        let helper = if legacy {
-            &self.h.legacy_snapshot_key
-        } else {
-            &self.h.snapshot_key
+        let helper = match version {
+            1 => &self.h.legacy_snapshot_key,
+            2 => &self.h.v2_snapshot_key,
+            _ => &self.h.snapshot_key,
         };
         let k = helper.bind(py).call1((region.hash.bind(py), jkey, dig))?;
         Ok(Some(k.unbind()))

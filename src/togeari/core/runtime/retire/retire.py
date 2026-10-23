@@ -4,6 +4,7 @@ import logging
 
 from togeari.core.program.decode.instr import Op
 from togeari.core.program.execution import compatibility, execution_for_job
+from togeari.core.runtime.identity import record_invocation
 from togeari.core.runtime.kir import UNDEF, RuntimeFault
 from togeari.core.runtime.retire import snapshot
 from togeari.core.runtime.state import Inflight, InfState, Job, SlotState, deref, effective, hold
@@ -102,11 +103,19 @@ class RetireStage:
             self.alias_check(job, x)
         if job.record is not None and ins.op == Op.CALL:
             ins.record_origin(job.stats.setdefault("record_origins", []), len(job.record))
+            record_invocation(
+                job.stats.setdefault("record_invocations", []),
+                len(job.record),
+                x.invocation_id,
+                x.attempt_ids,
+                x.resolution,
+            )
             job.record.append((ins.node, x.dig, "ok", x.kept, x.mutated))
             limit = self.knobs["record_limit"]
             if limit is not None and len(job.record) > limit:
                 job.record = None
                 job.stats.pop("record_origins", None)
+                job.stats.pop("record_invocations", None)
                 job.stats["record_skipped"] = f"more than {limit} calls"
         # A positional result is stored as copied at settle, before any younger in-place change
         if (

@@ -53,8 +53,20 @@ def unit(name: str, latency_ms: float) -> SimEngine:
 
 
 def run(program: str, inline: tuple, lanes: dict, x: int = 1, **knobs):
-    bind = {name: Use(Lane([unit(name, ms)], name=name)) for name, ms in lanes.items()}
-    bind.update({name: Inline() for name in inline})
+    deterministic_nodes = {"wrap", "work", "blob1", "blob2"}
+    bind = {
+        name: Use(
+            Lane([unit(name, ms)], name=name),
+            deterministic=True if name in deterministic_nodes else None,
+        )
+        for name, ms in lanes.items()
+    }
+    bind.update(
+        {
+            name: Inline(deterministic=True if name in deterministic_nodes else None)
+            for name in inline
+        }
+    )
     bind["kir.std.*"] = Inline()
     m = Machine(program=program, entry="main", libraries=[LIB], bind=bind, **knobs)
     try:

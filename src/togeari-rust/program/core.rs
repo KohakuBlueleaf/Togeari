@@ -122,6 +122,7 @@ pub struct Binding {
     pub adapter: Option<Obj>,
     pub store: StoreMode,
     pub idempotent: bool,
+    pub deterministic: bool,
     pub warn_us: Option<f64>,
     pub timeout_s: Option<f64>,
     pub policy_source: String,

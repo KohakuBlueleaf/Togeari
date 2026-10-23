@@ -516,6 +516,15 @@ impl Core {
         self.execute(py, now, job, inf)
     }
 
+    /// Actual execution/submission only: cache resolution never allocates an attempt.
+    pub(crate) fn begin_attempt(&self, py: Python<'_>, inf: &InfRef) -> PyResult<String> {
+        let attempt: String = self.h.new_attempt_id.bind(py).call0()?.extract()?;
+        let mut inf = inf.borrow_mut();
+        inf.attempt_ids.push(attempt.clone());
+        inf.resolution = "executed";
+        Ok(attempt)
+    }
+
     fn execute(&self, py: Python<'_>, now: &IssueNow, job: &JobRef, inf: &InfRef) -> PyResult<()> {
         let ins = inf.borrow().ins.clone();
         let b = ins.binding.as_ref().expect("a bound call");
@@ -531,6 +540,7 @@ impl Core {
         if b.inline {
             let t0 = self.perf();
             let f = b.func.as_ref().expect("an inline function").bind(py);
+            self.begin_attempt(py, inf)?;
             let res = match f.call((), Some(values.bind(py))) {
                 Ok(v) => Res::Ok(v.unbind(), true),
                 Err(e) if is_exception(py, &e) => {
@@ -556,7 +566,15 @@ impl Core {
                 }
                 if eligible && !hit.bind(py).is(self.h.miss.bind(py)) {
                     self.stats.borrow_mut().store_hits += 1;
-                    inf.borrow_mut().hit = true;
+                    {
+                        let mut inf = inf.borrow_mut();
+                        inf.hit = true;
+                        inf.resolution = if b.store == StoreMode::Content {
+                            "content_hit"
+                        } else {
+                            "positional_hit"
+                        };
+                    }
                     job.borrow_mut().issue(inf);
                     return self.complete(py, inf, Res::Ok(hit, true), None, None);
                 }
@@ -567,10 +585,18 @@ impl Core {
         // The call budget starts before preparation and policy callbacks.
         let t = self.now(py)?;
         let priority = self.issue_priority(py, now, inf)?;
-        let (jid, jkey, entry_name) = {
+        let (jid, jkey, entry_name, job_execution_id) = {
             let j = job.borrow();
-            (j.id, j.key.clone_ref(py), j.entry.py_name.clone_ref(py))
+            (
+                j.id,
+                j.key.clone_ref(py),
+                j.entry.py_name.clone_ref(py),
+                j.job_execution_id.clone(),
+            )
         };
+        let invocation_id = inf.borrow().invocation_id.clone().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("call has no invocation identity")
+        })?;
         let (inf_id, key) = {
             let x = inf.borrow();
             (x.id, x.key.to_py(py))
@@ -597,12 +623,16 @@ impl Core {
                 lane_name,
                 shell,
                 self.h.job_view.clone_ref(py),
+                job_execution_id.clone(),
+                invocation_id.clone(),
             ),
         )?;
         let kw = PyDict::new(py);
         kw.set_item(intern!(py, "protocol"), self.h.protocol.bind(py))?;
         kw.set_item(intern!(py, "priority"), priority)?;
         kw.set_item(intern!(py, "owner"), &owner)?;
+        kw.set_item("job_execution_id", &job_execution_id)?;
+        kw.set_item("invocation_id", &invocation_id)?;
         let item = self.h.work_item.bind(py).call(
             (ins.node.bind(py), values.bind(py), b.adapter.as_ref().map(|a| a.bind(py))),
             Some(&kw),
@@ -654,7 +684,6 @@ impl Core {
     fn store_key(&self, py: Python<'_>, job: &JobRef, inf: &InfRef) -> PyResult<Option<Obj>> {
         let ins = inf.borrow().ins.clone();
         let b = ins.binding.as_ref().expect("a bound call");
-        let region = self.code.borrow().region_of(ins.addr).expect("a region");
         let Some(execution_hash) = self.result_execution(py, job, &ins)? else {
             self.stats.borrow_mut().store_misses += 1;
             return Ok(None);
@@ -682,30 +711,21 @@ impl Core {
                 )?
             }
 
-            // By the job and the statement's place in it
+            // Same-invocation recovery only; equal fresh submissions never share this key.
             StoreMode::Positional => {
-                self.warn_auto_key(py, job);
-                let (jkey, dig) = {
-                    let j = job.borrow();
-                    (j.key.clone_ref(py), j.inputs_dig.as_ref().map(|d| d.clone_ref(py)))
-                };
-                let Some(dig) = dig else {
-                    self.stats.borrow_mut().store_weak += 1;
-                    return Ok(None);
-                };
-                let offset = (ins.addr - region.start).into_pyobject(py)?;
-                let key = inf.borrow().key.to_py(py);
+                let invocation = inf.borrow().invocation_id.clone().ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(
+                        "positional result has no invocation identity",
+                    )
+                })?;
                 PyTuple::new(
                     py,
                     [
                         PyString::new(py, "togeari.result").as_any(),
-                        &2_i64.into_pyobject(py)?.into_any(),
+                        &3_i64.into_pyobject(py)?.into_any(),
                         PyString::new(py, "positional").as_any(),
                         execution_hash.bind(py),
-                        jkey.bind(py),
-                        dig.bind(py).as_any(),
-                        offset.as_any(),
-                        key.as_any(),
+                        PyString::new(py, &invocation).as_any(),
                     ],
                 )?
             }

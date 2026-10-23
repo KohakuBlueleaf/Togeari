@@ -189,6 +189,7 @@ class IssueStage:
 
         # Inline: run on the dispatcher now
         if b.inline:
+            inf._begin_attempt()
             t0 = time.perf_counter()
             try:
                 res: Any = Ok(b.fn(**inf.values), True)
@@ -210,6 +211,7 @@ class IssueStage:
                 if hit is not MISS and eligible:
                     self.stats["store_hits"] += 1
                     inf.hit = True
+                    inf.resolution = "content_hit" if b.store == "content" else "positional_hit"
                     inf.job.issue(inf)
                     self.complete(inf, Ok(hit, True), None)
                     return
@@ -266,27 +268,11 @@ class IssueStage:
                     return None
                 key = digest(("togeari.result", 2, "content", execution_hash, ins.node, dig))
 
-            # By the job and the statement's place in it
+            # Recovery of the exact dynamic invocation, never a fresh equal-input run.
             case "positional":
-                job = inf.job
-                self.warn_auto_key(job)
-                if job.inputs_dig is None:
-                    self.stats["store_weak"] += 1
+                if inf.invocation_id is None:
                     return None
-                # The statement's address in its region and its order key name one call
-                offset = ins.addr - region.start
-                key = digest(
-                    (
-                        "togeari.result",
-                        2,
-                        "positional",
-                        execution_hash,
-                        job.key,
-                        job.inputs_dig,
-                        offset,
-                        inf.key,
-                    )
-                )
+                key = digest(("togeari.result", 3, "positional", execution_hash, inf.invocation_id))
             case _:
                 return None
         # Digests can invoke user hooks; never use a key from a changed history.

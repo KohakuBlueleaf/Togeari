@@ -301,9 +301,8 @@ class Box:
 ZERO = "@def (xs: list)main(y):\n    (xs)zero(n)\n    (xs)ident(y)\n"
 
 
-def test_positional_keys_digest_the_inputs_as_given():
-    # The inputs digest is taken at job start, before `zero` changes xs in place: [5] and [7]
-    # get two keys, though both read [0] by the positional statement
+def test_fresh_positional_invocations_stay_distinct_after_input_mutation():
+    # Fresh logical executions have distinct keys even though the calls both see [0].
     store = MemoryStore()
     m = machine(
         program=ZERO,
@@ -334,8 +333,9 @@ class Spy:
         self.calls += 1
 
 
-def test_weak_job_inputs_get_no_positional_key():
-    # Inputs digested by type only make no positional key: the store is never asked
+def test_positional_identity_does_not_depend_on_weak_inputs_but_uncopyable_results_are_not_saved():
+    # Invocation recovery does not equate inputs. Lookup is allowed, but an
+    # uncopyable output cannot be persisted safely and therefore is not written.
     spy = Spy()
     m = machine(
         program="@def (xs: list)main(y):\n    (xs)ident(y)\n",
@@ -344,7 +344,8 @@ def test_weak_job_inputs_get_no_positional_key():
     )
     try:
         assert m.submit({"xs": [threading.Lock()]}).result(5).ok
-        assert spy.calls == 0 and m.inspect("stats").result()["store_weak"] == 1
+        stats = m.inspect("stats").result()
+        assert spy.calls == 1 and stats["store_uncopied"] == 1
     finally:
         m.stop()
 
@@ -360,7 +361,7 @@ class Copied:
 
 
 def test_snapshot_restore_keeps_the_unpickled_values():
-    # Use a real v2 envelope/code identity; unpickled user values must still be
+    # Use a real current envelope/code identity; unpickled user values must still be
     # installed without another deep copy, retaining aliases within the graph.
     m = Machine(program="@def ()main(out):\n    out = 1\n", entry="main", core="python")
     try:
@@ -368,6 +369,7 @@ def test_snapshot_restore_keeps_the_unpickled_values():
         job = Job("k", entry, {})
         value = Copied()
         state = {
+            "job_execution_id": job.job_execution_id,
             "pc": entry.addr,
             "prefix": (),
             "counter": 0,

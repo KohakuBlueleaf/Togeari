@@ -253,6 +253,9 @@ class Pump:
         def done(ticket, results, sub=sub):
             lane.on_done(lane, sub, results)
 
+        # One attempt per actual item submission, after transforms/expiry; submit errors count.
+        for item in items:
+            item._begin_attempt()
         t0 = time.perf_counter()
         try:
             sub.ticket = unit.submit(items if batch else items[0], done)

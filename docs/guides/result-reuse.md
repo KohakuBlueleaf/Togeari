@@ -5,9 +5,10 @@ stored result. Host code, adapters, services/models and observable execution pol
 change while the KIR source remains identical. Result stores therefore use a versioned
 execution namespace instead of the old program/engine-`repr` key scheme.
 
-This is the **S2a compatibility slice**, not deterministic reuse or exactly-once execution.
-It does not add logical invocation IDs or classify stochastic nodes as safe to cache.
-Keep the existing `ordered`, `mutates`, store-mode and idempotency safeguards in mind.
+Reuse combines three separate decisions: compatible execution identity, logical
+invocation recovery, and an explicit determinism declaration for content/squash reuse.
+None guarantees exactly-once external effects. The existing `ordered`, `mutates`,
+store-mode and idempotency safeguards remain in force.
 
 ## Declare implementation and binding revisions
 
@@ -35,6 +36,7 @@ with Machine(
         "square": Use(
             PythonCallEngine(workers=2, mode="thread"),
             store="content",
+            deterministic=True,
             implementation_revision="square/v1",
             binding_revision="python-square-service/v1",
         )
@@ -59,14 +61,45 @@ on the dispatcher; adding a revision does not give them a result-store binding.
 Bindings are construction declarations. Mutating a `Use` object or `machine.bind` to rebind
 already loaded code is unsupported; cached loading checks the frozen declaration fingerprint.
 
+## Explicit reuse eligibility
+
+`Use` and `Inline` accept `deterministic: bool | None`. This is independent of
+`implementation_revision` and `binding_revision`: knowing which implementation
+ran does not establish whether repeating equal inputs produces equal outputs.
+
+- `True` explicitly authorizes deterministic content/squash reuse, still subject
+  to ordered/mutation safeguards and execution compatibility.
+- `False` disables that reuse. Combining it with `store="content"` is a construction
+  error rather than silently overriding the declaration.
+- `None` recognizes maintained builtin implementations; arbitrary host calls are
+  not implicitly deterministic. Legacy `store="content"` without an explicit flag
+  remains a warned determinism assertion for migration. Set the flag explicitly,
+  or remove content reuse for sampling nodes.
+
+Revision attestations and `idempotent=True` do not replace this declaration.
+Inspection reports each resolved call's `reuse: {deterministic, source}`, where
+source is `binding`, `builtin`, `legacy_content`, or `none`. The execution manifest
+also includes effective reuse eligibility. Diagnostic provenance stays separate.
+
+**All result-store modes on directly mutating or ordered calls are ignored with
+a construction warning**, including `store="positional"`. A stored return value
+alone cannot reconstruct a mutation's outcome; this increment introduces no
+general mutation-replay envelope. Even an explicit determinism or revision
+attestation does not waive this restriction. Manifest positional eligibility is
+`not ordered and not mutates`, while content/squash also require determinism.
+A nonmutating producer can still use positional recovery when a later consumer
+mutates its result: recovery preserves the producer's stored pre-mutation value,
+subject to snapshot/identity checks.
+
 ## Versioned keys and eligibility
 
-The new result-key domain is `togeari.result`, version **2**:
+The result-key domain is `togeari.result`; content remains version **2**, while
+invocation-safe positional recovery uses version **3**:
 
 | Store mode | Key contents after domain/version |
 |---|---|
-| `content` | mode, execution hash, node spelling, strong input digest |
-| `positional` | mode, execution hash, job key, job input digest, region-relative instruction position, order key |
+| `content` (v2) | mode, execution hash, node spelling, strong input digest |
+| `positional` (v3) | mode, execution hash, invocation ID |
 
 There is **no fallback to old result keys**. Old entries may remain in a store, but the new
 machine never probes their namespace. A known execution mismatch naturally gets a different
@@ -97,9 +130,18 @@ denials are not node failures. Store access failures remain ordinary store error
 compatibility uses the same identity concepts but has different restart safety rules; an
 incompatible checkpoint is not an invitation to silently replay effectful work from scratch.
 
-**Positional reuse remains position-based recovery.** It is not invocation-safe across
-logical program changes and does not establish exactly-once external effects. Invocation
-identity and explicit deterministic/reuse eligibility are separate later work.
+**Positional reuse recovers the same logical invocation**, not an equal-input sample.
+Each fresh job receives a fresh `job_execution_id`, even if source key and inputs
+are unchanged. Consequently, rerunning a completed job under the same key does
+not hit its old positional result. A compatible version-3 snapshot restores the
+same job execution ID, allowing the same invocation's committed positional result
+to be recovered. Old v2 positional keys are never probed as a fallback.
+
+Invocation IDs incorporate job execution identity, program/execution hashes,
+region-relative callsite and logical control/iteration position. Actual execution
+or submission attempts get distinct attempt IDs; retries retain the invocation
+and append attempts. Store hits and deterministic squash reuse allocate no new
+attempt. These tokens do not turn effectful services into exactly-once systems.
 
 ## Live configuration changes and job history
 
@@ -127,6 +169,25 @@ remain part of the configured implementation set. Arbitrary direct list surgery 
 `lane.units` is not an attach/detach protocol. Current membership is checked at persistence
 boundaries, but unsupported mutation-and-reversion outside the supported hooks is not an
 execution-history API.
+
+## Records and inspection
+
+The Inspector's job row exposes authoritative `job_execution_id`; each window row
+exposes `invocation_id`, a detached `attempt_ids` list, and `resolution`. These are
+not inferred from a source key, input digest, source origin, mutable stats or engine
+extension metadata. A missing identity in an older native view is null, not invented.
+
+Recorded call tuples retain their five-field format. `stats.identity_version=1`,
+`stats.job_execution_id`, and `stats.record_invocations` carry identity separately.
+The sidecar aligns with call records and contains exactly `invocation_id`,
+`attempt_ids`, `resolution`; resolutions are `executed`, `content_hit`,
+`positional_hit`, `not_submitted`, and `squash_reuse`. The last means a fresh
+invocation reused an eligible squash memo outcome, not a content-store hit.
+Unknown legacy sidecar prefixes may be null. If the record limit disables a job's
+call record, its invocation sidecar is discarded too; the job identity remains.
+Ordinary archive replay remains outcome-based. CLI-selected reexecution is a
+manual selection and retains its unverified-compatibility warning; matching
+outputs do not certify determinism or current implementation identity.
 
 ## Diagnostics and testing
 

@@ -106,6 +106,7 @@ fn binding(b: &Bound<'_, PyAny>) -> PyResult<Option<Binding>> {
         adapter: opt("adapter")?,
         store,
         idempotent: b.getattr(intern!(py, "idempotent"))?.is_truthy()?,
+        deterministic: b.getattr(intern!(py, "deterministic"))?.extract()?,
         warn_us: b.getattr(intern!(py, "warn_us"))?.extract()?,
         timeout_s: b
             .getattr(intern!(py, "policy"))?

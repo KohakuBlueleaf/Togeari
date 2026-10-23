@@ -95,7 +95,7 @@ def execute(core, store, **kwargs):
 
 @pytest.mark.parametrize("core", ["python", "rust"])
 @pytest.mark.parametrize("mode", ["content", "positional"])
-def test_v2_result_keys_include_execution_revision_and_ignore_old_keys(core, mode):
+def test_versioned_result_keys_include_execution_revision_and_ignore_old_keys(core, mode):
     store = CountingStore()
     first, _, record = execute(core, store, mode=mode)
     assert record.outputs == {"y": 4}
@@ -104,24 +104,24 @@ def test_v2_result_keys_include_execution_revision_and_ignore_old_keys(core, mod
     if mode == "content":
         expected = digest(("togeari.result", 2, "content", execution, "inc", digest({"x": 3})))
     else:
-        [ins] = list(first.code.calls(region))
-        expected = digest(
-            (
-                "togeari.result",
-                2,
-                "positional",
-                execution,
-                "0",
-                digest({"x": 3}),
-                ins.addr - region.start,
-                (0,),
-            )
-        )
+        invocation = record.stats["record_invocations"][0]["invocation_id"]
+        expected = digest(("togeari.result", 3, "positional", execution, invocation))
     assert store.writes == [expected]
     reads = len(store.reads)
     second, lane, reused = execute(core, store, mode=mode)
-    assert reused.outputs == {"y": 4} and sum(u.counts["submits"] for u in lane.units) == 0
-    assert len(store.reads) == reads + 1 and store.reads[-1] == expected
+    assert reused.outputs == {"y": 4}
+    assert len(store.reads) == reads + 1
+    if mode == "content":
+        assert sum(u.counts["submits"] for u in lane.units) == 0
+        assert store.reads[-1] == expected
+    else:
+        assert sum(u.counts["submits"] for u in lane.units) == 1
+        next_invocation = reused.stats["record_invocations"][0]["invocation_id"]
+        assert next_invocation != invocation
+        assert store.reads[-1] == digest(
+            ("togeari.result", 3, "positional", execution, next_invocation)
+        )
+        assert store.reads[-1] != expected
     _, lane, changed = execute(core, store, mode=mode, revision="implementation/2", delta=2)
     assert changed.outputs == {"y": 5} and sum(u.counts["submits"] for u in lane.units) == 1
     assert changed.stats["execution"]["hash"] != execution
@@ -141,9 +141,25 @@ def test_v2_result_keys_include_execution_revision_and_ignore_old_keys(core, mod
         )
     else:
         legacy = digest((region.semantic_hash, "0", digest({"x": 3}), 1, (0,)))
+        [ins] = list(first.code.calls(region))
+        previous_version = digest(
+            (
+                "togeari.result",
+                2,
+                "positional",
+                execution,
+                "0",
+                digest({"x": 3}),
+                ins.addr - region.start,
+                (0,),
+            )
+        )
+        stale.put(previous_version, 901)
     stale.put(legacy, 900)
     _, _, fresh = execute(core, stale, mode=mode)
     assert fresh.outputs == {"y": 4} and legacy not in stale.reads
+    if mode == "positional":
+        assert previous_version not in stale.reads
 
 
 @pytest.mark.parametrize("core", ["python", "rust"])

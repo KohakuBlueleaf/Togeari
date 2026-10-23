@@ -107,9 +107,10 @@ RunReport loaded, not a continuously rewritten view. These are distinct from the
 initial region-binding manifest archived with program metadata. Per-job stats retain
 admission identity and transition/persistence information.
 
-## Snapshot version 2
+## Snapshot version 3
 
-New snapshots use a versioned envelope with execution manifest and
+New snapshots require an authoritative `job_execution_id` in the version-3
+envelope and state, alongside the execution manifest and
 `addressing: "region-relative-v1"`. The continuation PC and frame `reconv`, `branch`
 and `each` addresses are offsets from the entry's region. Logical order keys, counters,
 iteration bases and saved prefixes are not instruction addresses and are not relocated.
@@ -122,33 +123,54 @@ Structural integers share the native signed-64-bit domain; user values retain th
 ordinary types and integer range.
 
 The new snapshot locator has a distinct versioned domain. If it is absent, the old
-locator is probed only to identify migration-needed data. Version-1 absolute-address
-snapshots are not automatically applied or guessed to belong at address zero. A future
-explicit offline migration needs verified old layout/base information.
+locators are probed only to identify migration-needed data. Version-1 absolute-address
+and version-2 snapshots without the required logical-run identity are rejected as migration
+needed, not automatically applied. A future explicit offline migration needs verified
+old layout/base and invocation identity; inventing a new run ID cannot recover the old run.
 
 A missing candidate starts a fresh job. A present corrupt, unsupported, incompatible,
 or legacy candidate—or a store read failure—rejects only that job with
 `SnapshotIncompatible`, an explanation in `stats.snapshot_restore`, and no engine work.
 It is not silently treated as a miss that could repeat external effects. The candidate
-is retained; no fallback from an incompatible v2 candidate to old data occurs.
+is retained; no fallback from an incompatible v3 candidate to old data occurs.
 
 Capture still requires the existing safe boundary; active collectors are not serialized
 by this increment. Reliable requested cuts are a separate feature. Snapshot counters
 advance only after successful persistence acknowledgment. Pickle remains trusted
 transport: structural validation does not make unpickling attacker-controlled data safe.
 
-## Result keys and the limit of this increment
+## Logical invocation and result reuse
 
-Content and positional result stores use new versioned execution-aware key domains;
-old keys are not silently reused. Compatibility is checked at lookup and again before
-writing results, so an in-flight configuration change cannot publish under an obsolete
-execution namespace. Existing ordered/mutation safeguards remain in force.
+Every fresh job receives a `job_execution_id` (32 lowercase hex characters), independent
+of source key and inputs. Compatible snapshot resume preserves it. Each dynamic call has
+an `invocation_id` (64 lowercase hex characters) derived from that logical run, program
+and execution identity, relative callsite and logical control/iteration position. Actual
+inline execution or engine submission gets a new 32-hex `attempt_id`; retries retain the
+invocation and add attempts. Content/positional hits and deterministic squash reuse do not
+invent execution attempts. These tokens are not exactly-once guarantees for external effects.
 
-This increment strengthens compatibility but does **not yet** establish durable logical
-invocation identity. Positional recovery still uses the existing job/position/order-key
-meaning, now in an execution-aware namespace. Input equality does not prove two calls
-are one invocation, nor does lack of mutation prove determinism. Explicit invocation
-and attempt identities and stricter reuse eligibility are subsequent increments.
+Content keys remain in the version-2 execution-aware domain. Positional keys use version
+3 with execution hash and invocation ID; old positional keys are not silently reused.
+A completed fresh same-key/equal-input rerun is a new logical run and does not recover
+old positional results. A compatible resumed invocation can recover its committed result.
+Compatibility is checked at lookup and again before writing results, so an in-flight
+configuration change cannot publish under an obsolete execution namespace.
+
+`Use(..., deterministic=True)` or `Inline(deterministic=True)` explicitly declares
+eligibility for content/squash reuse, separately from revision attestations and retry
+idempotency. Known builtin operations have maintained eligibility; arbitrary host calls
+are not implicitly deterministic just because they lack mutation flags. Legacy explicit
+`store="content"` without the flag is accepted with a migration warning as an assertion;
+`deterministic=False` with content storage is an error. Ordered/mutation safeguards remain
+in force. All store modes on directly mutating or ordered calls, including positional,
+are ignored with a construction warning: cached return values do not reconstruct mutation
+outcomes. A pure producer's pre-mutation result may still be recovered before a later
+mutating consumer; no general mutation-replay envelope is added. See
+[result reuse](result-reuse.md) for eligibility and migration details.
+
+A declaration is not independent proof of deterministic sampling, environment isolation,
+or engine equivalence. Logical identity and attempts do not provide transactional
+side-effect deduplication at an external service.
 
 ## Recording and conformance
 
@@ -160,3 +182,12 @@ retain admission information separately. Selected-node re-execution currently wa
 once per run/program/region because this CLI supplies no current revision attestation,
 even when the archived manifest is complete. Matching outputs alone are not identity
 certification.
+
+Call records keep their five-field tuple shape. Identity is a separate aligned
+`stats.record_invocations` sidecar under `stats.identity_version=1`, with each known
+row `{invocation_id, attempt_ids, resolution}`. Resolutions distinguish `executed`,
+`content_hit`, `positional_hit`, `not_submitted`, and `squash_reuse`. Null legacy-prefix
+entries remain unknown. `stats.job_execution_id` records the logical run; disabling a
+call record at `record_limit` drops the invocation sidecar too, not the job identity.
+Inspector job/window identity fields come from authoritative runtime attributes rather
+than mutable stats or engine extension dictionaries.

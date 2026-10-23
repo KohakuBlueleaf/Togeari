@@ -8,6 +8,7 @@ stops at the window caps unless it holds the job's oldest unfetched statement.
 import heapq
 from typing import Any
 
+from togeari.core.contracts.identity import invocation_id
 from togeari.core.program.decode.instr import Op
 from togeari.core.runtime.frontend.control import ControlOps
 from togeari.core.runtime.frontend.each import EachOps
@@ -183,11 +184,29 @@ class FrontEnd(ControlOps, EachOps):
     def op_call(self, st: Strand, ins) -> None:
         key = self.consume(st)
         inf = Inflight(st.job, ins, key)
-
-        # Inputs: the slot each name holds now, or literals
-        for port, op in ins.args:
-            inf.inputs.append((port, self.slot_of(st, op)))
+        region = st.job.entry.region
+        inf.invocation_id = invocation_id(
+            st.job.job_execution_id,
+            st.job.program_hash,
+            st.job.execution_hash,
+            ins.addr - region.start,
+            key,
+        )
         inf.snapshot = snapshot_of(st)
+
+        # Keep the already allocated occurrence if argument lookup fails before
+        # issue; it has no execution attempt but still identifies a logical call.
+        try:
+            for port, op in ins.args:
+                inf.inputs.append((port, self.slot_of(st, op)))
+        except RuntimeFault as exc:
+            self.end(st)
+            st.job.add(inf)
+            st.job.unfinished += 1
+            st.job.stats["calls"] += 1
+            self.d.stats["calls"] += 1
+            self.d.fault(inf, exc, catchable=False)
+            return
 
         # `mutates` ports: a new version of the value, visible to younger readers
         if ins.mutates:

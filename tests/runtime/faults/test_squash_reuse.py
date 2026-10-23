@@ -82,7 +82,11 @@ def build(positional: tuple = (), **knobs) -> tuple[Machine, dict[str, Counting]
         "push": Counting("push", 5),
     }
     bind = {
-        name: Use(Lane([u], name=name), store="positional" if name in positional else None)
+        name: Use(
+            Lane([u], name=name),
+            store="positional" if name in positional else None,
+            deterministic=True if name in {"work", "other", "mklist"} else None,
+        )
         for name, u in units.items()
     }
     m = Machine(
@@ -196,7 +200,10 @@ CHANGED = """
 def test_a_refetched_call_whose_inputs_changed_runs_again():
     units = {"boom": Counting("boom", SLOW_MS), "fast": Counting("fast", 5)}
     units["work"] = Counting("work", 5)
-    bind = {name: Use(Lane([u], name=name)) for name, u in units.items()}
+    bind = {
+        name: Use(Lane([u], name=name), deterministic=True if name in {"fast", "work"} else None)
+        for name, u in units.items()
+    }
     m = Machine(
         program=CHANGED,
         entry="main",

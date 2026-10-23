@@ -1,4 +1,4 @@
-"""Snapshot v2 wire envelope and shared, mutation-free Python/native preflight.
+"""Snapshot v3 wire envelope and shared, mutation-free Python/native preflight.
 
 Snapshots are trusted pickle transport. Validation protects runtime consistency,
 not against code execution by an untrusted pickle. User values are never copied
@@ -8,16 +8,32 @@ independently, so their unpickled alias graph survives preparation unchanged.
 import pickle
 from typing import Any
 
+from togeari.core.contracts.identity import (
+    validate_attempt_id,
+    validate_invocation_id,
+    validate_job_execution_id,
+)
 from togeari.core.program.decode.analysis import EXIT
 from togeari.core.program.decode.instr import Op
 from togeari.core.program.execution import compatibility
+from togeari.core.runtime.identity import RESOLUTIONS
 
 SCHEMA = "togeari.snapshot"
-VERSION = 2
+VERSION = 3
 ADDRESSING = "region-relative-v1"
 I64_MIN = -(2**63)
 I64_MAX = 2**63 - 1
-_STATE_KEYS = {"pc", "prefix", "counter", "frames", "values", "stats", "steps", "record"}
+_STATE_KEYS = {
+    "job_execution_id",
+    "pc",
+    "prefix",
+    "counter",
+    "frames",
+    "values",
+    "stats",
+    "steps",
+    "record",
+}
 _FRAME_KEYS = {"reconv", "saved", "branch", "kind", "each", "items", "i", "base", "joined"}
 _COUNTERS = {
     "calls",
@@ -111,6 +127,49 @@ def _record(value: Any) -> None:
                 raise InvalidState(path, "error node must be string or None")
 
 
+def _invocations(stats: dict, record: Any) -> None:
+    if type(stats.get("identity_version")) is not int or stats["identity_version"] != 1:
+        raise InvalidState("state.stats.identity_version", "expected identity sidecar version 1")
+    if "job_execution_id" in stats:
+        try:
+            validate_job_execution_id(stats["job_execution_id"])
+        except ValueError as exc:
+            raise InvalidState("state.stats.job_execution_id", str(exc)) from None
+    if "record_invocations" not in stats:
+        return  # no invented IDs for a manually constructed unknown record prefix
+    sidecar = stats["record_invocations"]
+    if record is None or type(sidecar) is not list or len(sidecar) != len(record):
+        raise InvalidState(
+            "state.stats.record_invocations", "sidecar must align with recorded calls"
+        )
+    seen_attempts = set()
+    for index, entry in enumerate(sidecar):
+        if entry is None:
+            continue
+        path = f"state.stats.record_invocations[{index}]"
+        _shape(entry, {"invocation_id", "attempt_ids", "resolution"}, path)
+        try:
+            validate_invocation_id(entry["invocation_id"])
+        except ValueError as exc:
+            raise InvalidState(path + ".invocation_id", str(exc)) from None
+        attempts = entry["attempt_ids"]
+        if type(attempts) is not list:
+            raise InvalidState(path + ".attempt_ids", "expected exact list of attempt IDs")
+        for attempt in attempts:
+            try:
+                validate_attempt_id(attempt)
+            except ValueError as exc:
+                raise InvalidState(path + ".attempt_ids", str(exc)) from None
+            if attempt in seen_attempts:
+                raise InvalidState(path + ".attempt_ids", "duplicate execution attempt ID")
+            seen_attempts.add(attempt)
+        resolution = entry["resolution"]
+        if type(resolution) is not str or resolution not in RESOLUTIONS:
+            raise InvalidState(path + ".resolution", "unknown invocation resolution")
+        if bool(attempts) != (resolution == "executed"):
+            raise InvalidState(path, "only actual execution has execution attempt IDs")
+
+
 def _address(value: Any, region: Any, path: str, *, relative: bool, nullable=False, exit_ok=False):
     if value is None and nullable:
         return None
@@ -125,6 +184,10 @@ def _address(value: Any, region: Any, path: str, *, relative: bool, nullable=Fal
 
 def _state(raw: Any, entry: Any, code: Any, *, relative: bool) -> dict:
     state = _shape(raw, _STATE_KEYS, "state")
+    try:
+        validate_job_execution_id(state["job_execution_id"])
+    except ValueError as exc:
+        raise InvalidState("state.job_execution_id", str(exc)) from None
     region = entry.region
     result = dict(state)
     result["pc"] = _address(state["pc"], region, "state.pc", relative=relative)
@@ -144,6 +207,7 @@ def _state(raw: Any, entry: Any, code: Any, *, relative: bool) -> dict:
     if "program" in stats and type(stats["program"]) is not str:
         raise InvalidState("state.stats.program", "expected an exact string")
     _record(state["record"])
+    _invocations(stats, state["record"])
     if type(state["frames"]) is not list:
         raise InvalidState("state.frames", "expected a list")
     frames = []
@@ -243,14 +307,14 @@ def prepare_restore(blob: bytes, entry: Any, code: Any, current_manifest: dict, 
         if (
             type(envelope) is dict
             and type(envelope.get("version")) is int
-            and envelope["version"] == 1
+            and envelope["version"] in (1, 2)
         ):
             return {
                 "decision": denied(
                     "unsupported_version",
                     "migration_needed",
                     "version",
-                    "v1 snapshots require offline migration",
+                    "v1/v2 snapshots lack job execution identity and require offline migration",
                 ),
                 "state": None,
             }

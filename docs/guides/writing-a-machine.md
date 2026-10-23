@@ -112,7 +112,7 @@ except ConstructionError as exc:
 ### Fixed bindings and loading migration
 
 Binding declarations are fixed when a machine is constructed. Mutating `machine.bind`,
-replacing its `Use`/`Inline` declarations, or changing their policy/revision/adapter fields
+replacing its `Use`/`Inline` declarations, or changing their policy/revision/adapter/reuse fields
 is rejected with `ConstructionError` before a later load can reuse stale bound code.
 Applications that previously added bindings immediately before `load()` should declare
 those bindings in the original `bind=` map instead. An unused-pattern warning is expected;
@@ -124,6 +124,10 @@ Both `Use` and `Inline` accept optional opaque revision strings. `implementation
 identifies only the host/node implementation; `binding_revision` explicitly attests the
 whole resolved implementation bundle, including adapter, engines/services/models and
 semantic configuration. Neither revision implies determinism or safe content reuse.
+Declare `deterministic=True` separately to authorize content/squash reuse, subject to effect
+and persistence safeguards; explicit `False` disables builtin defaults. Omitting the flag on
+an explicit content store is a warned legacy determinism assertion, not inference from equal
+inputs. See [invocation identity and reuse declarations](invocation-identity.md).
 Declared coverage is not an independently verified implementation fingerprint. For intended
 implementation changes, use new revisions and a new machine. Dynamic loading checks local
 resolved function identity to avoid stale code-cache reuse, but does not automatically

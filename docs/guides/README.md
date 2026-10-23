@@ -13,7 +13,8 @@
 | [Ordered collection](collect.md) | native result-producing iteration, carried state, precise faults, mutation restriction and fallback replay |
 | [Execution policy](execution-policy.md) | explicit call deadlines, lane attempt limits, retry scope, failure causes and legacy timeout-hint migration |
 | [Execution identity](execution-identity.md) | declared revisions, manifest completeness, persistence compatibility, current reports versus initial archived identity, and replay limits |
-| [Result reuse](result-reuse.md) | execution-qualified v2 result keys, warn/strict eligibility, live configuration transitions and position-based recovery limits |
+| [Invocation identity](invocation-identity.md) | logical job runs, dynamic invocations, execution attempts, snapshot continuity and engine metadata |
+| [Result reuse](result-reuse.md) | deterministic eligibility, content v2 and invocation-safe positional v3 keys, live configuration transitions and migration |
 | [Conformance](conformance.md) | recording, `conform()` in replay and re-execute modes, `togeari conform`, reading records with `Archive`, `togeari doctor` |
 | [Examples](examples.md) | what each example shows and how to run it |
 

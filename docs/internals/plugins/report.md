@@ -38,8 +38,14 @@ The legacy global program index remains a latest-version convenience index.
 A recorded job's `stats.execution`, `stats.execution_epoch`, and any transition
 history supplied by the runtime are retained independently, as are existing
 policy-failure sidecars. The program artifact must not be mistaken for the
-per-job execution context after a policy change. No invocation or attempt IDs
-are introduced by this reporting layer.
+per-job execution context after a policy change. Runtime-provided
+`stats.identity_version=1`, `stats.job_execution_id`, and the aligned
+`stats.record_invocations` sidecar are preserved without altering five-field call
+tuples. Known sidecar rows contain `{invocation_id, attempt_ids, resolution}`;
+resolutions are `executed`, `content_hit`, `positional_hit`, `not_submitted`, or
+`squash_reuse`. Unknown legacy prefix entries remain null. The reporting layer
+neither creates identity tokens nor fabricates attempts for reuse outcomes.
+When `record_limit` removes a call record, runtime also removes its sidecar.
 
 Ordinary conformance replay still consumes recorded outcomes and reads legacy
 artifacts without an execution manifest. It does not require a newly imported
@@ -61,6 +67,7 @@ Each `programs[region].calls` list contains one row per bound call instruction:
 | `pattern` | binding pattern actually selected for this instruction |
 | `inline` | whether execution is on the dispatcher |
 | `lane` | resolved lane name, or `null` for inline calls |
+| `reuse.deterministic`, `reuse.source` | resolved reuse declaration and provenance (`binding`, `builtin`, `legacy_content`, `none`) |
 | `execution_policy.source` | `"binding"`, `"legacy_hint"`, or `"none"` |
 | `execution_policy.timeout_s` | effective per-call timeout, or `null` for no call deadline |
 

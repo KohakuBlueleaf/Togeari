@@ -125,6 +125,20 @@ impl Core {
         for it in items.try_iter()? {
             let it = it?;
             let owner = it.getattr(intern!(py, "owner"))?;
+            let identity = if owner.is_none() {
+                PyTuple::new(
+                    py,
+                    [
+                        it.getattr("job_execution_id")?,
+                        it.getattr("invocation_id")?,
+                        it.getattr("attempt_id")?,
+                    ],
+                )?
+            } else {
+                owner
+                    .call_method0("_identity_fields")?
+                    .cast_into::<PyTuple>()?
+            };
             let where_ = PyDict::new(py);
             where_.set_item("lane", &lane_name)?;
             let entry = if owner.is_none() {
@@ -146,6 +160,8 @@ impl Core {
             let new = match got {
                 Ok(n) => n,
                 Err(e) if e.is_instance(py, self.h.plugin_block_error.bind(py)) => {
+                    it.setattr(intern!(py, "owner"), &owner)?;
+                    it.call_method("_set_identity", &identity, None)?;
                     it.getattr(intern!(py, "ext"))?.set_item("settled", true)?;
                     let msg = e.value(py).str()?;
                     let err = self.h.blocked.bind(py).call1((msg,))?;
@@ -156,15 +172,27 @@ impl Core {
                 Err(e) => return Err(e),
             };
 
-            // A replacement item keeps the machine's owner and the lane's bookkeeping
+            // The captured owner/identity wins over same-object or replacement spoofing.
+            it.setattr(intern!(py, "owner"), &owner)?;
+            it.call_method("_set_identity", &identity, None)?;
+            if !new.get_type().is(kinds) {
+                it.getattr(intern!(py, "ext"))?.set_item("settled", true)?;
+                let error = self.h.blocked.bind(py).call1((
+                    "pre_submit replacement must be an exact WorkItem; use ext for plugin data",
+                ))?;
+                let result = self.h.item_error.bind(py).call1((error,))?;
+                self.deliver(py, &it, &result, None)?;
+                continue;
+            }
+            new.setattr(intern!(py, "owner"), &owner)?;
             if !new.is(&it) {
-                new.setattr(intern!(py, "owner"), &owner)?;
                 py.import("togeari.core.lanes.deadline")?
                     .call_method1("replace", (&it, &new))?;
                 if let Some(inf) = self.owned_inf(&owner)? {
                     inf.borrow_mut().item = Some(new.clone().unbind());
                 }
             }
+            new.call_method("_set_identity", &identity, None)?;
             kept.append(new)?;
         }
         Ok(kept.into_any())

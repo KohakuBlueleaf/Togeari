@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use pyo3::prelude::*;
 
+use crate::contracts::hash::sha256;
 use crate::program::core::{Instr, Op, Operand};
 use crate::runtime::core::Core;
 use crate::runtime::events::{gil, Exc, Stop};
@@ -20,6 +21,30 @@ use crate::runtime::state::{
 
 // Instructions one front-end pass may run for a job before the job yields to others
 const FETCH_BUDGET: i64 = 20_000;
+
+/// Exact compact ASCII JSON payload of contracts.identity.invocation_id. IDs
+/// are validated lowercase hex at admission/restore, so no escaping is needed.
+fn invocation_id(
+    job: &str,
+    program: &str,
+    execution: &str,
+    callsite: i64,
+    order: &[i64],
+) -> String {
+    debug_assert!(callsite >= 0 && order.iter().all(|part| *part >= 0));
+    let order = order
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    let payload = format!(
+        "[\"togeari.invocation\",1,\"{job}\",\"{program}\",\"{execution}\",{callsite},[{order}]]"
+    );
+    sha256(payload.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
 
 /// The knobs fetch reads, once per pass (numbers as Python compares a count with them).
 pub struct Caps {
@@ -477,11 +502,40 @@ impl Core {
         let key = st.borrow_mut().consume();
         let jid = job.borrow().id;
         let inf = Inflight::new(job, jid, ins.clone(), key.clone());
+        {
+            let job = job.borrow();
+            let region = self.code.borrow().region_of(ins.addr).expect("call region");
+            let mut call = inf.borrow_mut();
+            call.invocation_id = Some(invocation_id(
+                &job.job_execution_id,
+                &job.invocation_program_hash,
+                &job.invocation_execution_hash,
+                ins.addr - region.start,
+                &key.0,
+            ));
+            call.snapshot = Some(Core::snapshot_of(st));
+        }
 
         // Inputs: the slot each name holds now, or literals
         let mut inputs = Vec::with_capacity(ins.args.len());
         for (_, op) in &ins.args {
-            inputs.push(self.slot_of(py, st, op)?);
+            match self.slot_of(py, st, op) {
+                Ok(slot) => inputs.push(slot),
+                Err(Stop::Fault(message)) => {
+                    // Preserve the consumed occurrence/key: lookup failure has no attempt.
+                    self.end(py, job, st)?;
+                    {
+                        let mut job = job.borrow_mut();
+                        job.add(&inf);
+                        job.unfinished += 1;
+                        job.stats.calls += 1;
+                    }
+                    self.stats.borrow_mut().calls += 1;
+                    self.fault(gil(py), &inf, Exc::Runtime(message), false)?;
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            }
         }
 
         // `mutates` ports: a new version of the value, visible to younger readers
@@ -568,5 +622,37 @@ impl Core {
 
     pub fn branch_value(v: &Py<PyAny>) -> Option<bool> {
         as_bool(v)
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::invocation_id;
+    #[test]
+    fn invocation_payload_matches_python_canonical_vectors() {
+        assert_eq!(
+            invocation_id(&"0".repeat(32), &"1".repeat(64), &"2".repeat(64), 0, &[]),
+            "a34dc0f1b854dc1122da378a783dbbdeb0c50e72c169578a5ec44f6deb3dcd8c"
+        );
+        assert_eq!(
+            invocation_id(
+                &"0123456789abcdef".repeat(2),
+                &"abcdef0123456789".repeat(4),
+                &"fedcba9876543210".repeat(4),
+                17,
+                &[0, 2, 7]
+            ),
+            "90d1973b2851e1a9fb09f65c5b1c7b2db04a7e0752cb5e6860ec3178bd2bd952"
+        );
+        assert_eq!(
+            invocation_id(
+                &"f".repeat(32),
+                &"0".repeat(64),
+                &"a".repeat(64),
+                i64::MAX,
+                &[i64::MAX, 0, 42]
+            ),
+            "43af12e95e637dfc5a6b68406724779c3268e126d98f6c30f1d29b3feaad89d5"
+        );
     }
 }

@@ -32,7 +32,7 @@ from togeari import Inline, Lane, Machine, Retry, Use
 from togeari.core.construct.core import rust_available
 from togeari.core.construct.errors import ConstructionError
 from togeari.core.construct.knobs import checked
-from togeari.core.contracts.digest import digest_with_weak
+from togeari.core.contracts.digest import digest, digest_with_weak
 from togeari.core.contracts.io import SourceItem
 from togeari.core.contracts.results import UnitError
 from togeari.core.lanes.native import NativeLane
@@ -958,14 +958,68 @@ def test_snapshots_and_stores_over_two_runs_trace_alike(gen_seed, case, offer_us
     snapshots. Both runs, and the stores, agree."""
     p = entry_program(gen_seed, jobs=16)
     stores = {"python": MemoryStore(), "rust": MemoryStore()}
+    positional_keys = {}
+    expected_values = {"python": {}, "rust": {}}
     for rate in (0.15, 0.0):
 
         def make(core, rate=rate):
             kw = {"item_error_rate": rate, "store": stores[core], **STORED[case]}
             return generated(p.text, p.entry, core=core, gil_offer_us=offer_us, **kw)()
 
-        both(make, p.inputs, regions=False)
-    assert sorted(stores["python"].data) == sorted(stores["rust"].data)
+        py, rs = both(make, p.inputs, regions=False)
+        if case == "positional":
+            # Fresh runs intentionally have distinct UUID-derived keys. Reconstruct
+            # each retained call's domain-3 key and relate only aligned invocations,
+            # never merely compare a multiset of values or store cardinality.
+            for py_record, rs_record in zip(py.records, rs.records):
+                region = py.machine.code.entries[py_record.entry].region
+                positional_nodes = {
+                    ins.node
+                    for ins in py.machine.code.calls(region)
+                    if ins.binding.store == "positional"
+                }
+                left = py_record.stats["record_invocations"]
+                right = rs_record.stats["record_invocations"]
+                assert len(left) == len(py_record.record)
+                assert len(right) == len(rs_record.record)
+                for index, (py_call, rs_call) in enumerate(zip(py_record.record, rs_record.record)):
+                    assert py_call[0] == rs_call[0] and py_call[2] == rs_call[2]
+                    if py_call[2] != "ok" or py_call[0] not in positional_nodes:
+                        continue
+                    py_key = digest(
+                        (
+                            "togeari.result",
+                            3,
+                            "positional",
+                            py_record.stats["execution"]["hash"],
+                            left[index]["invocation_id"],
+                        )
+                    )
+                    rs_key = digest(
+                        (
+                            "togeari.result",
+                            3,
+                            "positional",
+                            rs_record.stats["execution"]["hash"],
+                            right[index]["invocation_id"],
+                        )
+                    )
+                    assert py_key not in positional_keys or positional_keys[py_key] == rs_key
+                    positional_keys[py_key] = rs_key
+                    expected_values["python"][py_key] = py_call[3]
+                    expected_values["rust"][rs_key] = rs_call[3]
+    if case == "positional":
+        assert len(set(positional_keys.values())) == len(positional_keys)
+        assert set(stores["python"].data) == set(positional_keys)
+        assert set(stores["rust"].data) == set(positional_keys.values())
+        for py_key, rs_key in positional_keys.items():
+            py_value = stores["python"].data[py_key]
+            rs_value = stores["rust"].data[rs_key]
+            assert digest(py_value) == digest(expected_values["python"][py_key])
+            assert digest(rs_value) == digest(expected_values["rust"][rs_key])
+            assert digest(py_value) == digest(rs_value)
+    else:
+        assert sorted(stores["python"].data) == sorted(stores["rust"].data)
 
 
 # ------------------------------------------------------------ memory

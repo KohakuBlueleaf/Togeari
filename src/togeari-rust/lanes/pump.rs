@@ -851,6 +851,10 @@ impl LaneCore {
         } else {
             items[0].bind(py).clone()
         };
+        // Actual attempts start only after transforms and post-hook deadline checks.
+        for item in &items {
+            item.bind(py).call_method0(intern!(py, "_begin_attempt"))?;
+        }
         let t0 = std::time::Instant::now();
         match ub.call_method1(intern!(py, "submit"), (work, done)) {
             Ok(t) => {

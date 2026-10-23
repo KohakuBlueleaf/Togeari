@@ -3,6 +3,7 @@
 //! parts that stay Python), the inbox's Python methods and the work-item `Owner`.
 
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Mutex;
 
 use pyo3::intern;
 use pyo3::prelude::*;
@@ -62,6 +63,9 @@ pub struct Owner {
     #[pyo3(get)]
     pub lane: Obj,
     fate: AtomicU8,
+    job_execution_id: String,
+    invocation_id: String,
+    latest_attempt: Mutex<Option<String>>,
     // The dispatcher (weakly) and the view class of its jobs
     d: Obj,
     view: Obj,
@@ -78,8 +82,23 @@ impl Owner {
         lane: Obj,
         d: Obj,
         view: Obj,
+        job_execution_id: String,
+        invocation_id: String,
     ) -> Owner {
-        Owner { inf, job_id, instr, key, entry, lane, fate: AtomicU8::new(0), d, view }
+        Owner {
+            inf,
+            job_id,
+            instr,
+            key,
+            entry,
+            lane,
+            fate: AtomicU8::new(0),
+            d,
+            view,
+            job_execution_id,
+            invocation_id,
+            latest_attempt: Mutex::new(None),
+        }
     }
 
     pub fn set_fate(&self, fate: &str) {
@@ -94,6 +113,30 @@ impl Owner {
 
 #[pymethods]
 impl Owner {
+    /// Immutable owner identity, plus the latest attempt actually submitted.
+    fn _identity_fields(&self) -> (String, String, Option<String>) {
+        (
+            self.job_execution_id.clone(),
+            self.invocation_id.clone(),
+            self.latest_attempt.lock().expect("attempt lock").clone(),
+        )
+    }
+
+    /// Called on the dispatcher thread immediately before one engine submission.
+    fn _begin_attempt(&self, py: Python<'_>) -> PyResult<String> {
+        if self.fate().is_some() {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "cannot submit a completed invocation",
+            ));
+        }
+        let dispatcher = self.d.bind(py).call0()?;
+        let attempt: String = dispatcher
+            .call_method1("_begin_attempt", (self.inf,))?
+            .extract()?;
+        *self.latest_attempt.lock().expect("attempt lock") = Some(attempt.clone());
+        Ok(attempt)
+    }
+
     #[getter(fate)]
     fn py_fate(&self) -> Option<&'static str> {
         self.fate()
@@ -465,6 +508,29 @@ impl PyCore {
         *self.c().clock.borrow_mut() = clock;
     }
 
+    /// Owner bridge: the live native inflight, never plugin/WorkItem ext, owns attempts.
+    fn _begin_attempt(&self, py: Python<'_>, inf: u64) -> PyResult<String> {
+        self.c().outside_region(py);
+        let invocation = self
+            .c()
+            .owned
+            .borrow()
+            .get(&inf)
+            .and_then(|weak| weak.upgrade())
+            .ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err("invocation is no longer live")
+            })?;
+        {
+            let invocation = invocation.borrow();
+            if !invocation.state.live() || invocation.invocation_id.is_none() {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "invocation is not eligible for submission",
+                ));
+            }
+        }
+        self.c().begin_attempt(py, &invocation)
+    }
+
     /// A resident job as ``JobView`` reads it, or None: ``(key, entry, inputs, paused, issued,
     /// unfinished, runnable, stats, held)``.
     fn _job_info<'py>(&self, py: Python<'py>, id: u64) -> PyResult<Option<Bound<'py, PyTuple>>> {
@@ -474,7 +540,7 @@ impl PyCore {
         };
 
         // Copied out first: building Python objects may run the collector
-        let (key, entry, inputs, paused, issued, unfinished, runnable, held) = {
+        let (key, entry, inputs, paused, issued, unfinished, runnable, held, job_execution_id) = {
             let b = j.borrow();
             (
                 b.key.clone_ref(py),
@@ -485,6 +551,7 @@ impl PyCore {
                 b.unfinished,
                 b.runnable.len(),
                 b.held.len(),
+                b.job_execution_id.clone(),
             )
         };
         let stats = j.borrow().stats.snapshot(py);
@@ -500,6 +567,7 @@ impl PyCore {
                 runnable.into_pyobject(py)?.into_any(),
                 stats.to_dict(py)?.into_any(),
                 held.into_pyobject(py)?.into_any(),
+                job_execution_id.into_pyobject(py)?.into_any(),
             ],
         )?;
         Ok(Some(t))
@@ -514,17 +582,28 @@ impl PyCore {
         };
         let rows: Vec<InfRef> = j.borrow().window.live().to_vec();
         for x in rows {
-            let (instr, key, state, item) = {
+            let (instr, key, state, item, invocation_id, attempt_ids, resolution) = {
                 let b = x.borrow();
                 (
                     b.ins.py.clone_ref(py),
                     b.key.clone(),
                     b.state.name(),
                     b.item.as_ref().map(|i| i.clone_ref(py)),
+                    b.invocation_id.clone(),
+                    b.attempt_ids.clone(),
+                    b.resolution,
                 )
             };
             let item = item.unwrap_or_else(|| py.None());
-            out.append((instr, key.to_py(py), state, item))?;
+            out.append((
+                instr,
+                key.to_py(py),
+                state,
+                item,
+                invocation_id,
+                attempt_ids,
+                resolution,
+            ))?;
         }
         Ok(out)
     }

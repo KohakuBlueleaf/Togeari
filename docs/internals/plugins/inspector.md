@@ -38,12 +38,28 @@ thread (`togeari-inspector`). Requests reach the machine only through `ctx.inspe
 
 Errors answer `{"error": message}`.
 
+## Logical run and invocation inspection
+
+The `jobs` and `job` queries include `job_execution_id`, read from the authoritative
+job attribute rather than a user-visible source key or mutable stats. Each `job`
+window row includes `invocation_id`, a copied `attempt_ids` list, and `resolution`
+from the inflight. Missing attributes in an older native view are null, never
+inferred from engine `ext` metadata. Unsubmitted calls have no attempts; retries
+append actual execution/submission attempts while preserving invocation identity.
+
+The job's copied stats retain `identity_version`, `job_execution_id`, and recorded
+`record_invocations` where supplied by runtime. They remain diagnostic copies, not
+an alternate writable identity channel. Source origins and local numeric job IDs
+remain separate fields.
+
 ## Effective call policy
 
 `GET /queries/programs` retains its existing region/source/entry/hash/address,
 input/output, dependency and origin fields, and adds a `calls` list per program.
 Each row has `addr`, `node`, `origin`, selected binding `pattern`, `inline`,
-`lane` (null for inline), and `execution_policy: {source, timeout_s}`.
+`lane` (null for inline), `execution_policy: {source, timeout_s}`, and
+`reuse: {deterministic, source}`. Reuse provenance is `binding`, `builtin`,
+`legacy_content`, or `none`; it is independent of an implementation revision.
 The source is `binding`, `legacy_hint`, or `none`; zero timeout is distinct from
 null. An explicitly empty binding policy overrides a legacy timeout hint.
 

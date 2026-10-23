@@ -9,6 +9,7 @@ from kohakunode.sig.std import INTERNAL
 
 from togeari.core.construct.errors import Problems
 from togeari.core.contracts.execution import ExecutionPolicy
+from togeari.core.contracts.reuse import builtin_revision
 from togeari.core.program.code import CodeMemory, Region
 from togeari.core.program.decode.instr import Instr
 
@@ -23,7 +24,8 @@ class Use:
     Without one, legacy hints are resolved once at binding time with a warning.
     ``implementation_revision`` identifies the host implementation only;
     ``binding_revision`` attests the whole host/adapter/engine/semantic-config bundle.
-    Neither declares determinism or reuse eligibility.
+    Neither revision declares determinism. ``deterministic`` separately authorizes
+    content/squash reuse, subject to the ordered and mutation safeguards.
     """
 
     target: Any
@@ -33,6 +35,7 @@ class Use:
     policy: ExecutionPolicy | None = None
     implementation_revision: str | None = None
     binding_revision: str | None = None
+    deterministic: bool | None = None
 
 
 @dataclass
@@ -45,6 +48,7 @@ class Inline:
     warn_us: float | None = None
     implementation_revision: str | None = None
     binding_revision: str | None = None
+    deterministic: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -63,6 +67,8 @@ class Bound:
     policy_source: str = "none"
     implementation_revision: str | None = None
     binding_revision: str | None = None
+    deterministic: bool = False
+    reuse_source: str = "none"
 
 
 @dataclass
@@ -165,6 +171,29 @@ def _revision(value: Any, field: str, problems: Problems, where: str) -> str | N
     return None
 
 
+def _reuse(
+    explicit: Any, store: str | None, resolved: Any, fn: Any, problems: Problems, where: str
+) -> tuple[bool, str]:
+    """Normalize eligibility once; legacy explicit content storage is a warned assertion."""
+    if explicit is not None:
+        if type(explicit) is not bool:
+            problems.add(where, "deterministic must be a bool or None")
+            return False, "none"
+        if explicit is False and store == "content":
+            problems.add(where, "store='content' conflicts with deterministic=False")
+        return explicit, "binding"
+    if store == "content":
+        problems.warn(
+            where,
+            "store='content' without deterministic is a legacy determinism assertion; "
+            "set deterministic=True explicitly, or disable content reuse for sampling nodes",
+        )
+        return True, "legacy_content"
+    if builtin_revision(resolved, fn) is not None:
+        return True, "builtin"
+    return False, "none"
+
+
 def _warn_inline_timeout(hint: dict, problems: Problems, where: str) -> None:
     if "timeout_s" in hint:
         problems.warn(where, "legacy @hint timeout_s is ignored for Inline execution")
@@ -194,7 +223,37 @@ def bind_region(
             and resolved.library is INTERNAL
         ):
             _warn_inline_timeout(ins.hint, problems, where)
-            ins.binding = Bound(ins.node, True, fn=region.job.env.impl(ins.node))
+            fn = region.job.env.impl(ins.node)
+            # Generated helpers stay inline, but a matching declaration may disable reuse.
+            pat, ties = match(patterns, names_of(ins, region))
+            if len(ties) > 1:
+                problems.add("bind", f"node {ins.node!r} matches multiple bindings equally")
+                continue
+            declaration = bind[pat] if pat is not None else None
+            if pat is not None:
+                used.add(pat)
+            deterministic, reuse_source = _reuse(
+                getattr(declaration, "deterministic", None), None, resolved, fn, problems, where
+            )
+            ins.binding = Bound(
+                pat or ins.node,
+                True,
+                fn=fn,
+                implementation_revision=_revision(
+                    getattr(declaration, "implementation_revision", None),
+                    "implementation_revision",
+                    problems,
+                    where,
+                ),
+                binding_revision=_revision(
+                    getattr(declaration, "binding_revision", None),
+                    "binding_revision",
+                    problems,
+                    where,
+                ),
+                deterministic=deterministic,
+                reuse_source=reuse_source,
+            )
             continue
         names = names_of(ins, region)
         pat, ties = match(patterns, names)
@@ -222,6 +281,9 @@ def bind_region(
             if fn is None:
                 problems.add(where, f"node {ins.node!r} is inline but has no Python implementation")
                 continue
+            deterministic, reuse_source = _reuse(
+                b.deterministic, None, resolved, fn, problems, where
+            )
             ins.binding = Bound(
                 pat,
                 True,
@@ -229,6 +291,8 @@ def bind_region(
                 warn_us=b.warn_us,
                 implementation_revision=implementation_revision,
                 binding_revision=binding_revision,
+                deterministic=deterministic,
+                reuse_source=reuse_source,
             )
             continue
 
@@ -247,8 +311,10 @@ def bind_region(
         if store not in STORE_MODES:
             problems.add(where, f"store={store!r} is not one of {STORE_MODES}")
             store = None
-        if ins.ordered and store is not None:
-            problems.warn("bind", f"node {ins.node!r} is ordered; its store={store!r} is ignored")
+        deterministic, reuse_source = _reuse(b.deterministic, store, resolved, fn, problems, where)
+        if store is not None and (ins.ordered or ins.mutates):
+            effect = "ordered" if ins.ordered else "mutating"
+            problems.warn("bind", f"node {ins.node!r} is {effect}; its store={store!r} is ignored")
             store = None
         ins.binding = Bound(
             pat,
@@ -262,4 +328,6 @@ def bind_region(
             policy_source=policy_source,
             implementation_revision=implementation_revision,
             binding_revision=binding_revision,
+            deterministic=deterministic,
+            reuse_source=reuse_source,
         )

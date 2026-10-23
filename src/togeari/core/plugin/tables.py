@@ -36,6 +36,7 @@ def q_jobs(m: Any) -> list[dict]:
         {
             "id": j.id,
             "key": j.key,
+            "job_execution_id": getattr(j, "job_execution_id", None),
             "entry": j.entry.name,
             "strands": len(j.strands),
             "window": len(j.window),
@@ -68,6 +69,9 @@ def q_job(m: Any, id: int) -> dict:
             "key": x.key,
             "state": x.state,
             "unit": x.item.ext.get("unit") if x.item is not None else None,
+            "invocation_id": getattr(x, "invocation_id", None),
+            "attempt_ids": list(x.attempt_ids) if hasattr(x, "attempt_ids") else None,
+            "resolution": getattr(x, "resolution", None),
         }
         for x in j.window
     ]
@@ -77,6 +81,7 @@ def q_job(m: Any, id: int) -> dict:
     return {
         "id": j.id,
         "key": j.key,
+        "job_execution_id": getattr(j, "job_execution_id", None),
         "entry": j.entry.name,
         "inputs": {k: _repr.repr(v) for k, v in j.inputs.items()},
         "strands": strands,
@@ -134,6 +139,10 @@ def bound_calls(code: Any, region: Any) -> list[dict]:
                 "pattern": bound.pattern,
                 "inline": bound.inline,
                 "lane": None if bound.inline else bound.lane.name,
+                "reuse": {
+                    "deterministic": bound.deterministic,
+                    "source": bound.reuse_source,
+                },
                 "execution_policy": {
                     "source": bound.policy_source,
                     "timeout_s": bound.policy.timeout_s,

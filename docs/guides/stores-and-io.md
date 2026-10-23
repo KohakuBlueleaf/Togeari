@@ -10,13 +10,19 @@ A store keeps node results by key for two binding modes, and job snapshots:
 
 | Use | Key | Written |
 |---|---|---|
-| `Use(..., store="content")` | v2 domain, execution hash, node and input digest | when the call completes, if execution-compatible |
-| `Use(..., store="positional")` | v2 domain, execution hash, job key/input digest, region-relative position and order key | when the call retires, if execution-compatible |
-| `snapshot_every=N` | v2 snapshot domain, program hash, job key/input digest; execution compatibility in envelope | at eligible retire boundaries after N statements; counted only after successful write, deleted on successful completion |
+| `Use(..., store="content", deterministic=True)` | v2 domain, execution hash, node and input digest | when the call completes, if deterministic and execution-compatible |
+| `Use(..., store="positional")` | v3 domain, execution hash and invocation ID | when the call retires, if execution-compatible |
+| `snapshot_every=N` | v3 snapshot domain, program hash, job key/input digest; execution manifest and job execution ID in envelope | at eligible retire boundaries after N statements; counted only after successful write, deleted on successful completion |
 
 See [Result reuse](result-reuse.md) for revision declarations, warn/strict compatibility,
-legacy-key isolation and live configuration changes. Positional reuse remains position-based,
-not a guarantee of logical invocation identity or exactly-once effects.
+legacy-key isolation and live configuration changes. Positional reuse recovers an invocation
+of the same logical run: a fresh submission with equal key/inputs gets a new job execution ID
+and cannot hit prior positional results. Compatible snapshot resume preserves that ID.
+Neither identity nor result recovery guarantees exactly-once external effects.
+All store modes on directly ordered or mutating calls are ignored with a warning:
+a return-value cache cannot reconstruct their external effects or mutation outcome.
+A pure producer followed by a mutating consumer remains eligible to recover the
+producer's pre-mutation result; there is no general mutation-replay envelope.
 
 The contract:
 
@@ -31,7 +37,7 @@ The contract:
 A snapshot read failure is **not** permission to rerun potentially effectful work:
 it rejects that job with `SnapshotIncompatible`, as do present incompatible/corrupt
 snapshots. Only an actually absent snapshot starts fresh. See
-[execution identity](execution-identity.md#snapshot-version-2) for version-2 relative
+[execution identity](execution-identity.md#snapshot-version-3) for version-3 relative
 continuations, warn/strict compatibility, and legacy migration-needed behavior.
 
 **Trust.** A snapshot is a pickle of the job's state, and resuming unpickles what the store
@@ -62,7 +68,7 @@ for run in range(2):
         program="@def (x: int)main(y):\n    (x)slow(y)\n",
         entry="main",
         libraries=[lib],
-        bind={"slow": Use(SimCall(name="sim", latency_ms=5), store="content")},
+        bind={"slow": Use(SimCall(name="sim", latency_ms=5), store="content", deterministic=True)},
         store=store,
     )
     with machine:
@@ -113,8 +119,9 @@ print(store.get(b"k"), store.get(b"missing") is MISS)
 ```
 
 Content keys need inputs that digest by content: a value that does not pickle digests by type
-only (weak), and such a call skips the store. Positional keys and snapshots match a job by key
-and inputs, so give explicit keys (below).
+only (weak), and such a call skips the store. Snapshot locators match source key and inputs,
+so give explicit keys (below). Positional results use the invocation ID restored by the
+snapshot, not merely a matching source key or input digest.
 
 ## Sources
 
@@ -168,6 +175,8 @@ print([(r.key, r.outputs) for r in half.records])
 
 Every job has a key; keys must be unique among resident jobs (a submit or source item whose key
 is resident fails as `DuplicateKey`). Without a key field, keys are positions (`"0"`, `"1"`,
-...) and are marked as automatic. Snapshots and positional store results match a job by its
-key and inputs, so a run that uses them should give explicit keys; with automatic keys the
-machine logs one warning.
+...) and are marked as automatic. Snapshot discovery uses key and inputs, so a run that
+uses resumable persistence should give explicit keys; with automatic keys the machine logs
+one warning. The source key is not `job_execution_id`: fresh runs always receive a new
+execution ID, while compatible version-3 resume restores the original ID and its invocation
+namespace. Completed fresh same-key reruns no longer recover old positional results.

@@ -80,22 +80,36 @@ class WritebackStage:
         kept = []
         for it in items:
             inf = it.owner
+            identity = (
+                inf._identity_fields()
+                if inf is not None
+                else (it.job_execution_id, it.invocation_id, it.attempt_id)
+            )
             where = {"lane": lane.name, "entry": inf.job.entry.name if inf is not None else None}
             try:
                 new = self.plugins.transform(
                     "pre_submit", it, kind=WorkItem, where=where, unit=unit, lane=lane.name
                 )
+                if type(new) is not WorkItem:
+                    raise PluginBlockError(
+                        "pre_submit replacement must be an exact WorkItem; use ext for plugin data"
+                    )
             except PluginBlockError as exc:
+                it.owner = inf
+                it._set_identity(*identity)
                 it.ext["settled"] = True
                 self.deliver(it, ItemError(Blocked(str(exc))))
                 continue
 
-            # A replacement item keeps the machine's owner and the lane's bookkeeping
+            # Restore authoritative transport even when a plugin mutates the same object.
+            it.owner = inf
+            it._set_identity(*identity)
+            new.owner = inf
             if new is not it:
-                new.owner = it.owner
                 replace_deadline(it, new)
                 if inf is not None:
                     inf.item = new
+            new._set_identity(*identity)
             kept.append(new)
         return kept
 

@@ -8,6 +8,8 @@ import itertools
 from bisect import insort
 from typing import Any
 
+from togeari.core.contracts.identity import new_attempt_id, new_job_execution_id
+
 _ids = itertools.count(1)
 _seq = itertools.count()
 
@@ -370,6 +372,9 @@ class Inflight:
         "reused",
         "collector",
         "collect_index",
+        "invocation_id",
+        "attempt_ids",
+        "resolution",
     )
 
     def __init__(self, job, instr, key):
@@ -409,6 +414,24 @@ class Inflight:
         self.reused = False
         self.collector = None
         self.collect_index = None
+        self.invocation_id: str | None = None
+        self.attempt_ids: list[str] = []
+        self.resolution = "not_submitted"
+
+    def _identity_fields(self) -> tuple[str, str | None, str | None]:
+        """Stable transport metadata, independent of recording and input digests."""
+        return (
+            self.job.job_execution_id,
+            self.invocation_id,
+            self.attempt_ids[-1] if self.attempt_ids else None,
+        )
+
+    def _begin_attempt(self) -> str:
+        """Allocate immediately before actual execution/submission, never for a cache hit."""
+        attempt = new_attempt_id()
+        self.attempt_ids.append(attempt)
+        self.resolution = "executed"
+        return attempt
 
     def __lt__(self, other: "Inflight") -> bool:
         return self.key < other.key
@@ -477,6 +500,9 @@ class Window:
 class Job:
     __slots__ = (
         "id",
+        "job_execution_id",
+        "program_hash",
+        "execution_hash",
         "key",
         "entry",
         "inputs",
@@ -511,9 +537,14 @@ class Job:
 
     def __init__(self, key: str, entry, inputs: dict):
         self.id = next(_ids)
+        self.job_execution_id = new_job_execution_id()
         self.key = key
         self.entry = entry
         self.inputs = inputs
+        # Authoritative identity is independent of plugin-visible diagnostic stats.
+        region = getattr(entry, "region", None)
+        self.program_hash = getattr(region, "semantic_hash", None)
+        self.execution_hash = (getattr(region, "execution", None) or {}).get("hash")
 
         # Live strands by id, a heap of (next key, seq, strand) with stale entries, runnable ones
         self.strands: dict[int, Strand] = {}
@@ -532,6 +563,8 @@ class Job:
         self.final_key: tuple | None = None
         self.failure: dict | None = None
         self.stats: dict[str, Any] = {
+            "identity_version": 1,
+            "job_execution_id": self.job_execution_id,
             "calls": 0,
             "squashed": 0,
             "retired": 0,

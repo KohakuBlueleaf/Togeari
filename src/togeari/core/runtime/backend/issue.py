@@ -10,6 +10,7 @@ from togeari.core.contracts.io import MISS, copy_value
 from togeari.core.contracts.results import ItemError, Ok
 from togeari.core.contracts.views import ReadyView
 from togeari.core.contracts.workitem import WorkItem
+from togeari.core.runtime.backend.persistence import result_execution
 from togeari.core.runtime.kir import UNDEF, RuntimeFault
 from togeari.core.runtime.state import Inflight, InfState, SlotState, effective
 
@@ -203,7 +204,10 @@ class IssueStage:
             inf.store_key = self.store_key(inf)
             if inf.store_key is not None:
                 hit = self.store_get(inf.store_key)
-                if hit is not MISS:
+                eligible = self.result_store_allowed(inf.job, ins)
+                if not eligible:
+                    inf.store_key = None
+                if hit is not MISS and eligible:
                     self.stats["store_hits"] += 1
                     inf.hit = True
                     inf.job.issue(inf)
@@ -247,6 +251,10 @@ class IssueStage:
         ins = inf.instr
         b = ins.binding
         region = self.code.region_of(ins.addr)
+        execution_hash = result_execution(region, self.code, self.m, inf.job.stats)
+        if execution_hash is None:
+            self.stats["store_misses"] += 1
+            return None
 
         match b.store:
             # By the inputs' content
@@ -256,9 +264,7 @@ class IssueStage:
                     self.stats["store_weak"] += 1
                     self.note_weak(inf.job, weak)
                     return None
-                return digest(
-                    (region.semantic_hash, ins.node, dig, self.m.identity(b.adapter, b.lane))
-                )
+                key = digest(("togeari.result", 2, "content", execution_hash, ins.node, dig))
 
             # By the job and the statement's place in it
             case "positional":
@@ -269,8 +275,30 @@ class IssueStage:
                     return None
                 # The statement's address in its region and its order key name one call
                 offset = ins.addr - region.start
-                return digest((region.semantic_hash, job.key, job.inputs_dig, offset, inf.key))
-        return None
+                key = digest(
+                    (
+                        "togeari.result",
+                        2,
+                        "positional",
+                        execution_hash,
+                        job.key,
+                        job.inputs_dig,
+                        offset,
+                        inf.key,
+                    )
+                )
+            case _:
+                return None
+        # Digests can invoke user hooks; never use a key from a changed history.
+        if not self.result_store_allowed(inf.job, ins):
+            self.stats["store_misses"] += 1
+            return None
+        return key
+
+    def result_store_allowed(self, job, ins) -> bool:
+        """Recheck history at writeback/retire without re-digesting potentially mutated inputs."""
+        region = self.code.region_of(ins.addr)
+        return result_execution(region, self.code, self.m, job.stats) is not None
 
     def store_get(self, key: bytes) -> Any:
         try:

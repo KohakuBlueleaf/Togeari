@@ -590,7 +590,9 @@ impl Core {
             (put, x.hit, x.reused)
         };
         if let Some(k) = put {
-            self.store_put(py, &k, value.bind(py))?;
+            if self.result_store_allowed(py, &job, &ins)? {
+                self.store_put(py, &k, value.bind(py))?;
+            }
         }
         let jid = job.borrow().id;
         if self.wants(py, "stmt.done", Some(jid))? {

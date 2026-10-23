@@ -6,7 +6,9 @@ Layout of a record directory:
   ``@def``, passes, hash, library references (``module:attr``) and signature
   paths; the latest metadata for each semantic program, kept for legacy readers;
 - ``runs/<run>/programs/<hash>.json``: this run's program provenance, so a later
-  metadata-only revision with the same semantic hash cannot overwrite it;
+  metadata-only revision with the same semantic hash cannot overwrite it. Schema-2
+  artifacts optionally hold initial ``execution`` identity marked
+  ``execution_at="region_binding"``; exact job execution/history stays in stats;
 - ``runs/<run>/run.json``: the run's id, start time and ``digest_providers``
   (modules that register digest functions, imported before a replay so input
   digests are computed as in the run);
@@ -22,6 +24,7 @@ pickle). Every run writes its own files, and every job names its program by
 hash, so a job replays against the program it ran.
 """
 
+import copy
 import importlib
 import json
 import logging
@@ -71,8 +74,15 @@ def library_refs(libraries: list) -> list[str]:
     return refs
 
 
-def program_info(job_program: Any, libraries: list[str], sig_path: list | None) -> dict:
-    return {
+def program_info(
+    job_program: Any, libraries: list[str], sig_path: list | None, *, execution: dict | None = None
+) -> dict:
+    """Program/provenance with optional initial region-binding execution identity.
+
+    The program hash remains the semantic source/program hash. Job stats retain
+    their own execution snapshot/history independently of this initial artifact.
+    """
+    info = {
         "schema_version": 2,
         "source": job_program.source,
         "entry": job_program.entry,
@@ -85,6 +95,10 @@ def program_info(job_program: Any, libraries: list[str], sig_path: list | None) 
         "libraries": list(libraries),
         "sig_path": [str(p) for p in sig_path or []],
     }
+    if execution is not None:
+        info["execution"] = copy.deepcopy(execution)
+        info["execution_at"] = "region_binding"
+    return info
 
 
 def import_providers(modules: list[str]) -> list[str]:

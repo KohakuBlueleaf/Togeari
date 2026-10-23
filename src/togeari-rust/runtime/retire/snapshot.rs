@@ -1,288 +1,331 @@
-//! Job snapshots at retire boundaries and resume from them, in the Python core's layout
-//! (`togeari.core.runtime.retire.snapshot`): a snapshot either core writes, either core reads.
+//! Snapshot v2 uses the shared Python codec for identity, shape and relocation checks.
+//! Native conversion is detached: no job or name-interner mutation until it succeeds.
 
 use std::rc::Rc;
 
 use indexmap::IndexMap;
+use pyo3::exceptions::{PyKeyError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList, PyString, PyTuple};
 
 use crate::runtime::core::Core;
+use crate::runtime::state::job::JobStats;
 use crate::runtime::state::key::prefix_to_py;
 use crate::runtime::state::{
     effective, Frame, FrameKind, JobRef, Key, NameMap, Resume, Slot, SlotRef, SlotState, Strand,
 };
 
-// The layout of a captured state; restore reads only this version
-const VERSION: i64 = 1;
-
-fn tuple_ints(t: &Bound<'_, PyAny>) -> PyResult<Rc<[i64]>> {
-    let mut v = Vec::new();
-    for x in t.try_iter()? {
-        v.push(x?.extract::<i64>()?);
-    }
-    Ok(v.into())
+fn required<'py>(state: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>> {
+    state
+        .get_item(key)?
+        .ok_or_else(|| PyKeyError::new_err(format!("snapshot field {key:?} missing")))
 }
 
-fn opt(d: &Bound<'_, PyDict>, k: &str) -> PyResult<Option<i64>> {
-    match d.get_item(k)? {
-        Some(v) if !v.is_none() => Ok(Some(v.extract()?)),
-        _ => Ok(None),
+fn tuple_ints(value: &Bound<'_, PyAny>) -> PyResult<Rc<[i64]>> {
+    let tuple = value.cast::<PyTuple>()?;
+    tuple
+        .iter()
+        .map(|item| item.extract::<i64>())
+        .collect::<PyResult<Vec<_>>>()
+        .map(Into::into)
+}
+
+fn optional_int(state: &Bound<'_, PyDict>, key: &str) -> PyResult<Option<i64>> {
+    let value = required(state, key)?;
+    if value.is_none() {
+        Ok(None)
+    } else {
+        value.extract().map(Some)
+    }
+}
+
+/// Fully converted native state. Strings are not interned until this is complete.
+struct PreparedSnapshot {
+    pc: i64,
+    prefix: Rc<[i64]>,
+    counter: i64,
+    frames: Rc<Vec<Rc<Frame>>>,
+    values: Vec<(String, Py<PyAny>)>,
+    stats: JobStats,
+    steps: i64,
+    record: Option<Py<PyList>>,
+}
+
+impl PreparedSnapshot {
+    fn decode(
+        py: Python<'_>,
+        job: &JobRef,
+        state: &Bound<'_, PyDict>,
+        decision: &Bound<'_, PyDict>,
+    ) -> PyResult<Self> {
+        if !required(decision, "allow")?.extract::<bool>()? {
+            return Err(PyValueError::new_err("cannot apply a rejected snapshot"));
+        }
+        let pc = required(state, "pc")?.extract()?;
+        let prefix = tuple_ints(&required(state, "prefix")?)?;
+        let counter = required(state, "counter")?.extract()?;
+        let steps = required(state, "steps")?.extract()?;
+        let mut frames = Vec::new();
+        for frame in required(state, "frames")?.try_iter()? {
+            let frame = frame?.cast_into::<PyDict>()?;
+            let kind: String = required(&frame, "kind")?.extract()?;
+            let kind = match kind.as_str() {
+                "branch" => FrameKind::Branch,
+                "iter" => FrameKind::Iter,
+                _ => return Err(PyValueError::new_err("invalid snapshot frame kind")),
+            };
+            let saved = required(&frame, "saved")?;
+            let saved = if saved.is_none() {
+                None
+            } else {
+                let pair = saved.cast::<PyTuple>()?;
+                if pair.len() != 2 {
+                    return Err(PyValueError::new_err("invalid snapshot saved key"));
+                }
+                Some((tuple_ints(&pair.get_item(0)?)?, pair.get_item(1)?.extract()?))
+            };
+            let base = required(&frame, "base")?;
+            let base = if base.is_none() {
+                None
+            } else {
+                Some(Key(tuple_ints(&base)?))
+            };
+            let items = required(&frame, "items")?;
+            let items = if items.is_none() {
+                None
+            } else {
+                Some(Rc::new(items.cast_into::<PyList>()?.unbind()))
+            };
+            // The codec already relocated all fields and normalized joined iteration reconvergence.
+            frames.push(Rc::new(Frame {
+                reconv: optional_int(&frame, "reconv")?,
+                saved,
+                join: None,
+                branch: optional_int(&frame, "branch")?,
+                kind,
+                each: optional_int(&frame, "each")?,
+                items,
+                i: required(&frame, "i")?.extract()?,
+                base,
+                collector: None,
+            }));
+        }
+        let values = required(state, "values")?
+            .cast_into::<PyDict>()?
+            .iter()
+            .map(|(name, value)| Ok((name.extract::<String>()?, value.unbind())))
+            .collect::<PyResult<Vec<_>>>()?;
+        let (mut stats, recording, execution, execution_epoch) = {
+            let job = job.borrow();
+            (
+                job.stats.snapshot(py),
+                job.record.is_some(),
+                job.stats.extra.get("execution").map(|v| v.clone_ref(py)),
+                job.stats
+                    .extra
+                    .get("execution_epoch")
+                    .map(|v| v.clone_ref(py)),
+            )
+        };
+        stats.update(&required(state, "stats")?.cast_into::<PyDict>()?)?;
+        // Saved epochs are machine-local and never replace this admission's identity.
+        stats.extra.shift_remove("execution");
+        stats.extra.shift_remove("execution_epoch");
+        // Cached result-persistence decisions belong to the source machine only.
+        stats.extra.shift_remove("_persistence_context");
+        if let Some(execution) = execution {
+            stats.extra.insert("execution".into(), execution);
+        }
+        if let Some(epoch) = execution_epoch {
+            stats.extra.insert("execution_epoch".into(), epoch);
+        }
+        stats
+            .extra
+            .insert("resumed".into(), PyBool::new(py, true).to_owned().into_any().unbind());
+        let persistence = PyDict::new(py);
+        persistence.set_item("status", required(decision, "status")?)?;
+        persistence.set_item("issues", required(decision, "issues")?)?;
+        stats
+            .extra
+            .insert("snapshot_restore".into(), persistence.into_any().unbind());
+        // Validate the complete record field even when this admission did not request recording.
+        let record = required(state, "record")?;
+        let record = if record.is_none() {
+            None
+        } else {
+            Some(record.cast_into::<PyList>()?.unbind())
+        };
+        let record = if recording { record } else { None };
+        if recording && record.is_none() {
+            stats.extra.insert(
+                "record_skipped".into(),
+                PyString::new(py, "resumed without a record")
+                    .into_any()
+                    .unbind(),
+            );
+        }
+        Ok(Self { pc, prefix, counter, frames: Rc::new(frames), values, stats, steps, record })
     }
 }
 
 impl Core {
-    /// The job's state as bytes, or None off a boundary; raises when a value cannot pickle.
+    /// Current expected identity always comes from the admitted entry, never the blob.
+    pub(crate) fn snapshot_execution(&self, py: Python<'_>, job: &JobRef) -> PyResult<Py<PyAny>> {
+        let (entry, epoch) = {
+            let job = job.borrow();
+            (
+                job.entry.py.clone_ref(py),
+                job.stats
+                    .extra
+                    .get("execution_epoch")
+                    .map(|v| v.clone_ref(py))
+                    .unwrap_or_else(|| py.None()),
+            )
+        };
+        let region = entry.bind(py).getattr("region")?;
+        Ok(self
+            .h
+            .execution_context
+            .bind(py)
+            .call1((region, self.h.code.bind(py), self.h.machine.bind(py), epoch.bind(py)))?
+            .unbind())
+    }
+
+    /// Capture only the existing retire boundary; active collect/spawn state stays unsupported.
     pub fn capture(&self, py: Python<'_>, job: &JobRef) -> PyResult<Option<Py<PyAny>>> {
-        let st = {
-            let j = job.borrow();
-            if !j.collectors.is_empty() || !j.window.is_empty() || j.strands.len() != 1 {
+        let strand = {
+            let job = job.borrow();
+            if !job.collectors.is_empty() || !job.window.is_empty() || job.strands.len() != 1 {
                 return Ok(None);
             }
-            j.strands.values().next().expect("a strand").clone()
+            job.strands.values().next().expect("one strand").clone()
         };
-        let s = st.borrow();
-        if s.spawn.is_some() {
+        let strand = strand.borrow();
+        if strand.spawn.is_some() {
             return Ok(None);
         }
-        let (mut pc, mut prefix, mut counter) = (s.pc, s.prefix.clone(), s.counter);
-        let mut frames_now: Vec<Rc<Frame>> = s.frames.to_vec();
-
-        // A strand parked at a branch is captured as just before that branch
-        if s.resume == Resume::Parked && frames_now.last().is_some_and(|f| f.join.is_some()) {
+        let (mut pc, mut prefix, mut counter) = (strand.pc, strand.prefix.clone(), strand.counter);
+        let mut frames_now = strand.frames.to_vec();
+        if strand.resume == Resume::Parked
+            && frames_now.last().is_some_and(|frame| frame.join.is_some())
+        {
             let top = frames_now.pop().expect("a frame");
-            pc = top.branch.expect("a branch address");
-            let (p, c) = top.saved.clone().expect("a saved key");
-            prefix = p;
-            counter = c - 1;
+            pc = top
+                .branch
+                .ok_or_else(|| PyValueError::new_err("parked snapshot frame has no branch"))?;
+            let (saved_prefix, saved_counter) = top
+                .saved
+                .clone()
+                .ok_or_else(|| PyValueError::new_err("parked snapshot frame has no saved key"))?;
+            prefix = saved_prefix;
+            counter = saved_counter
+                .checked_sub(1)
+                .ok_or_else(|| PyValueError::new_err("snapshot counter overflow"))?;
         }
-
-        // Every name must hold a filled value
         let values = PyDict::new(py);
         let last = Key::last();
         {
             let code = self.code.borrow();
-            for (name, slot) in s.names.as_ref().expect("a strand with names").to_dict() {
-                let e = effective(&slot, &last);
-                let b = e.borrow();
-                if b.state != SlotState::Ready {
+            for (name, slot) in strand.names.as_ref().expect("strand names").to_dict() {
+                let slot = effective(&slot, &last);
+                let slot = slot.borrow();
+                if slot.state != SlotState::Ready {
                     return Ok(None);
                 }
-                let v = b
+                let value = slot
                     .value
                     .as_ref()
-                    .map(|v| v.clone_ref(py))
+                    .map(|value| value.clone_ref(py))
                     .unwrap_or_else(|| py.None());
-                values.set_item(code.name_py(py, name), v)?;
+                values.set_item(code.name_py(py, name), value)?;
             }
         }
-
         let frames = PyList::empty(py);
-        for f in &frames_now {
-            let d = PyDict::new(py);
-            d.set_item("reconv", f.reconv)?;
-            let saved = match &f.saved {
-                Some((p, c)) => Some(PyTuple::new(
+        for frame in &frames_now {
+            let state = PyDict::new(py);
+            state.set_item("reconv", frame.reconv)?;
+            let saved = match &frame.saved {
+                Some((prefix, counter)) => Some(PyTuple::new(
                     py,
                     [
-                        prefix_to_py(py, p).into_any(),
-                        c.into_pyobject(py)?.into_any(),
+                        prefix_to_py(py, prefix).into_any(),
+                        counter.into_pyobject(py)?.into_any(),
                     ],
                 )?),
                 None => None,
             };
-            d.set_item("saved", saved)?;
-            d.set_item("branch", f.branch)?;
-            d.set_item("kind", f.kind.name())?;
-            d.set_item("each", f.each)?;
-            d.set_item("items", f.items.as_ref().map(|x| x.bind(py)))?;
-            d.set_item("i", f.i)?;
-            d.set_item("base", f.base.as_ref().map(|b| b.to_py(py)))?;
-            d.set_item("joined", f.join.is_some())?;
-            frames.append(d)?;
+            state.set_item("saved", saved)?;
+            state.set_item("branch", frame.branch)?;
+            state.set_item("kind", frame.kind.name())?;
+            state.set_item("each", frame.each)?;
+            state.set_item("items", frame.items.as_ref().map(|items| items.bind(py)))?;
+            state.set_item("i", frame.i)?;
+            state.set_item("base", frame.base.as_ref().map(|base| base.to_py(py)))?;
+            state.set_item("joined", frame.join.is_some())?;
+            frames.append(state)?;
         }
-        drop(s);
-        let j = job.borrow();
+        drop(strand);
         let state = PyDict::new(py);
-        state.set_item("version", VERSION)?;
         state.set_item("pc", pc)?;
         state.set_item("prefix", prefix_to_py(py, &prefix))?;
         state.set_item("counter", counter)?;
         state.set_item("frames", frames)?;
         state.set_item("values", values)?;
-        state.set_item("stats", j.stats.to_dict(py)?)?;
-        state.set_item("steps", j.steps)?;
-        state.set_item("record", j.record.as_ref().map(|r| r.bind(py)))?;
-        let kw = PyDict::new(py);
-        kw.set_item("protocol", 5)?;
+        let entry = {
+            let job = job.borrow();
+            state.set_item("stats", job.stats.to_dict(py)?)?;
+            state.set_item("steps", job.steps)?;
+            state.set_item("record", job.record.as_ref().map(|record| record.bind(py)))?;
+            job.entry.py.clone_ref(py)
+        };
+        let manifest = self.snapshot_execution(py, job)?;
         Ok(Some(
             self.h
-                .pickle_dumps
+                .snapshot_encode
                 .bind(py)
-                .call((state,), Some(&kw))?
+                .call1((state, entry.bind(py), self.h.code.bind(py), manifest.bind(py)))?
                 .unbind(),
         ))
     }
 
-    /// Put a captured state back into a fresh job; False if it cannot be read or is of another
-    /// version.
-    pub fn restore(&self, py: Python<'_>, job: &JobRef, blob: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let (jid, key) = {
-            let j = job.borrow();
-            (j.id, j.key.clone_ref(py))
-        };
-        let warn = |msg: String| {
-            let _ = self.h.snap_log.bind(py).call_method1("warning", (msg,));
-        };
-        let state = match self.h.pickle_loads.bind(py).call1((blob,)) {
-            Ok(s) => s,
-            Err(e) if crate::runtime::host::is_exception(py, &e) => {
-                warn(format!("snapshot of job {} unreadable; starting over", key.bind(py)));
-                return Ok(false);
-            }
-            Err(e) => return Err(e),
-        };
-        let state = match state.cast_into::<PyDict>() {
-            Ok(d)
-                if d.get_item("version")?
-                    .is_some_and(|v| v.eq(VERSION).unwrap_or(false)) =>
-            {
-                d
-            }
-            Ok(d) => {
-                let got = d
-                    .get_item("version")?
-                    .map(|v| v.repr().map(|r| r.to_string()))
-                    .transpose()?;
-                warn(format!(
-                    "snapshot of job {} has version {}, not {VERSION}; starting over",
-                    key.bind(py),
-                    got.unwrap_or_else(|| "None".into())
-                ));
-                return Ok(false);
-            }
-            Err(_) => {
-                warn(format!(
-                    "snapshot of job {} has version None, not {VERSION}; starting over",
-                    key.bind(py)
-                ));
-                return Ok(false);
-            }
-        };
-
-        // Frames restore without their joins; values belong to this job alone: no copy
-        let mut frames = Vec::new();
-        for d in state.get_item("frames")?.expect("frames").try_iter()? {
-            let d = d?.cast_into::<PyDict>()?.copy()?;
-            let joined = d
-                .get_item("joined")?
-                .map(|v| v.is_truthy())
-                .transpose()?
-                .unwrap_or(false);
-            let kind: String = d.get_item("kind")?.expect("a kind").extract()?;
-            let kind = if kind == "iter" {
-                FrameKind::Iter
-            } else {
-                FrameKind::Branch
-            };
-            let each: Option<i64> = opt(&d, "each")?;
-            let mut reconv: Option<i64> = opt(&d, "reconv")?;
-            if joined && kind == FrameKind::Iter {
-                reconv = self
-                    .code
-                    .borrow()
-                    .instr(each.expect("an each"))
-                    .and_then(|e| e.reconv);
-            }
-            let saved = match d.get_item("saved")? {
-                Some(s) if !s.is_none() => {
-                    let t = s.cast_into::<PyTuple>()?;
-                    Some((tuple_ints(&t.get_item(0)?)?, t.get_item(1)?.extract()?))
-                }
-                _ => None,
-            };
-            let base = match d.get_item("base")? {
-                Some(b) if !b.is_none() => Some(Key(tuple_ints(&b)?)),
-                _ => None,
-            };
-            let items = match d.get_item("items")? {
-                Some(x) if !x.is_none() => Some(Rc::new(x.cast_into::<PyList>()?.unbind())),
-                _ => None,
-            };
-            frames.push(Rc::new(Frame {
-                reconv,
-                saved,
-                join: None,
-                branch: opt(&d, "branch")?,
-                kind,
-                each,
-                items,
-                i: opt(&d, "i")?.unwrap_or(0),
-                base,
-                collector: None,
-            }));
-        }
+    /// Apply a shared-codec-approved state. Every fallible conversion finishes before commit.
+    pub(crate) fn apply_prepared_snapshot(
+        &self,
+        py: Python<'_>,
+        job: &JobRef,
+        state: &Bound<'_, PyDict>,
+        decision: &Bound<'_, PyDict>,
+    ) -> PyResult<()> {
+        let prepared = PreparedSnapshot::decode(py, job, state, decision)?;
+        let jid = job.borrow().id;
+        // Commit begins. No Python callbacks or fallible conversions remain below.
         let mut base: IndexMap<u32, SlotRef> = IndexMap::new();
         {
             let mut code = self.code.borrow_mut();
-            for (n, v) in state
-                .get_item("values")?
-                .expect("values")
-                .cast_into::<PyDict>()?
-                .iter()
-            {
-                let name: String = n.extract()?;
-                base.insert(code.intern(py, &name), Slot::constant(v.unbind()));
+            for (name, value) in prepared.values {
+                base.insert(code.intern(py, &name), Slot::constant(value));
             }
         }
-        let strands: Vec<_> = job.borrow().strands.values().cloned().collect();
-        for st in strands {
-            job.borrow_mut().end_strand(&st);
-        }
-        let pc: i64 = state.get_item("pc")?.expect("a pc").extract()?;
-        let prefix = tuple_ints(&state.get_item("prefix")?.expect("a prefix"))?;
-        let counter: i64 = state.get_item("counter")?.expect("a counter").extract()?;
-        let st = Strand::new(
+        let strand = Strand::new(
             job,
             jid,
-            pc,
-            prefix,
-            counter,
-            Rc::new(frames),
+            prepared.pc,
+            prepared.prefix,
+            prepared.counter,
+            prepared.frames,
             Some(NameMap::with_base(base)),
             None,
         );
-        job.borrow_mut().add_strand(&st);
-
-        let mut j = job.borrow_mut();
-        j.stats.update(
-            &state
-                .get_item("stats")?
-                .expect("stats")
-                .cast_into::<PyDict>()?,
-        )?;
-        j.stats
-            .extra
-            .insert("resumed".into(), PyBool::new(py, true).to_owned().into_any().unbind());
-        j.steps = match state.get_item("steps")? {
-            Some(v) => v.extract()?,
-            None => 0,
-        };
-        j.snap_at = j.stats.retired;
-
-        // A recorded job continues the record of the run it resumes; without one it is not
-        if j.record.is_some() {
-            j.record = match state.get_item("record")? {
-                Some(r) if !r.is_none() => Some(r.cast_into::<PyList>()?.unbind()),
-                _ => None,
-            };
-            if j.record.is_none() {
-                let msg = PyString::new(py, "resumed without a record")
-                    .into_any()
-                    .unbind();
-                j.stats.extra.insert("record_skipped".into(), msg);
-            }
+        let old: Vec<_> = job.borrow().strands.values().cloned().collect();
+        let mut job = job.borrow_mut();
+        for old in old {
+            job.end_strand(&old);
         }
-        Ok(true)
+        job.add_strand(&strand);
+        job.snap_at = prepared.stats.retired;
+        job.stats = prepared.stats;
+        job.steps = prepared.steps;
+        job.record = prepared.record;
+        Ok(())
     }
 }

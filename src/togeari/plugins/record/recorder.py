@@ -105,7 +105,9 @@ class Recorder(BasePlugin):
             )
             if region is not None:
                 self.known.add(key)
-                info = program_info(region.job, self.refs, self.ctx.sig_path)
+                info = program_info(
+                    region.job, self.refs, self.ctx.sig_path, execution=region.execution
+                )
                 if index is not None:
                     info["region"] = index
                 self.writer.add_program(info)

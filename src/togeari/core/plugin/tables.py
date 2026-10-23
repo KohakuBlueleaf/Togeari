@@ -9,6 +9,7 @@ import reprlib
 from typing import Any
 
 from togeari.core.construct.knobs import checked
+from togeari.core.program.execution import current_execution, observe_execution
 
 # Input reprs of the `job` query: bounded in size and depth, whatever the value
 _repr = reprlib.Repr()
@@ -154,6 +155,7 @@ def q_programs(m: Any) -> list[dict]:
             "outputs": r.job.outputs,
             "dependencies": copy.deepcopy(r.job.dependencies),
             "calls": bound_calls(m.code, r),
+            "execution": copy.deepcopy(current_execution(r, m.code, m)),
             "origins": {
                 str(addr): m.code.mem[addr].origin_dict()
                 for addr in range(r.start, r.end)
@@ -255,7 +257,15 @@ def c_set_knob(m: Any, name: str, value: Any) -> Any:
     if name == "snapshot_every" and value and m.store is None:
         raise ValueError("snapshot_every needs a machine store (store=)")
     old = m.knobs[name]
+    # Only step_budget participates in this execution-manifest version. Observe
+    # both sides so a supported change-and-revert cannot disappear between checks.
+    if name == "step_budget":
+        for region in m.code.regions:
+            observe_execution(region, m.code, m)
     m.knobs[name] = value
+    if name == "step_budget":
+        for region in m.code.regions:
+            observe_execution(region, m.code, m)
     return old
 
 

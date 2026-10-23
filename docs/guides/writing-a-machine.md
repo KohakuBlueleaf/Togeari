@@ -109,6 +109,27 @@ except ConstructionError as exc:
     print(exc)
 ```
 
+### Fixed bindings and loading migration
+
+Binding declarations are fixed when a machine is constructed. Mutating `machine.bind`,
+replacing its `Use`/`Inline` declarations, or changing their policy/revision/adapter fields
+is rejected with `ConstructionError` before a later load can reuse stale bound code.
+Applications that previously added bindings immediately before `load()` should declare
+those bindings in the original `bind=` map instead. An unused-pattern warning is expected;
+the unused binding's units are still started lazily when a loaded program first needs them.
+Construct a new machine to change binding declarations. Supported lane configuration and
+unit attach/detach operations remain separate from rebinding.
+
+Both `Use` and `Inline` accept optional opaque revision strings. `implementation_revision`
+identifies only the host/node implementation; `binding_revision` explicitly attests the
+whole resolved implementation bundle, including adapter, engines/services/models and
+semantic configuration. Neither revision implies determinism or safe content reuse.
+Declared coverage is not an independently verified implementation fingerprint. For intended
+implementation changes, use new revisions and a new machine. Dynamic loading checks local
+resolved function identity to avoid stale code-cache reuse, but does not automatically
+fingerprint changed functions, closure state, services, or opaque defaults. Incomplete
+signature identity cannot authorize reuse of previously decoded defaults.
+
 ## 4. Machine arguments and knobs
 
 | Argument | Default | Meaning |

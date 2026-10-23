@@ -30,6 +30,12 @@ class Region:
     tables: Tables
     tries: dict = field(default_factory=dict)
     problems: list[str] = field(default_factory=list)
+    execution: dict | None = None
+    binding_fingerprint: str | None = None
+    execution_static: dict | None = field(default=None, repr=False)
+    execution_current: dict | None = field(default=None, repr=False)
+    execution_coverage: tuple = field(default=(), repr=False)
+    execution_decisions: dict = field(default_factory=dict, repr=False)
 
     @property
     def semantic_hash(self) -> str:
@@ -65,13 +71,14 @@ class CodeMemory:
         self._index = itertools.count()
 
     # ------------------------------------------------------------ loading
-    def cached(self, job: JobProgram) -> Region | None:
+    def cached(self, job: JobProgram, binding_fingerprint: str | None = None) -> Region | None:
         region = self.by_hash.get(job.semantic_hash)
         if (
             region is not None
             and region.job.full_hash == job.full_hash
             and region.job.source == job.source
             and region.job.origins == job.origins
+            and (binding_fingerprint is None or region.binding_fingerprint == binding_fingerprint)
         ):
             return region
         return None

@@ -21,6 +21,9 @@ class Use:
 
     An explicit policy, including an empty one, overrides legacy timeout hints.
     Without one, legacy hints are resolved once at binding time with a warning.
+    ``implementation_revision`` identifies the host implementation only;
+    ``binding_revision`` attests the whole host/adapter/engine/semantic-config bundle.
+    Neither declares determinism or reuse eligibility.
     """
 
     target: Any
@@ -28,16 +31,23 @@ class Use:
     store: str | None = None
     idempotent: bool = False
     policy: ExecutionPolicy | None = None
+    implementation_revision: str | None = None
+    binding_revision: str | None = None
 
 
 @dataclass
 class Inline:
-    """Run the node's library function on the dispatcher; warn above a median of ``warn_us``."""
+    """Run the library function on the dispatcher; warn above a median of ``warn_us``.
+
+    Optional host and whole-bundle revision attestations have the same scope as ``Use``.
+    """
 
     warn_us: float | None = None
+    implementation_revision: str | None = None
+    binding_revision: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class Bound:
     """What one call instruction is bound to."""
 
@@ -51,6 +61,8 @@ class Bound:
     warn_us: float | None = None
     policy: ExecutionPolicy = field(default_factory=ExecutionPolicy)
     policy_source: str = "none"
+    implementation_revision: str | None = None
+    binding_revision: str | None = None
 
 
 @dataclass
@@ -145,6 +157,14 @@ def _execution_policy(
     return policy, "legacy_hint"
 
 
+def _revision(value: Any, field: str, problems: Problems, where: str) -> str | None:
+    """Opaque explicit attestations; do not trim or infer revisions from objects."""
+    if value is None or (type(value) is str and value):
+        return value
+    problems.add(where, f"{field} must be a nonempty string or None")
+    return None
+
+
 def _warn_inline_timeout(hint: dict, problems: Problems, where: str) -> None:
     if "timeout_s" in hint:
         problems.warn(where, "legacy @hint timeout_s is ignored for Inline execution")
@@ -189,6 +209,12 @@ def bind_region(
         used.add(pat)
         b = bind[pat]
         fn = region.job.env.impl(ins.node)
+        implementation_revision = _revision(
+            getattr(b, "implementation_revision", None), "implementation_revision", problems, where
+        )
+        binding_revision = _revision(
+            getattr(b, "binding_revision", None), "binding_revision", problems, where
+        )
 
         # Inline: the library function on the dispatcher
         if isinstance(b, Inline):
@@ -196,7 +222,14 @@ def bind_region(
             if fn is None:
                 problems.add(where, f"node {ins.node!r} is inline but has no Python implementation")
                 continue
-            ins.binding = Bound(pat, True, fn=fn, warn_us=b.warn_us)
+            ins.binding = Bound(
+                pat,
+                True,
+                fn=fn,
+                warn_us=b.warn_us,
+                implementation_revision=implementation_revision,
+                binding_revision=binding_revision,
+            )
             continue
 
         # A lane: adapter and units must agree
@@ -227,4 +260,6 @@ def bind_region(
             idempotent=b.idempotent,
             policy=policy,
             policy_source=policy_source,
+            implementation_revision=implementation_revision,
+            binding_revision=binding_revision,
         )

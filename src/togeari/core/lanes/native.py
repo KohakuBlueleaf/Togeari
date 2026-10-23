@@ -149,7 +149,7 @@ class NativeLane(Lane):
     def __setattr__(self, name: str, value: Any) -> None:
         if name in DIRECT:
             self._native.set_overridden(name, True)
-        object.__setattr__(self, name, value)
+        Lane.__setattr__(self, name, value)
 
     def __delattr__(self, name: str) -> None:
         object.__delattr__(self, name)

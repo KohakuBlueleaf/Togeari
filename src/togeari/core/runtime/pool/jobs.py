@@ -1,5 +1,6 @@
 """The job pool: start, end, records, admission (spec/03 §3.10, spec/05 §5.1)."""
 
+import copy
 import logging
 import queue
 import time
@@ -9,6 +10,7 @@ from togeari.core.contracts.digest import digest_with_weak
 from togeari.core.contracts.io import JobRecord, SourceItem
 from togeari.core.contracts.views import PoolView
 from togeari.core.plugin.base import PluginBlockError
+from togeari.core.program.execution import observe_execution, warn_unverified
 from togeari.core.runtime.kir import fresh
 from togeari.core.runtime.pool.signals import Signals
 from togeari.core.runtime.retire import snapshot
@@ -75,6 +77,12 @@ class JobsStage:
         job.handle = handle
         job.auto_key = item.auto_key
         job.stats["program"] = entry.region.semantic_hash
+        observation = observe_execution(entry.region, self.code, self.m)
+        # Observation is a borrowed read-only cache. One detached admission copy
+        # can safely escape through this job's eventual output stats.
+        pinned_execution = copy.deepcopy(observation["manifest"])
+        job.stats["execution"] = pinned_execution
+        job.stats["execution_epoch"] = observation["epoch"]
         rate = self.knobs["record"]
         if rate:
             job.record = [] if self.record_rng.random() < rate else None
@@ -96,9 +104,42 @@ class JobsStage:
         restored = False
         if snap is not None:
             self.warn_auto_key(job)
-            blob = snapshot.load(self.store, snap, on_error=lambda e: self.store_error("get", e))
-            if blob is not None:
-                restored = snapshot.restore(job, blob, self.code)
+            old_key = snapshot.legacy_snapshot_key(
+                entry.region.semantic_hash, job.key, job.inputs_dig
+            )
+            candidate = snapshot.load_candidate(
+                self.store, snap, old_key, on_error=lambda e: self.store_error("get", e)
+            )
+            decision = candidate["decision"]
+            if candidate["action"] == "candidate":
+                prepared = snapshot.prepare_restore(
+                    candidate["blob"],
+                    entry,
+                    self.code,
+                    observation["manifest"],
+                    self.m.persistence_compatibility,
+                )
+                decision = prepared["decision"]
+                if decision["allow"]:
+                    snapshot.apply_prepared(job, prepared["state"], decision)
+                    warn_unverified(
+                        self.m, decision, execution_hash=observation["manifest"]["hash"]
+                    )
+                    restored = True
+            if decision is not None and not decision["allow"]:
+                rejection = snapshot.snapshot_rejection(decision)
+                self.reject(
+                    item,
+                    "SnapshotIncompatible",
+                    rejection["failure"]["message"],
+                    handle,
+                    name,
+                    stats=rejection["stats"],
+                )
+                return
+            # Local epoch/identity are never inherited from persisted stats.
+            job.stats["execution"] = pinned_execution
+            job.stats["execution_epoch"] = observation["epoch"]
 
         # Region identity is local to this machine, never inherited from a snapshot.
         job.stats["program_region"] = entry.region.index
@@ -148,6 +189,7 @@ class JobsStage:
         msg: str,
         handle: Any = None,
         entry: str | None = None,
+        stats: dict | None = None,
     ) -> None:
         rec = JobRecord(
             item.key,
@@ -155,6 +197,7 @@ class JobsStage:
             False,
             {},
             {"kind": kind, "node": None, "message": msg},
+            stats=stats or {},
         )
         self.stats["jobs_failed"] += 1
         self.plugins.notify("on_job_end", rec, where={"entry": rec.entry})

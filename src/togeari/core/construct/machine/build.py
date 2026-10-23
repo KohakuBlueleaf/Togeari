@@ -23,6 +23,7 @@ from togeari.core.policies.admission import Fixed
 from togeari.core.policies.issue import OldestJobFirst
 from togeari.core.program.bind import Defaults, Use
 from togeari.core.program.code import CodeMemory
+from togeari.core.program.execution import MODES, binding_fingerprint, initial_binding_units
 from togeari.core.runtime.dispatcher import Dispatcher
 from togeari.core.runtime.native import NativeDispatcher
 
@@ -67,6 +68,7 @@ class Machine(LoadStage, UnitStage, RunStage):
         sink_buffer: int = 1024,
         seed: int = 0,
         core: str | None = None,
+        persistence_compatibility: str = "warn",
         **knobs: Any,
     ):
         problems = Problems()
@@ -85,6 +87,20 @@ class Machine(LoadStage, UnitStage, RunStage):
         self.sink_buffer = sink_buffer
         self.start_timeout_s = start_timeout_s
         self.defaults = Defaults(adapter if adapter is not None else PythonAdapter(), protocol)
+
+        # Fixed construction declarations, distinct from live lane configuration/history.
+        self.persistence_compatibility = persistence_compatibility
+        if persistence_compatibility not in MODES:
+            problems.add("persistence_compatibility", "expected 'warn' or 'strict'")
+        self._binding_fingerprint = binding_fingerprint(self.bind, self.defaults)
+        self._binding_unit_baselines = initial_binding_units(self.bind)
+        self._execution_invalidated_bindings: set[str] = set()
+        self._execution_invalidated_lanes: set[int] = set()
+        self._execution_epochs: dict[int, int] = {}
+        self._execution_transitions: dict[int, list[dict]] = {}
+        self._execution_invalidated: dict[int, set[int]] = {}
+        self._execution_observed: dict[int, dict] = {}
+        self._persistence_warnings: set[tuple] = set()
         self.units_started = False
         self.dispatcher: Dispatcher | None = None
         self._stopped = False

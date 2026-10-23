@@ -12,6 +12,7 @@ import hashlib
 import heapq
 import itertools
 import time
+import weakref
 from collections.abc import Callable
 from typing import Any
 
@@ -48,6 +49,31 @@ class Lane(Pump, Health):
     Dispatcher interface: ``enqueue``, ``pump``, ``timers``, ``next_deadline``, ``results``,
     ``remove`` / ``cancel``, ``attach``, ``detach``, ``engine_identity``.
     """
+
+    def _execution_changed(self, kind: str) -> None:
+        notify = self.__dict__.get("_execution_notify")
+        if notify is not None:
+            notify(self, kind)
+
+    def _watch_retry(self, previous=None) -> None:
+        if isinstance(previous, Retry):
+            previous.__dict__.get("_execution_watchers", {}).pop(id(self), None)
+        retry = getattr(self, "retry", None)
+        if isinstance(retry, Retry) and self.__dict__.get("_execution_notify") is not None:
+            watchers = retry.__dict__.setdefault("_execution_watchers", {})
+            watchers[id(self)] = weakref.WeakMethod(self._execution_changed)
+
+    def __setattr__(self, name, value):
+        watched = name in ("timeout_s", "retry", "lane_dead_s")
+        previous = None
+        if watched and self.__dict__.get("_execution_notify") is not None:
+            self._execution_changed("policy_changed")
+            previous = getattr(self, name, None)
+        object.__setattr__(self, name, value)
+        if name == "retry":
+            self._watch_retry(previous)
+        if watched:
+            self._execution_changed("policy_changed")
 
     def __init__(
         self,

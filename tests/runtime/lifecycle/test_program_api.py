@@ -194,10 +194,11 @@ def test_a_failed_load_changes_nothing():
 
 
 def test_a_load_with_a_new_unit_starts_it_before_its_entry_exists():
-    m = machine()
+    u = SimCall(name="late")
+    m = machine(bind={"inc": Use(sim_lane()), "ident": Use(u)})
     try:
-        u = SimCall(name="late")
-        m.bind["ident"] = Use(u)
+        # Predeclared but unused bindings still start lazily, not at construction.
+        assert not u.ready() and "two" not in m.code.entries
         names = m.load("@def (x: int)two(y):\n    (x)ident(y)\n", ["two"])
         assert names == ["two"] and u.ready()
         assert m.submit({"x": 3}, entry="two").result(5).outputs == {"y": 3}

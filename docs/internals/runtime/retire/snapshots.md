@@ -1,82 +1,102 @@
 # Snapshots
 
-With `snapshot_every=N` and a store, a job writes its state to the store at retire boundaries,
-and a later run of the same job resumes from it. Code:
-`src/togeari/core/runtime/retire/snapshot.py`, called from `RetireStage.take_snapshot`,
-`JobsStage.start_job` and `JobsStage.end_job`.
+With `snapshot_every=N` and a store, a job may persist an eligible retirement
+boundary. A later matching job validates execution compatibility before restoring.
+This is opportunistic capture, not yet a requested checkpoint progress guarantee.
 
-## Key and lifetime
+Code: `core/runtime/retire/snapshot.py` and shared `codec.py`, called from Python
+retirement/admission and the native snapshot/retirement/admission implementation.
+See [execution identity](../../../guides/execution-identity.md) for the public contract.
 
-`snapshot_key(region hash, job key, inputs digest) = digest(("snapshot", hash, key, inputs
-digest))`, where the inputs digest is `job.inputs_dig` (`RetireStage.snapshot_key`; `None`, so no
-snapshot is taken or read, when the job's inputs digest only by type). A job resumes only from a
-snapshot of the same program, key and inputs.
+## Locator, envelope and lifetime
 
-| When | Store operation |
+The v2 locator is
+`digest(("togeari.snapshot", 2, program_hash, job_key, inputs_digest))`.
+Weak job input digests disable snapshot lookup/capture. Execution compatibility is
+validated inside the candidate envelope rather than hiding a mismatch as a new key.
+
+Envelope fields:
+
+| Field | Meaning |
 |---|---|
-| a snapshot is taken | `put(key, blob)`; `job.snap_at` = retired count; `stats["snapshots"] += 1` |
-| a job starts with `snapshot_every` set | `get(key)`; a blob is restored |
-| a job that took a snapshot or resumed from one ends ok | `delete(key)` (or `put(key, None)` without `delete`) |
-| a job fails | the snapshot stays: it is the resume point of the next run |
+| `schema` | `togeari.snapshot` |
+| `version` | 2 |
+| `addressing` | `region-relative-v1` |
+| `execution` | declared execution manifest/completeness |
+| `state` | continuation, values, frames, stats, steps and conformance record |
 
-Jobs whose keys are source positions (`auto_key`) log one warning, since positions do not
-identify a job across runs.
+The old locator `digest(("snapshot", program_hash, job_key, inputs_digest))` is probed
+only when v2 is absent, to report migration-needed v1 data. V1 is never applied or
+relocated by guessing its former code-memory base. Incompatible v2 never falls back.
+
+A successful write advances `snap_at` and `stats.snapshots`; store failure does not.
+Successful job completion deletes a snapshot it created/resumed (or writes `None`
+if deletion is unavailable). Failure retains it. Invalid/rejected candidates stay
+stored for diagnosis. Positional auto-keys still warn about cross-run stability.
 
 ## Capture
 
-After a `retire(job)` pass, when `stats["retired"] - job.snap_at >= N` and snapshots are not
-stopped, `capture(job)` returns bytes, or `None` when the job is not at a boundary:
+After retirement, `capture(job, code, manifest)` returns bytes or `None` off a boundary:
 
-1. The window must be empty and exactly one strand live, not an `each` spawner.
-2. A strand parked at a branch is captured as just before that branch: its top join frame is
-   dropped, `pc = frame.branch`, and the counter is the saved one minus one.
-3. Every name must read a filled value through `effective(slot, (inf,))`.
+1. No active collectors, empty window, exactly one live non-spawner strand.
+2. A parked branch rewinds its continuation to the branch before address encoding.
+3. Every live name resolves to a ready value.
+4. Remaining joined frames have representable sequential continuations.
+5. Execution identity/history permits persistence under the selected mode.
 
-Remaining frames may hold an open join: with the window empty and one strand live, the join's
-continuation has ended without leaving work (retire stops at the oldest live strand), and the
-restored strand, whose frames come back without joins, runs past the reconvergence point
-itself. A loop whose exit condition parked once is captured this way mid-loop.
+The raw state fields are `pc`, `prefix`, `counter`, `frames`, `values`, `stats`,
+`steps`, and `record`. Frames carry `reconv`, `saved`, `branch`, `kind`, `each`,
+`items`, `i`, `base`, and `joined`. The codec converts **only** `pc` and frame
+`reconv`/`branch`/`each` to offsets from the entry region start. Logical order keys,
+iteration bases, saved prefixes and counters are not instruction addresses.
 
-The state is `pickle.dumps` (protocol 5) of:
+Pickle protocol 5 preserves the entire user-value alias graph. Capture validation
+or serialization failure is reported explicitly and disables further opportunistic
+attempts for that job as appropriate; it does not claim a completed persistence.
+The internal low-level capture helper requires the actual `CodeMemory` for v2.
 
-| Key | Content |
-|---|---|
-| `version` | the layout (`VERSION`, 1) |
-| `pc`, `prefix`, `counter` | where the strand continues |
-| `frames` | per frame: `reconv`, `saved`, `branch`, `kind`, `each`, `items`, `i`, `base`, and `joined` (it had a join) |
-| `values` | `{name: value}` |
-| `stats`, `steps` | the job's stats and executed-instruction count |
-| `record` | the job's conformance record (or `None`) |
+## Candidate selection and preflight
 
-An exception from `capture` (a value that does not pickle) sets `job.snap_off`, writes
-`stats["snapshot_error"]`, counts `snapshot_errors`, logs, and emits `snapshot.error`; the job
-continues and takes no more snapshots.
+`load_candidate(store, new_key, old_key, on_error=None)` returns an explicit action:
 
-## Restore
+- `new`: both candidate locators are genuinely absent (`MISS`/`None`).
+- `candidate`: v2 bytes exist and need preflight.
+- `reject`: read failure or legacy candidate, with a structured decision.
 
-`restore(job, blob, code)`:
+`prepare_restore(blob, entry, code, current_manifest, mode)` is shared between
+Python/native consumers. It validates envelope/version/schema, execution/layout
+compatibility, exact structural types, signed-i64 structural integers, address
+ranges and frame-to-opcode relationships before any live-state mutation. User values
+are not restricted to structural integer bounds. Invalid frames do not silently
+become branch frames.
 
-- a state of another `version` (or none) is no snapshot: a warning, and the job starts from its
-  entry;
-- frames are rebuilt (`Frame(**d)`) without joins; an iteration frame that had one (the last
-  `each` iteration running alone after the strand past the loop ended) gets the `each`'s
-  reconvergence point from `code.tables(each).reconv` as its `reconv`, as a taken fault's
-  handler does, so the restored strand runs its `ITER_END` and leaves the loop itself;
-- the undefined value (`UNDEF`) pickles as itself, so a name no path wrote stays undefined;
-- every value becomes `const(value)` in a fresh `NameMap`; unpickled values belong to this job
-  alone, so they are not copied;
-- the job's strands are ended and one strand is added at the stored `pc`, `prefix`, `counter`;
-- stats are merged, `stats["resumed"] = True`, `steps` and `snap_at` restored;
-- a job sampled for recording takes the stored record, so its record covers the whole job; when
-  the snapshot has none, `stats["record_skipped"]` says so.
+The returned state has validated absolute addresses in the **current** region.
+Joined iteration reconvergence is recomputed after relocation. Logical keys and
+five-field record tuples are unchanged. User values are not copied separately.
 
-An unreadable blob logs a warning and the job starts from its entry.
+A present incompatible, corrupt, unsupported, v1 or unreadable candidate rejects only
+that job as `SnapshotIncompatible`, with `stats.snapshot_restore` issues. It does not
+restart potentially effectful work, enter the job pool, start engine calls, or notify
+`on_job_start`. Normal cache read errors may remain misses; snapshot reads deliberately
+have the stronger continuation-safety rule.
 
-`load(store, key, on_error=None)` reads the blob: `MISS` or `None` is no snapshot; a store
-`get` that raises is passed to `on_error` (else logged) and also reads as no snapshot.
+## Atomic application
 
-Trust: `restore` unpickles what the store returns, and unpickling runs code the data names, so a
-store that holds snapshots must be writable only by trusted writers.
+Python builds temporary frames, names, strand, stats and recording state before
+ending the fresh strand. Native extracts all fields into a detached DTO and stages
+stats/record conversions before interning names or replacing strands. No unchecked
+blob fields are read after commit begins (allocation failure is not a transactional
+storage guarantee).
 
-Order keys continue from the stored `(prefix, counter)`, so positional store keys of the resumed
-statements equal those of the first run.
+Restored values become ready slots without independent deep copies. Frames have no
+live scheduler joins. Recording continues the saved prefix when available; otherwise
+`record_skipped` explains the absence. `resumed=True` and `snapshot_restore` retain
+the compatibility status. Machine-local `program_region`, admission execution and
+epoch come from the current job, not the old process's stats.
+
+The low-level `restore(...)->bool` wrapper remains for internal callers; `False`
+means denied, not permission to restart. Admission uses the structured candidate
+and preflight result so absence cannot be confused with incompatibility.
+
+**Trust:** validation protects runtime consistency, not against code execution by
+malicious pickle. Snapshot stores must remain writable only by trusted writers.

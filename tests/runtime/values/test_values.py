@@ -2,20 +2,20 @@
 
 import hashlib
 import logging
-import pickle
 import threading
 import time
 from types import SimpleNamespace
 
 from rt_helpers import CALLS, machine, sim_lane
 
-from togeari import Inline, Use, WorkItem
+from togeari import Inline, Machine, Use, WorkItem
 from togeari.conformance import conform
 from togeari.core.contracts.digest import digest, register_digest, unregister_digest
 from togeari.core.contracts.io import MISS
 from togeari.core.runtime.frontend.fetch import FrontEnd
 from togeari.core.runtime.kir import UNDEF
 from togeari.core.runtime.retire import snapshot
+from togeari.core.runtime.retire.codec import encode_snapshot
 from togeari.core.runtime.state import Job, Join, NameMap, Slot
 from togeari.io import Iterable, Memory
 from togeari.stores import MemoryStore
@@ -360,23 +360,33 @@ class Copied:
 
 
 def test_snapshot_restore_keeps_the_unpickled_values():
-    # Unpickled values are used as they are, never deep-copied again
-    state = {
-        "version": snapshot.VERSION,
-        "pc": 0,
-        "prefix": (),
-        "counter": 0,
-        "frames": [],
-        "values": {"v": Copied()},
-        "stats": {},
-        "steps": 0,
-        "record": None,
-    }
-    job = Job("k", None, {})
-    Copied.copies = 0
-    assert snapshot.restore(job, pickle.dumps(state))
-    (st,) = job.strands.values()
-    assert Copied.copies == 0 and isinstance(st.names.get("v").value, Copied)
+    # Use a real v2 envelope/code identity; unpickled user values must still be
+    # installed without another deep copy, retaining aliases within the graph.
+    m = Machine(program="@def ()main(out):\n    out = 1\n", entry="main", core="python")
+    try:
+        entry = m.code.entries["main"]
+        job = Job("k", entry, {})
+        value = Copied()
+        state = {
+            "pc": entry.addr,
+            "prefix": (),
+            "counter": 0,
+            "frames": [],
+            "values": {"v": value, "alias": value},
+            "stats": dict(job.stats),
+            "steps": 0,
+            "record": None,
+        }
+        Copied.copies = 0
+        blob = encode_snapshot(state, entry, m.code, entry.region.execution)
+        assert snapshot.restore(job, blob, m.code, mode="strict")
+        (st,) = job.strands.values()
+        restored = st.names.get("v").value
+        assert Copied.copies == 0 and isinstance(restored, Copied)
+        assert restored is st.names.get("alias").value
+        assert restored is not value
+    finally:
+        m.stop()
 
 
 def test_registered_digests_are_used():

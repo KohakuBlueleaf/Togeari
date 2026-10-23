@@ -12,32 +12,38 @@ one only trusted writers can change.
 """
 
 import logging
-import pickle
 from collections.abc import Callable
 from typing import Any
 
 from togeari.core.contracts.digest import digest
 from togeari.core.contracts.io import MISS
+from togeari.core.runtime.retire.codec import VERSION, denied, encode_snapshot, prepare_restore
 from togeari.core.runtime.state import Frame, NameMap, SlotState, Strand, const, effective
 
 log = logging.getLogger("togeari.snapshot")
 _FINAL = (float("inf"),)
 
-# The layout of a captured state; restore reads only this version
-VERSION = 1
-
 
 def snapshot_key(region_hash: str, job_key: str, inputs_digest: bytes) -> bytes:
+    return digest(("togeari.snapshot", VERSION, region_hash, job_key, inputs_digest))
+
+
+def legacy_snapshot_key(region_hash: str, job_key: str, inputs_digest: bytes) -> bytes:
+    """The v1 locator is probed only to diagnose migration, never to apply its state."""
     return digest(("snapshot", region_hash, job_key, inputs_digest))
 
 
-def capture(job: Any) -> bytes | None:
+def capture(job: Any, code: Any = None, manifest: dict | None = None) -> bytes | None:
     """The job's state as bytes, or None off a boundary; raises when a value cannot pickle."""
     if getattr(job, "collectors", None):
         return None
     live = list(job.strands.values())
     if job.window or len(live) != 1 or live[0].spawn is not None:
         return None
+    if code is None:
+        raise ValueError("snapshot v2 capture requires the actual CodeMemory")
+    if manifest is None:
+        manifest = job.entry.region.execution
     st = live[0]
     pc, prefix, counter, frames_now = st.pc, st.prefix, st.counter, list(st.frames)
 
@@ -73,7 +79,6 @@ def capture(job: Any) -> bytes | None:
         for f in frames_now
     ]
     state = {
-        "version": VERSION,
         "pc": pc,
         "prefix": prefix,
         "counter": counter,
@@ -83,52 +88,107 @@ def capture(job: Any) -> bytes | None:
         "steps": job.steps,
         "record": job.record,
     }
-    return pickle.dumps(state, protocol=5)
+    return encode_snapshot(state, job.entry, code, manifest)
 
 
-def _frame(d: dict, code: Any) -> Frame:
-    """A captured frame, without its join; an iteration frame that had one ends at its
-    `each`'s reconvergence point (its continuation strand already ran ahead and ended)."""
-    joined = d.pop("joined", False)
-    if joined and d["kind"] == "iter" and code is not None:
-        d["reconv"] = code.tables(d["each"]).reconv.get(d["each"])
-    return Frame(**d)
-
-
-def restore(job: Any, blob: bytes, code: Any = None) -> bool:
-    """Put a captured state back into a fresh job; False if it cannot be read or is of another
-    version. ``code`` is the machine's code memory (for the `each` reconvergence points)."""
-    try:
-        state = pickle.loads(blob)
-    except Exception:  # noqa: BLE001
-        log.warning("snapshot of job %s unreadable; starting over", job.key)
-        return False
-    if not isinstance(state, dict) or state.get("version") != VERSION:
-        got = state.get("version") if isinstance(state, dict) else None
-        log.warning(
-            "snapshot of job %s has version %r, not %d; starting over", job.key, got, VERSION
-        )
-        return False
-
-    # Unpickled values belong to this job alone: no copy
-    frames = tuple(_frame(dict(d), code) for d in state["frames"])
-    names = NameMap({n: const(v) for n, v in state["values"].items()})
-    for st in list(job.strands.values()):
-        job.end_strand(st)
-    job.add_strand(
-        Strand(job, state["pc"], tuple(state["prefix"]), state["counter"], frames, names)
+def apply_prepared(job: Any, state: dict, decision: dict) -> None:
+    """Stage validated state completely, then install; never independently copy user values."""
+    frames = tuple(
+        Frame(**{k: v for k, v in frame.items() if k != "joined"}) for frame in state["frames"]
     )
-    job.stats.update(state["stats"])
-    job.stats["resumed"] = True
-    job.steps = state.get("steps", 0)
-    job.snap_at = job.stats.get("retired", 0)
+    names = NameMap({name: const(value) for name, value in state["values"].items()})
+    strand = Strand(job, state["pc"], state["prefix"], state["counter"], frames, names)
+    stats = {
+        **job.stats,
+        **state["stats"],
+        "resumed": True,
+        "snapshot_restore": {"status": decision["status"], "issues": decision["issues"]},
+    }
+    # Runtime decision caches must be rebuilt under this machine's warning/mode context.
+    stats.pop("_persistence_context", None)
+    # Local identity is admission context, never portable state. Preserve the
+    # caller's pins even through the low-level restore wrapper; drop absent pins.
+    for name in ("execution", "execution_epoch", "program_region"):
+        stats.pop(name, None)
+        if name in job.stats:
+            stats[name] = job.stats[name]
+    record = state["record"] if job.record is not None else None
+    if job.record is not None and record is None:
+        stats["record_skipped"] = "resumed without a record"
+    # Nothing below consumes unvalidated types or addresses.
+    for previous in list(job.strands.values()):
+        job.end_strand(previous)
+    job.stats = stats
+    job.record = record
+    job.steps = state["steps"]
+    job.snap_at = stats["retired"]
+    job.add_strand(strand)
 
-    # A recorded job continues the record of the run it resumes; without one it is not recorded
-    if job.record is not None:
-        job.record = state.get("record")
-        if job.record is None:
-            job.stats["record_skipped"] = "resumed without a record"
+
+def restore(
+    job: Any,
+    blob: bytes,
+    code: Any = None,
+    current_manifest: dict | None = None,
+    mode: str = "warn",
+) -> bool:
+    """Low-level compatibility wrapper; False means denied, never permission to restart.
+
+    Admission uses ``prepare_restore`` directly so absence and denial cannot be
+    confused. V2 restoration requires actual code and the current entry manifest.
+    """
+    if code is None:
+        return False
+    manifest = job.entry.region.execution if current_manifest is None else current_manifest
+    prepared = prepare_restore(blob, job.entry, code, manifest, mode)
+    if not prepared["decision"]["allow"]:
+        return False
+    apply_prepared(job, prepared["state"], prepared["decision"])
     return True
+
+
+def snapshot_rejection(decision: dict) -> dict:
+    """Stable per-job denial DTO shared by both admission paths, not a machine error."""
+    issues = decision["issues"]
+    message = "; ".join(issue["message"] for issue in issues) or "snapshot is incompatible"
+    return {
+        "failure": {"kind": "SnapshotIncompatible", "node": None, "message": message},
+        "stats": {
+            "snapshot_restore": {
+                "status": "rejected",
+                "code": issues[0]["code"] if issues else decision["status"],
+                "issues": issues,
+            }
+        },
+    }
+
+
+def load_candidate(store: Any, new_key: bytes, old_key: bytes, on_error=None) -> dict:
+    """Probe v2 first, v1 only on absence; a read error or legacy hit is a denial."""
+    if store is None:
+        return {"action": "new", "blob": None, "decision": None}
+    for key, legacy in ((new_key, False), (old_key, True)):
+        try:
+            blob = store.get(key)
+        except Exception as exc:  # noqa: BLE001
+            if on_error is not None:
+                on_error(exc)
+            decision = denied(
+                "invalid", "store_read_error", "store", f"{type(exc).__name__}: {exc}"
+            )
+            return {"action": "reject", "blob": None, "decision": decision}
+        if blob is MISS or blob is None:
+            continue
+        if legacy:
+            decision = denied(
+                "unsupported_version",
+                "migration_needed",
+                "version",
+                "v1 snapshots require offline migration",
+            )
+            return {"action": "reject", "blob": None, "decision": decision}
+        return {"action": "candidate", "blob": blob, "decision": None}
+    return {"action": "new", "blob": None, "decision": None}
 
 
 def load(

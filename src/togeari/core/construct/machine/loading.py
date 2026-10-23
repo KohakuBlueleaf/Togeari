@@ -12,6 +12,7 @@ from togeari.core.construct.units import stop_all
 from togeari.core.lanes.lane import Lane
 from togeari.core.program.bind import bind_region
 from togeari.core.program.code import Region
+from togeari.core.program.execution import current_execution, signature_hash, validate_bindings
 from togeari.core.program.job import build_job_programs
 
 log = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ class LoadStage:
     # ------------------------------------------------------------ staging
     def _stage(self, prog: Any, entries: list, problems: Problems) -> Staged:
         """Decode and bind a program's entries; collect every problem; register nothing."""
+        validate_bindings(self)
         staged = Staged()
         jobs = build_job_programs(
             prog, entries, self.libraries, self.sig_path, self.passes, problems
@@ -47,7 +49,24 @@ class LoadStage:
                 return staged
 
         for jp in jobs:
-            region = self.code.cached(jp)
+            region = self.code.cached(jp, self._binding_fingerprint)
+            if region is not None and region.execution is not None:
+                nodes = [ins.node for ins in self.code.calls(region)]
+                unknown_signature = any(
+                    issue["path"].startswith("signatures.")
+                    for issue in region.execution["completeness"]["unknown"]
+                )
+                same_functions = all(
+                    ins.binding is not None and ins.binding.fn is jp.env.impl(ins.node)
+                    for ins in self.code.calls(region)
+                )
+                if (
+                    unknown_signature
+                    or not same_functions
+                    or signature_hash(jp, nodes)
+                    != region.execution["identity"]["program"]["signature_hash"]
+                ):
+                    region = None
             if region is None:
                 region = self.code.stage(jp)
                 for e in region.problems:
@@ -61,6 +80,9 @@ class LoadStage:
                     self._used,
                     self.defaults,
                 )
+                region.binding_fingerprint = self._binding_fingerprint
+                if not problems.items:
+                    region.execution = current_execution(region, self.code, self)
 
             # Entry name: a clash with a committed entry takes the source's stem
             name = jp.entry or Path(jp.source).stem

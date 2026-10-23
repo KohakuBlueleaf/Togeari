@@ -35,6 +35,26 @@ class Retry:
     max: int = 3
     backoff_ms: float = 200.0
 
+    def __getstate__(self):
+        # Observers are process-local bookkeeping, not part of a copied retry policy.
+        return {key: value for key, value in self.__dict__.items() if key != "_execution_watchers"}
+
+    def __setattr__(self, name, value):
+        watched = name in ("max", "backoff_ms")
+        callbacks = []
+        if watched:
+            watchers = self.__dict__.get("_execution_watchers", {})
+            for key, reference in list(watchers.items()):
+                callback = reference()
+                if callback is None:
+                    watchers.pop(key, None)
+                else:
+                    callbacks.append(callback)
+                    callback("policy_changed")
+        object.__setattr__(self, name, value)
+        for callback in callbacks:
+            callback("policy_changed")
+
 
 @dataclass
 class UnitState:

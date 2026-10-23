@@ -16,7 +16,6 @@ from typing import Any
 
 from togeari.core.contracts.execution import ExecutionPolicy
 from togeari.core.plugin.base import PluginContext
-from togeari.core.plugin.tables import bound_calls
 from togeari.plugins.common.machine import describe, plain
 
 
@@ -62,6 +61,9 @@ def machine_spec(ctx: PluginContext) -> dict:
     built = ctx.construction()
     knobs = ctx.knobs
 
+    # The core query owns access to current effective execution state. Source
+    # hashes/provenance and descriptive configuration remain separate fields.
+    effective = {row["region"]: row for row in ctx.query_now("programs")}
     # Every loaded program region
     regions = {
         r.index: {
@@ -74,7 +76,8 @@ def machine_spec(ctx: PluginContext) -> dict:
             "inputs": [p.name for p in r.job.params],
             "outputs": r.job.outputs,
             "warnings": list(r.job.warnings),
-            "calls": bound_calls(code, r),
+            "calls": effective[r.index]["calls"],
+            "execution": effective[r.index]["execution"],
         }
         for r in code.regions
     }

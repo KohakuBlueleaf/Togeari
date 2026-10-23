@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
+use pyo3::exceptions::{PyKeyError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PySet, PyString};
@@ -13,6 +14,18 @@ use crate::runtime::state::frame::no_frames;
 use crate::runtime::state::key::empty_prefix;
 use crate::runtime::state::slot::hold;
 use crate::runtime::state::{Entry, InfState, Job, JobRef, NameMap, Param, Slot, Strand};
+
+enum SnapshotAdmission {
+    New,
+    Resumed,
+    Reject(Py<PyDict>),
+}
+
+fn snapshot_field<'py>(state: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>> {
+    state
+        .get_item(key)?
+        .ok_or_else(|| PyKeyError::new_err(format!("snapshot helper field {key:?} missing")))
+}
 
 impl Core {
     /// The shell object (the dispatcher instance this core belongs to).
@@ -201,12 +214,36 @@ impl Core {
         let id = crate::runtime::state::next_id();
         let job = Job::new(id, key.clone().unbind(), entry.clone(), inputs.clone().unbind());
         let auto_key = item.getattr(intern!(py, "auto_key"))?.is_truthy()?;
+        let observed = self
+            .h
+            .observe_execution
+            .bind(py)
+            .call1((
+                entry.py.bind(py).getattr("region")?,
+                self.h.code.bind(py),
+                self.h.machine.bind(py),
+            ))?
+            .cast_into::<PyDict>()?;
+        // The identity cache is borrowed read-only. Job stats escape in JobRecord,
+        // so retain one detached admission copy rather than exposing that cache.
+        let execution = self
+            .h
+            .deepcopy
+            .bind(py)
+            .call1((snapshot_field(&observed, "manifest")?,))?
+            .unbind();
+        let execution_epoch: i64 = snapshot_field(&observed, "epoch")?.extract()?;
+        let execution_epoch = execution_epoch.into_pyobject(py)?.into_any().unbind();
         {
             let mut j = job.borrow_mut();
             j.start_time = self.perf();
             j.handle = handle.map(|h| h.clone().unbind());
             j.auto_key = auto_key;
             j.stats.program = Some(entry.region_hash.clone_ref(py));
+            j.stats.extra.insert("execution".into(), execution);
+            j.stats
+                .extra
+                .insert("execution_epoch".into(), execution_epoch);
         }
         let rate = self.h.knob(py, K::Record)?;
         let sampled = if rate.is_truthy()? {
@@ -247,19 +284,15 @@ impl Core {
             }
         }
 
-        // Resume from a snapshot of an earlier run of this job
-        let snap = if self.h.knob(py, K::SnapshotEvery)?.is_truthy()? {
-            self.snapshot_key(py, &job)?
-        } else {
-            None
-        };
-        let mut restored = false;
-        if let Some(snap) = snap {
-            self.warn_auto_key(py, &job);
-            if let Some(blob) = self.load_snapshot(py, &snap)? {
-                restored = self.restore(py, &job, blob.bind(py))?;
+        // A present incompatible candidate is not a cache miss: reject before admission
+        // and before engines/on_job_start can repeat any external effects.
+        let restored = match self.resume_snapshot(py, &job)? {
+            SnapshotAdmission::New => false,
+            SnapshotAdmission::Resumed => true,
+            SnapshotAdmission::Reject(decision) => {
+                return self.reject_snapshot(py, &item, decision.bind(py), handle, &name_s);
             }
-        }
+        };
 
         // Region identity is local to this machine, never inherited from a snapshot.
         let region_index = entry
@@ -338,21 +371,122 @@ impl Core {
         Ok(())
     }
 
-    /// The stored snapshot, or None; a failing store read is a store error.
-    fn load_snapshot(&self, py: Python<'_>, key: &Py<PyAny>) -> PyResult<Option<Py<PyAny>>> {
-        let store = self.h.store.as_ref().expect("a store").bind(py);
-        let got = match store.call_method1(intern!(py, "get"), (key.bind(py),)) {
-            Ok(g) => g,
-            Err(e) if is_exception(py, &e) => {
-                self.store_error(py, "get", &e)?;
-                return Ok(None);
+    fn resume_snapshot(&self, py: Python<'_>, job: &JobRef) -> PyResult<SnapshotAdmission> {
+        match self.resume_snapshot_inner(py, job) {
+            Ok(outcome) => Ok(outcome),
+            Err(error) if is_exception(py, &error) => {
+                // This includes detached native conversion failures. The initial job
+                // and interner remain untouched by restore until conversion succeeds.
+                let issue = PyDict::new(py);
+                issue.set_item("code", "invalid_snapshot")?;
+                issue.set_item("path", "snapshot")?;
+                issue.set_item(
+                    "message",
+                    format!("snapshot preparation failed: {}", error.value(py).str()?),
+                )?;
+                let decision = PyDict::new(py);
+                decision.set_item("status", "invalid")?;
+                decision.set_item("allow", false)?;
+                decision.set_item("issues", PyList::new(py, [issue])?)?;
+                Ok(SnapshotAdmission::Reject(decision.unbind()))
             }
-            Err(e) => return Err(e),
-        };
-        if got.is(self.h.miss.bind(py)) || got.is_none() {
-            return Ok(None);
+            Err(error) => Err(error),
         }
-        Ok(Some(got.unbind()))
+    }
+
+    fn resume_snapshot_inner(&self, py: Python<'_>, job: &JobRef) -> PyResult<SnapshotAdmission> {
+        if !self.h.knob(py, K::SnapshotEvery)?.is_truthy()? {
+            return Ok(SnapshotAdmission::New);
+        }
+        let Some(new_key) = self.snapshot_key(py, job)? else {
+            return Ok(SnapshotAdmission::New);
+        };
+        let old_key = self
+            .legacy_snapshot_key(py, job)?
+            .ok_or_else(|| PyValueError::new_err("snapshot locator unavailable"))?;
+        let store = self
+            .h
+            .store
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("snapshot store unavailable"))?;
+        self.warn_auto_key(py, job);
+        let errors = PyList::empty(py);
+        let candidate = self
+            .h
+            .snapshot_candidate
+            .bind(py)
+            .call1((store.bind(py), new_key.bind(py), old_key.bind(py), errors.getattr("append")?))?
+            .cast_into::<PyDict>()?;
+        for error in errors.iter() {
+            self.store_error(py, "get", &PyErr::from_value(error))?;
+        }
+        let action: String = snapshot_field(&candidate, "action")?.extract()?;
+        match action.as_str() {
+            "new" => return Ok(SnapshotAdmission::New),
+            "reject" => {
+                return Ok(SnapshotAdmission::Reject(
+                    snapshot_field(&candidate, "decision")?
+                        .cast_into::<PyDict>()?
+                        .unbind(),
+                ))
+            }
+            "candidate" => {}
+            _ => return Err(PyValueError::new_err("invalid snapshot candidate action")),
+        }
+        let manifest = self.snapshot_execution(py, job)?;
+        let entry = job.borrow().entry.py.clone_ref(py);
+        let mode = self
+            .h
+            .machine
+            .bind(py)
+            .getattr("persistence_compatibility")?;
+        let prepared = self
+            .h
+            .snapshot_prepare
+            .bind(py)
+            .call1((
+                snapshot_field(&candidate, "blob")?,
+                entry.bind(py),
+                self.h.code.bind(py),
+                manifest.bind(py),
+                mode,
+            ))?
+            .cast_into::<PyDict>()?;
+        let decision = snapshot_field(&prepared, "decision")?.cast_into::<PyDict>()?;
+        if !snapshot_field(&decision, "allow")?.extract::<bool>()? {
+            return Ok(SnapshotAdmission::Reject(decision.unbind()));
+        }
+        let state = snapshot_field(&prepared, "state")?.cast_into::<PyDict>()?;
+        // Warnings/callbacks occur before native commit, never after partial application.
+        let kwargs = PyDict::new(py);
+        kwargs.set_item("execution_hash", manifest.bind(py).get_item("hash")?)?;
+        self.h
+            .warn_unverified
+            .bind(py)
+            .call((self.h.machine.bind(py), &decision), Some(&kwargs))?;
+        self.apply_prepared_snapshot(py, job, &state, &decision)?;
+        Ok(SnapshotAdmission::Resumed)
+    }
+
+    fn reject_snapshot(
+        &self,
+        py: Python<'_>,
+        item: &Bound<'_, PyAny>,
+        decision: &Bound<'_, PyDict>,
+        handle: Option<&Bound<'_, PyAny>>,
+        entry: &str,
+    ) -> PyResult<()> {
+        let rejected = self
+            .h
+            .snapshot_rejection
+            .bind(py)
+            .call1((decision,))?
+            .cast_into::<PyDict>()?;
+        let failure = snapshot_field(&rejected, "failure")?.cast_into::<PyDict>()?;
+        let stats = snapshot_field(&rejected, "stats")?.cast_into::<PyDict>()?;
+        let kind: String = snapshot_field(&failure, "kind")?.extract()?;
+        let message: String = snapshot_field(&failure, "message")?.extract()?;
+        self.reject_with_stats(py, item, &kind, &message, handle, Some(entry), Some(&stats))
     }
 
     /// Report once that keys are automatic while snapshots or positional stores are on.
@@ -372,6 +506,20 @@ impl Core {
         msg: &str,
         handle: Option<&Bound<'_, PyAny>>,
         entry: Option<&str>,
+    ) -> PyResult<()> {
+        self.reject_with_stats(py, item, kind, msg, handle, entry, None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn reject_with_stats(
+        &self,
+        py: Python<'_>,
+        item: &Bound<'_, PyAny>,
+        kind: &str,
+        msg: &str,
+        handle: Option<&Bound<'_, PyAny>>,
+        entry: Option<&str>,
+        stats: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<()> {
         let entry: Py<PyAny> = match entry {
             Some(e) => PyString::new(py, e).into_any().unbind(),
@@ -397,13 +545,20 @@ impl Core {
         failure.set_item("kind", kind)?;
         failure.set_item("node", py.None())?;
         failure.set_item("message", msg)?;
-        let rec = self.h.job_record.bind(py).call1((
-            item.getattr(intern!(py, "key"))?,
-            entry.bind(py),
-            false,
-            PyDict::new(py),
-            failure,
-        ))?;
+        let kwargs = PyDict::new(py);
+        if let Some(stats) = stats {
+            kwargs.set_item("stats", stats)?;
+        }
+        let rec = self.h.job_record.bind(py).call(
+            (
+                item.getattr(intern!(py, "key"))?,
+                entry.bind(py),
+                false,
+                PyDict::new(py),
+                failure,
+            ),
+            Some(&kwargs),
+        )?;
         self.stats.borrow_mut().jobs_failed += 1;
         let kw = PyDict::new(py);
         kw.set_item("where", Core::where_entry(py, entry.bind(py))?)?;

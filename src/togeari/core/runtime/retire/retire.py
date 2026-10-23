@@ -3,6 +3,7 @@
 import logging
 
 from togeari.core.program.decode.instr import Op
+from togeari.core.program.execution import compatibility, execution_for_job
 from togeari.core.runtime.kir import UNDEF, RuntimeFault
 from togeari.core.runtime.retire import snapshot
 from togeari.core.runtime.state import Inflight, InfState, Job, SlotState, deref, effective, hold
@@ -108,7 +109,12 @@ class RetireStage:
                 job.stats.pop("record_origins", None)
                 job.stats["record_skipped"] = f"more than {limit} calls"
         # A positional result is stored as copied at settle, before any younger in-place change
-        if x.store_key is not None and not x.hit and ins.binding.store == "positional":
+        if (
+            x.store_key is not None
+            and not x.hit
+            and ins.binding.store == "positional"
+            and self.result_store_allowed(job, ins)
+        ):
             self.store_put(x.store_key, x.kept)
         if self.bus.wants("stmt.retire", job.id):
             self.emit_stmt("stmt.retire", x)
@@ -134,7 +140,13 @@ class RetireStage:
             job.snap_off = True
             return
         try:
-            blob = snapshot.capture(job)
+            manifest = execution_for_job(job, self.code, self.m)
+            decision = compatibility(manifest, manifest, self.m.persistence_compatibility)
+            if not decision["allow"]:
+                job.stats["snapshot_capture"] = decision
+                job.snap_off = True
+                return
+            blob = snapshot.capture(job, self.code, manifest)
         except Exception as exc:  # noqa: BLE001
             job.snap_off = True
             msg = f"{type(exc).__name__}: {exc}"
@@ -145,7 +157,11 @@ class RetireStage:
                 self.bus.emit("snapshot.error", job=job.id, key=job.key, error=msg)
             return
         if blob is not None:
-            self.store_put(key, blob)
+            try:
+                self.store.put(key, blob)
+            except Exception as exc:  # noqa: BLE001
+                self.store_error("put", exc)
+                return
             job.snap_at = job.stats["retired"]
             job.stats["snapshots"] = job.stats.get("snapshots", 0) + 1
 

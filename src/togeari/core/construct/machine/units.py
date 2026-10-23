@@ -3,6 +3,7 @@
 import functools
 import threading
 import time
+import weakref
 from concurrent.futures import Future
 from typing import Any
 
@@ -11,6 +12,7 @@ from togeari.core.construct.units import start_all, stop_all
 from togeari.core.lanes.lane import Lane
 from togeari.core.lanes.native import adopt
 from togeari.core.program.bind import check_unit
+from togeari.core.program.execution import note_execution_change
 
 
 class UnitStage:
@@ -111,6 +113,17 @@ class UnitStage:
         lane.emit = functools.partial(self.lane_event, lane.name)
         lane.wants = self.bus.wants
 
+        # Observe only semantic lane changes; callbacks do not keep a stopped machine alive.
+        machine = weakref.ref(self)
+
+        def changed(lane, kind):
+            owner = machine()
+            if owner is not None:
+                note_execution_change(owner, lane, kind)
+
+        lane._execution_notify = changed
+        lane._watch_retry()
+
         # The native core runs its lanes' queues and issue logic too
         if self.core == "rust":
             adopt(lane)
@@ -119,6 +132,10 @@ class UnitStage:
         """Lane events (with the lane's name) go to the bus; unit state changes also to
         `on_unit_state` plugins."""
         fields.setdefault("lane", lane_name)
+        if kind in ("unit.attach", "unit.detach", "unit.detached"):
+            lane = next((ln for ln in self.lanes if ln.name == lane_name), None)
+            if lane is not None:
+                note_execution_change(self, lane, "unit_membership")
         self.bus.emit(kind, **fields)
         if kind == "unit.detached" and self.units_started:
             self._stop_detached(fields.get("unit"))

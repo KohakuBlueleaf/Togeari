@@ -47,10 +47,14 @@ def test_load_waits_as_long_as_attach(monkeypatch):
 # ---------------------------------------------------------------- concurrent loads
 def test_two_loads_of_one_program_stage_it_once():
     # Two loads of one program share one region, one lane for the unit and one unit start
-    m = machine()
+    u = SlowStart(name="late")
+    m = machine(bind={"inc": Use(SimCall(name="initial")), "ident": Use(u)})
     try:
-        u = SlowStart(name="late")
-        m.bind["ident"] = Use(u)
+        assert u.starts == 0
+        assert any(
+            "ident" in warning.message and "matches no node" in warning.message
+            for warning in m.warnings
+        )
         first = m.command("load", program=TWO, entries=["two"])
         second = m.command("load", program=TWO, entries=["two"])
         assert first.result(10) == ["two"] and second.result(10) == ["two"]
@@ -64,9 +68,8 @@ def test_two_loads_of_one_program_stage_it_once():
 
 def test_a_load_staging_a_name_another_load_holds_is_refused():
     # An entry name staged by one load is refused to another; the first load's entry holds
-    m = machine()
+    m = machine(bind={"inc": Use(SimCall(name="initial")), "ident": Use(SlowStart(name="late"))})
     try:
-        m.bind["ident"] = Use(SlowStart(name="late"))
         first = m.command("load", program=TWO, entries=["two"])
         second = m.command("load", program=TWO.replace("ident", "inc"), entries=["two"])
         with pytest.raises(ConstructionError, match="another load"):

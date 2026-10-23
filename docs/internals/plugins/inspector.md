@@ -51,8 +51,17 @@ These are detached copies of the currently resolved per-instruction `Bound`
 values, shared with the [run-report policy view](report.md). They do not infer a
 new policy from mutable configuration. Bindings are fixed for a machine;
 mutating `m.bind` or a `Use` object is not a supported rebind of existing regions.
-The documented lane-policy commands are separate. This explanatory query is not
-a complete execution identity or execution manifest.
+The documented lane-policy commands are separate. The descriptive call rows are
+not execution-identity certification.
+
+Each program also exposes a separate `execution` object: the full current
+versioned execution manifest, including its own `hash`, `identity`,
+`completeness: {complete, unknown, transitions}`, and local observation `epoch`.
+The existing program `hash` and `origins` retain their meanings. Unknown host,
+adapter or engine attestations remain explicitly unverified; equality of partial
+hashes does not certify them. This live query observes effective policy/membership
+at query time, unlike Recorder's initial `region_binding` artifact. See the
+[archive and replay distinctions](report.md#archived-execution-metadata-and-replay).
 
 ## Access
 

@@ -6,6 +6,7 @@ from kohakunode import NodeLibrary
 from togeari import BasePlugin, ExecutionPolicy, Inline, Lane, Machine, Use
 from togeari.cli.replay import replay_dir
 from togeari.conformance import conform
+from togeari.core.contracts.digest import digest
 from togeari.core.contracts.results import ItemTimeout, UnitError
 from togeari.core.contracts.workitem import WorkItem
 from togeari.core.lanes.deadline import current, replace
@@ -210,12 +211,32 @@ def test_legacy_hint_override_empty_policy_and_host_timeout_distinguished(core):
 @pytest.mark.parametrize("core", ["python", "rust"])
 def test_store_hit_bypasses_call_cap_before_queue_preparation(core):
     store = MemoryStore()
-    first, unit, _ = execute(core, timeout=None, delay=0.25, store=store, store_mode="content")
-    assert first.records[0].outputs == {"value": 4, "error": None}
-    second, unit, _ = execute(core, timeout=0, delay=2, store=store, store_mode="content")
-    assert second.records[0].outputs == {"value": 4, "error": None}
+    expired, _, _ = execute(core, timeout=0, delay=2, store=store, store_mode="content")
+    assert expired.records[0].outputs["value"] == -1
+    execution_hash = expired.records[0].stats["execution"]["hash"]
+    key = digest(("togeari.result", 2, "content", execution_hash, "inc", digest({"x": 3})))
+    # Seed exactly the zero-policy execution namespace: changing policy is not a cache hit.
+    store.put(key, 4)
+    hit, unit, _ = execute(core, timeout=0, delay=2, store=store, store_mode="content")
+    assert hit.records[0].outputs == {"value": 4, "error": None}
     assert unit.enqueued == []
-    assert "policy_failures" not in second.records[0].stats
+    assert "policy_failures" not in hit.records[0].stats
+    assert hit.machine.dispatcher.stats["store_hits"] == 1
+
+
+@pytest.mark.parametrize("core", ["python", "rust"])
+def test_changed_execution_policy_does_not_reuse_previous_policy_result(core):
+    store = MemoryStore()
+    first, _, _ = execute(core, timeout=None, delay=0.25, store=store, store_mode="content")
+    assert first.records[0].outputs == {"value": 4, "error": None}
+    changed, unit, _ = execute(core, timeout=0, delay=2, store=store, store_mode="content")
+    assert changed.records[0].outputs["value"] == -1
+    assert (
+        changed.records[0].stats["execution"]["hash"] != first.records[0].stats["execution"]["hash"]
+    )
+    assert unit.enqueued == []
+    assert changed.machine.dispatcher.stats["store_hits"] == 0
+    assert changed.records[0].stats["policy_failures"][0]["scope"] == "call"
 
 
 @pytest.mark.parametrize("core", ["python", "rust"])

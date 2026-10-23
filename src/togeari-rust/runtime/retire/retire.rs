@@ -371,8 +371,10 @@ impl Core {
             }
         };
         if let Some((k, kept)) = put {
-            let kept = kept.unwrap_or_else(|| py.None());
-            self.store_put(py, &k, kept.bind(py))?;
+            if self.result_store_allowed(py, job, &ins)? {
+                let kept = kept.unwrap_or_else(|| py.None());
+                self.store_put(py, &k, kept.bind(py))?;
+            }
         }
         self.stmt_event(py, "stmt.retire", x)
     }
@@ -421,6 +423,24 @@ impl Core {
 
     /// The job's snapshot key; None without a store or with weak inputs.
     pub fn snapshot_key(&self, py: Python<'_>, job: &JobRef) -> PyResult<Option<Py<PyAny>>> {
+        self.snapshot_locator(py, job, false)
+    }
+
+    /// Legacy lookup is diagnosis only; it never authorizes applying old absolute addresses.
+    pub(crate) fn legacy_snapshot_key(
+        &self,
+        py: Python<'_>,
+        job: &JobRef,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        self.snapshot_locator(py, job, true)
+    }
+
+    fn snapshot_locator(
+        &self,
+        py: Python<'_>,
+        job: &JobRef,
+        legacy: bool,
+    ) -> PyResult<Option<Py<PyAny>>> {
         let (dig, jkey, addr) = {
             let j = job.borrow();
             (
@@ -434,11 +454,12 @@ impl Core {
             return Ok(None);
         }
         let region = self.code.borrow().region_of(addr).expect("a region");
-        let k = self
-            .h
-            .snapshot_key
-            .bind(py)
-            .call1((region.hash.bind(py), jkey, dig))?;
+        let helper = if legacy {
+            &self.h.legacy_snapshot_key
+        } else {
+            &self.h.snapshot_key
+        };
+        let k = helper.bind(py).call1((region.hash.bind(py), jkey, dig))?;
         Ok(Some(k.unbind()))
     }
 

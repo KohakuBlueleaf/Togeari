@@ -550,7 +550,11 @@ impl Core {
             inf.borrow_mut().store_key = key.as_ref().map(|k| k.clone_ref(py));
             if let Some(key) = key {
                 let hit = self.store_get(py, &key)?;
-                if !hit.bind(py).is(self.h.miss.bind(py)) {
+                let eligible = self.result_store_allowed(py, job, &ins)?;
+                if !eligible {
+                    inf.borrow_mut().store_key = None;
+                }
+                if eligible && !hit.bind(py).is(self.h.miss.bind(py)) {
                     self.stats.borrow_mut().store_hits += 1;
                     inf.borrow_mut().hit = true;
                     job.borrow_mut().issue(inf);
@@ -651,6 +655,10 @@ impl Core {
         let ins = inf.borrow().ins.clone();
         let b = ins.binding.as_ref().expect("a bound call");
         let region = self.code.borrow().region_of(ins.addr).expect("a region");
+        let Some(execution_hash) = self.result_execution(py, job, &ins)? else {
+            self.stats.borrow_mut().store_misses += 1;
+            return Ok(None);
+        };
         let t = match b.store {
             // By the inputs' content
             StoreMode::Content => {
@@ -661,17 +669,15 @@ impl Core {
                     self.note_weak(py, job, &weak)?;
                     return Ok(None);
                 }
-                let identity = self.h.machine.bind(py).call_method1(
-                    intern!(py, "identity"),
-                    (b.adapter.as_ref().map(|a| a.bind(py)), b.lane.as_ref().map(|l| l.bind(py))),
-                )?;
                 PyTuple::new(
                     py,
                     [
-                        region.hash.bind(py).as_any(),
+                        PyString::new(py, "togeari.result").as_any(),
+                        &2_i64.into_pyobject(py)?.into_any(),
+                        PyString::new(py, "content").as_any(),
+                        execution_hash.bind(py),
                         ins.node.bind(py).as_any(),
                         PyBytes::new(py, &dig).as_any(),
-                        &identity,
                     ],
                 )?
             }
@@ -692,7 +698,10 @@ impl Core {
                 PyTuple::new(
                     py,
                     [
-                        region.hash.bind(py).as_any(),
+                        PyString::new(py, "togeari.result").as_any(),
+                        &2_i64.into_pyobject(py)?.into_any(),
+                        PyString::new(py, "positional").as_any(),
+                        execution_hash.bind(py),
                         jkey.bind(py),
                         dig.bind(py).as_any(),
                         offset.as_any(),
@@ -703,7 +712,67 @@ impl Core {
             StoreMode::No => return Ok(None),
         };
         let d = self.h.dg.digest(t.as_any())?;
+        // Input digest hooks may change live configuration before a lookup is attempted.
+        if !self.result_store_allowed(py, job, &ins)? {
+            self.stats.borrow_mut().store_misses += 1;
+            return Ok(None);
+        }
         Ok(Some(PyBytes::new(py, &d).into_any().unbind()))
+    }
+
+    fn result_execution(
+        &self,
+        py: Python<'_>,
+        job: &JobRef,
+        ins: &crate::program::core::Instr,
+    ) -> PyResult<Option<Obj>> {
+        let region = self
+            .h
+            .code
+            .bind(py)
+            .call_method1(intern!(py, "region_of"), (ins.addr,))?;
+        let stats = PyDict::new(py);
+        {
+            let j = job.borrow();
+            for name in [
+                "execution",
+                "execution_epoch",
+                "persistence",
+                "_persistence_context",
+            ] {
+                if let Some(value) = j.stats.extra.get(name) {
+                    stats.set_item(name, value.bind(py))?;
+                }
+            }
+        }
+        let hash = self.h.result_execution.bind(py).call1((
+            region,
+            self.h.code.bind(py),
+            self.h.machine.bind(py),
+            &stats,
+        ))?;
+        for name in ["persistence", "_persistence_context"] {
+            if let Some(value) = stats.get_item(name)? {
+                job.borrow_mut()
+                    .stats
+                    .extra
+                    .insert(name.into(), value.unbind());
+            }
+        }
+        Ok(if hash.is_none() {
+            None
+        } else {
+            Some(hash.unbind())
+        })
+    }
+
+    pub fn result_store_allowed(
+        &self,
+        py: Python<'_>,
+        job: &JobRef,
+        ins: &crate::program::core::Instr,
+    ) -> PyResult<bool> {
+        Ok(self.result_execution(py, job, ins)?.is_some())
     }
 
     pub fn store_get(&self, py: Python<'_>, key: &Obj) -> PyResult<Obj> {

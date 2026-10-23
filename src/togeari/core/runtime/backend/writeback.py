@@ -262,7 +262,12 @@ class WritebackStage:
         inf.state = InfState.DONE
         inf.t_done = time.perf_counter()
         job.unfinished -= 1
-        if inf.store_key is not None and not inf.hit and ins.binding.store == "content":
+        if (
+            inf.store_key is not None
+            and not inf.hit
+            and ins.binding.store == "content"
+            and self.result_store_allowed(job, ins)
+        ):
             self.store_put(inf.store_key, value)
         if self.bus.wants("stmt.done", job.id):
             match inf:

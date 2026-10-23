@@ -10,9 +10,13 @@ A store keeps node results by key for two binding modes, and job snapshots:
 
 | Use | Key | Written |
 |---|---|---|
-| `Use(..., store="content")` | region, node, inputs digest, adapter and engine identity | when the call completes |
-| `Use(..., store="positional")` | region, job key, job inputs digest, the statement's address in its region and its order key | when the call retires |
-| `snapshot_every=N` | region, job key, job inputs digest | every N retired statements; deleted when the job ends ok |
+| `Use(..., store="content")` | v2 domain, execution hash, node and input digest | when the call completes, if execution-compatible |
+| `Use(..., store="positional")` | v2 domain, execution hash, job key/input digest, region-relative position and order key | when the call retires, if execution-compatible |
+| `snapshot_every=N` | v2 snapshot domain, program hash, job key/input digest; execution compatibility in envelope | at eligible retire boundaries after N statements; counted only after successful write, deleted on successful completion |
+
+See [Result reuse](result-reuse.md) for revision declarations, warn/strict compatibility,
+legacy-key isolation and live configuration changes. Positional reuse remains position-based,
+not a guarantee of logical invocation identity or exactly-once effects.
 
 The contract:
 
@@ -23,8 +27,12 @@ The contract:
 | `delete(key)` (optional) | remove the key; without it the machine stores `None`, which reads as a miss |
 
 `get` and `put` are called from the dispatcher thread. A store error is reported (a
-`store.error` event) and counted; a failed `get` is a miss, and a failed snapshot read starts
-the job from its beginning.
+`store.error` event) and counted. An ordinary result-cache read failure is a miss.
+A snapshot read failure is **not** permission to rerun potentially effectful work:
+it rejects that job with `SnapshotIncompatible`, as do present incompatible/corrupt
+snapshots. Only an actually absent snapshot starts fresh. See
+[execution identity](execution-identity.md#snapshot-version-2) for version-2 relative
+continuations, warn/strict compatibility, and legacy migration-needed behavior.
 
 **Trust.** A snapshot is a pickle of the job's state, and resuming unpickles what the store
 returns; unpickling runs code the data names. A store used with `snapshot_every` must therefore

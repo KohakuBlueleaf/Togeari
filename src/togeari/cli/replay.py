@@ -5,6 +5,7 @@ reference.
 import copy
 import hashlib
 import json
+import warnings
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -107,6 +108,9 @@ def replay_dir(
     replays its record. ``engine_errors``: a recorded failure of a re-executed
     node that the node itself does not raise counts as an engine failure (True)
     or a mismatch (False). ``step_budget`` bounds the reference's instructions per job.
+    Ordinary replay uses recorded outcomes, not fresh binding identity. Selected
+    reexecution warns once per run/program/region that current implementation and
+    binding revisions are unverified; outcome agreement is not identity certification.
     """
     mode = "reexecute" if reexecute else "replay"
     pure = set(reexecute or ())
@@ -138,6 +142,15 @@ def replay_dir(
                 yield Replayed(job["key"], name, verdict, job["weak"], run, weak_digests)
                 continue
             programs[program_key] = job_program(info, libs or [])
+            if reexecute:
+                warnings.warn(
+                    f"run {run}, program {program}, region {region}: selected reexecution "
+                    "implementation/binding compatibility is unverified; no current execution "
+                    "manifest or revision attestation was supplied. Recorded outcomes are "
+                    "compared, but matching results do not certify execution identity.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
         rec = JobRecord(
             job["key"],

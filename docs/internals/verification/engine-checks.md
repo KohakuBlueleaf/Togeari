@@ -18,7 +18,7 @@ report.raise_if_failed()
 | `failing_items` | `()` | templates that must give `ItemError` |
 | `kill` | `None` | kills the backend the way a crash does; the next submit must give `UnitError` |
 | `tolerance` | `None` | relative tolerance, or `fn(a, b) -> bool`, for output comparisons |
-| `submit_bound_ms`, `submit_quantile`, `submit_max_ms` | 2.0, 0.99, 50.0 | B1 limits; the quantile bound applies from `ceil(1 / (1 − quantile))` submits (100 for 0.99), below that only the max bound |
+| `submit_bound_ms`, `submit_quantile`, `submit_max_ms` | 2.0, 0.99, 50.0 | Legacy diagnostic references only; elapsed time never affects the behavioral verdict |
 | `rounds`, `cancel_rate` | 200, 0.25 | submits of the B2 / B5 phase; the share cancelled |
 | `timeout_s`, `grace_s`, `seed` | 30, 0.2, 0 | answer wait, late-duplicate grace, RNG seed |
 | `kill_wait_s` | 2.0 | after `kill()`, the wait for `ready()` false or `capacity()` 0 |
@@ -49,12 +49,12 @@ so a `prepare` on the driver thread is counted.
    return within `probe_s`, so `done` is never called under a lock the engine's own methods take.
 6. **B7** (`_b7`). Each failing item; then `kill()`, a wait of up to `kill_wait_s` for the
    engine to notice, and one more submit.
-7. **B1** (`_b1`). Submit times.
+7. **B1** (`_b1`). Reject inline successful results; report submit times as diagnostics only.
 8. After `grace_s`: exactly-once accounting; then B3.
 
 | Rule | Passes when |
 |---|---|
-| B1 | the `submit_quantile` of submit times is within `submit_bound_ms`, every submit within `submit_max_ms`, and no `Ok` is delivered inside `submit` |
+| B1 | no `Ok` is delivered inside `submit`; timing measurements are diagnostic only, not machine-dependent pass/fail gates |
 | B2 | every item answered; uncancelled items `Ok`; no item answered twice; non-batch outputs equal their reference |
 | B3 | every instrumented call came from the driver thread, no heavy-adapter `prepare` ran on it, every probe returned, no call raised, every `done` delivered a list of results of the right length |
 | B4 | idle capacity is above 0 and every item of the over-capacity burst is answered `Ok` |

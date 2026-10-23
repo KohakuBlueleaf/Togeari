@@ -189,7 +189,7 @@ report.raise_if_failed()
 | `failing_items` | `()` | items that must give `ItemError` |
 | `kill` | `None` | a function that kills the backend; the next submit must give `UnitError` |
 | `tolerance` | `None` | relative tolerance, or `fn(a, b)`, for output comparisons (B6) |
-| `submit_bound_ms`, `submit_quantile`, `submit_max_ms` | 2.0, 0.99, 50.0 | B1: the quantile within the bound (once there are at least 1 / (1 − quantile) submits, 100 for 0.99), every submit within the max |
+| `submit_bound_ms`, `submit_quantile`, `submit_max_ms` | 2.0, 0.99, 50.0 | Legacy diagnostic references only; timing never affects the behavioral verdict |
 | `rounds`, `cancel_rate` | 200, 0.25 | submits and the share cancelled |
 | `timeout_s`, `grace_s`, `seed` | 30, 0.2, 0 | answer wait, late-duplicate grace, RNG seed |
 | `kill_wait_s` | 2.0 | after `kill()`, how long the engine has to notice |

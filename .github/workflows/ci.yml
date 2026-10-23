@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# Update this immutable revision when validating a new compatible KIR pair.
+# Development CI builds it directly; releases still publish KIR before Togeari.
+env:
+  KIR_REVISION: 'a9b2a647379bf217cebf8e9a42375bc262fbd9df'
+
 jobs:
   test:
     name: Test (${{ matrix.os }}, py${{ matrix.python-version }})
@@ -21,6 +26,20 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Check out the paired KIR revision
+        uses: actions/checkout@v4
+        with:
+          repository: KohakuBlueleaf/KohakuNodeIR
+          ref: ${{ env.KIR_REVISION }}
+          path: paired-kir
+      - name: Build and install the paired KIR wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip maturin
+          git -C paired-kir rev-parse HEAD
+          (cd paired-kir && maturin build --release --out ../paired-wheels)
+          python -m pip install paired-wheels/*.whl
       - name: Build the wheel
         run: |
           python -m pip install --upgrade pip maturin
@@ -29,7 +48,9 @@ jobs:
         shell: bash
         run: |
           WHEEL=$(ls dist/*.whl)
-          pip install "${WHEEL}[dev,web,vault]"
+          python -m pip install "${WHEEL}[dev,web,vault]"
+      - name: Verify the installed pair and native extensions
+        run: python scripts/check_installed_pair.py --kir-revision ${{ env.KIR_REVISION }}
       # Parallel passes, then the serial tests (wall-clock bounds) alone on the runner
       - name: Tests (the default core, Rust)
         run: python -m pytest tests -q -m "not gpu and not serial" -n auto --maxprocesses 16 --dist worksteal

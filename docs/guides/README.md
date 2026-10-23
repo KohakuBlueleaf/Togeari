@@ -1,5 +1,7 @@
 # Guides
 
+For contributors: [paired KIR/Togeari validation and release order](paired-validation.md).
+
 | Guide | For |
 |---|---|
 | [Writing a machine](writing-a-machine.md) | programs, nodes, bindings, lanes, policies, knobs; running, submitting, inspecting, stopping |

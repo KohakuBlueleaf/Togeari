@@ -97,7 +97,8 @@ pub struct Inflight {
     pub event: Option<Obj>,
     pub event_commit: Option<Obj>,
 
-    // Timing, store and squash reuse
+    // Timing (``t_fetch`` only while a telemetry ring is attached), store and squash reuse
+    pub t_fetch: f64,
     pub t_issue: f64,
     pub t_done: f64,
     pub store_key: Option<Obj>,
@@ -138,6 +139,7 @@ impl Inflight {
             mutated: None,
             event: None,
             event_commit: None,
+            t_fetch: 0.0,
             t_issue: 0.0,
             t_done: 0.0,
             store_key: None,

@@ -15,6 +15,7 @@ use crate::contracts::hash::sha1;
 use crate::runtime::builtins::plain_f64;
 use crate::runtime::host::is_exception;
 use crate::runtime::state::Obj;
+use crate::telemetry::core::{self as tel, Put, Ring};
 
 // Queue waits kept between two `take_waits` calls
 const WAITS_MAX: usize = 20_000;
@@ -1011,6 +1012,11 @@ impl LaneCore {
         if let Some(us) = self.st.borrow_mut().state.get_mut(&unit) {
             us.submit_lat = lat;
         }
+        // A record that cannot be built is skipped: telemetry never fails the submission
+        let ring = self.tel.borrow().clone();
+        if let Some(ring) = ring {
+            let _ = self.tel_submit(py, &ring, &items[0], &name, n);
+        }
 
         // The event carries the first item's job, so job sampling applies to it, and each
         // item's (job key, address, order key)
@@ -1036,6 +1042,42 @@ impl LaneCore {
             lane.getattr(intern!(py, "emit"))?
                 .call(("lane.submit",), Some(&kw))?;
         }
+        Ok(())
+    }
+
+    /// The submit record: the first item's job and address, the batch size.
+    fn tel_submit(
+        &self,
+        py: Python<'_>,
+        ring: &Ring,
+        first: &Obj,
+        unit: &Bound<'_, PyAny>,
+        n: usize,
+    ) -> PyResult<()> {
+        let it = first.bind(py);
+        let job = it
+            .getattr(intern!(py, "ext"))?
+            .call_method1(intern!(py, "get"), (intern!(py, "job"),))?
+            .extract::<u64>()
+            .unwrap_or(0);
+        let addr = match it
+            .getattr(intern!(py, "owner"))?
+            .getattr_opt(intern!(py, "instr"))?
+        {
+            Some(i) => i
+                .getattr_opt(intern!(py, "addr"))?
+                .and_then(|a| a.extract().ok()),
+            None => None,
+        };
+        let lane = self.name.borrow().clone_ref(py);
+        let lane = lane.bind(py).to_cow()?;
+        let unit = unit.str()?;
+        let unit = unit.to_cow()?;
+        let mut p = Put::new(tel::SUBMIT, job, addr);
+        p.lane = Some(&lane);
+        p.unit = Some(&unit);
+        p.aux = n as u64;
+        ring.put(&p);
         Ok(())
     }
 

@@ -14,6 +14,11 @@ from togeari.core.lanes.native import adopt
 from togeari.core.program.bind import check_unit
 from togeari.core.program.execution import note_execution_change
 
+try:
+    from togeari import _rs
+except ImportError:
+    _rs = None
+
 
 class UnitStage:
     """Units joining and leaving lanes (mixed into ``Machine``)."""
@@ -127,6 +132,19 @@ class UnitStage:
         # The native core runs its lanes' queues and issue logic too
         if self.core == "rust":
             adopt(lane)
+        if self.telemetry is not None:
+            lane.set_telemetry(self.telemetry)
+
+    def set_telemetry(self, ring: Any) -> None:
+        """Attach a telemetry ring (None: detach) to the dispatcher and every lane; on the
+        dispatcher thread, or while the machine is stopped. The native core takes a
+        ``togeari._rs.TelemetryRing``; the Python core either ring."""
+        if self.core == "rust" and ring is not None and not isinstance(ring, _rs.TelemetryRing):
+            raise TypeError("the native core writes a togeari._rs.TelemetryRing")
+        self.telemetry = ring
+        self.dispatcher.set_telemetry(ring)
+        for lane in self.lanes:
+            lane.set_telemetry(ring)
 
     def lane_event(self, lane_name: str, kind: str, **fields: Any) -> None:
         """Lane events (with the lane's name) go to the bus; unit state changes also to

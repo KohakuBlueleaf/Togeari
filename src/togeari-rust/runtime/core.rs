@@ -13,6 +13,7 @@ use pyo3::types::{PyDict, PySet};
 
 use crate::lanes::python::PyLane;
 use crate::program::core::Code;
+use crate::telemetry::core::{Put, Ring};
 
 use super::gate::Gate;
 use super::host::Host;
@@ -134,6 +135,9 @@ pub struct Core {
     pub offer_s: Cell<Option<f64>>,
     pub last_offer: Cell<f64>,
     pub offered: Cell<bool>,
+
+    // The telemetry ring, when one is attached
+    pub tel: RefCell<Option<Arc<Ring>>>,
 }
 
 /// A lane object the core met, and its native state when the machine adopted it.
@@ -191,7 +195,28 @@ impl Core {
             offer_s: Cell::new(None),
             last_offer: Cell::new(0.0),
             offered: Cell::new(false),
+            tel: RefCell::new(None),
         })
+    }
+
+    /// Write a telemetry record when a ring is attached (one branch when none is).
+    pub fn tel(&self, p: &Put<'_>) {
+        if let Some(r) = self.tel.borrow().as_ref() {
+            r.put(p);
+        }
+    }
+
+    pub fn tel_on(&self) -> bool {
+        self.tel.borrow().is_some()
+    }
+
+    /// A statement's record with its wait from fetch to issue; none for a statement fetched
+    /// before the ring was attached (``t_fetch`` 0).
+    pub fn tel_wait(&self, kind: u8, inf: &InfRef) -> Put<'static> {
+        let x = inf.borrow();
+        let mut p = Put::new(kind, x.job_id, Some(x.ins.addr));
+        p.queued_s = (x.t_fetch > 0.0).then(|| x.t_issue - x.t_fetch);
+        p
     }
 
     /// Return once no GIL-free region runs (a thread other than the dispatcher's reads the core

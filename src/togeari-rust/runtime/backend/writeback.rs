@@ -16,6 +16,7 @@ use crate::runtime::state::slot::hold;
 use crate::runtime::state::{
     deref, InfRef, InfState, Obj, SlotRef, SlotState, StrandState, Waiter,
 };
+use crate::telemetry::core::{self as tel, Put};
 
 impl Core {
     // ------------------------------------------------------------ slots and waking
@@ -35,6 +36,11 @@ impl Core {
                     job.borrow_mut().mark_runnable(&st);
                 }
                 self.mark_dirty(jid);
+                if self.tel_on() {
+                    let mut p = Put::new(tel::RESUME, jid, Some(pc));
+                    p.aux = sid;
+                    self.tel(&p);
+                }
                 self.note_strand(py, "strand.resume", jid, sid, pc, None)
             }
             Waiter::Inf(inf) => {
@@ -211,6 +217,65 @@ impl Core {
     }
 
     // ------------------------------------------------------------ completions
+    /// The result record: the lane wait (enqueued to sent) and the service time (sent to now).
+    fn tel_result(
+        &self,
+        py: Python<'_>,
+        item: &Bound<'_, PyAny>,
+        result: &Bound<'_, PyAny>,
+        own: &Owner,
+        jid: u64,
+    ) -> PyResult<()> {
+        let ext = item.getattr(intern!(py, "ext"))?.cast_into::<PyDict>()?;
+        let num = |k: &Bound<'_, PyString>| -> PyResult<Option<f64>> {
+            match ext.get_item(k)? {
+                Some(v) if !v.is_none() => Ok(v.extract::<f64>().ok()),
+                _ => Ok(None),
+            }
+        };
+        let sent = num(intern!(py, "sent"))?.filter(|s| *s != 0.0);
+        let enqueued = num(intern!(py, "enqueued"))?;
+
+        // Names borrowed from the Python strings for the call (no copy)
+        let unit = match ext.get_item(intern!(py, "unit"))? {
+            Some(u) if !u.is_none() => Some(u.str()?),
+            _ => None,
+        };
+        let unit = unit.as_ref().map(|u| u.to_cow()).transpose()?;
+        let lane = own.lane.bind(py);
+        let lane = if lane.is_none() {
+            None
+        } else {
+            Some(lane.str()?)
+        };
+        let lane = lane.as_ref().map(|l| l.to_cow()).transpose()?;
+        let addr: i64 = own.instr.bind(py).getattr(intern!(py, "addr"))?.extract()?;
+        let ty = result.get_type();
+        let h = &self.h;
+        let status = if ty.is(h.ok.bind(py)) {
+            0
+        } else if ty.is(h.item_error.bind(py)) {
+            1
+        } else if ty.is(h.unit_error.bind(py)) {
+            2
+        } else if ty.is(h.cancelled.bind(py)) {
+            3
+        } else {
+            4
+        };
+        let mut p = Put::new(tel::RESULT, jid, Some(addr));
+        p.lane = lane.as_deref();
+        p.unit = unit.as_deref();
+        p.queued_s = sent.zip(enqueued).map(|(s, e)| s - e);
+        p.service_s = match sent {
+            Some(s) => Some(self.now(py)? - s),
+            None => None,
+        };
+        p.status = status;
+        self.tel(&p);
+        Ok(())
+    }
+
     pub fn deliver(
         &self,
         py: Python<'_>,
@@ -225,7 +290,11 @@ impl Core {
         let own = own.get();
         let jid = own.job_id;
 
-        // The result event, with queue and service times
+        // The result record (a record that cannot be built is skipped: telemetry never fails
+        // the delivery) and event, with queue and service times
+        if self.tel_on() {
+            let _ = self.tel_result(py, item, result, own, jid);
+        }
         if self.wants(py, "lane.result", Some(jid))? {
             let ext = item.getattr(intern!(py, "ext"))?;
             let sent = ext.call_method1(intern!(py, "get"), ("sent",))?;

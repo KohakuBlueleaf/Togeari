@@ -22,14 +22,20 @@ def plain(v: Any) -> Any:
 
 
 def describe(obj: Any) -> Any:
-    """An object's type with its primitive attributes (policies, adapters, stores)."""
+    """An object's type with its primitive attributes (policies, adapters, stores); an
+    attribute holding a named object (a lane, a unit) shows as that name."""
     if obj is None or isinstance(obj, PRIMITIVES):
         return obj
     attrs = getattr(obj, "__dict__", {})
-    return {
-        "type": type(obj).__name__,
-        **{k: v for k, v in attrs.items() if not k.startswith("_") and isinstance(v, PRIMITIVES)},
-    }
+    out = {"type": type(obj).__name__}
+    for k, v in attrs.items():
+        if k.startswith("_"):
+            continue
+        if isinstance(v, PRIMITIVES):
+            out[k] = v
+        elif isinstance(getattr(v, "name", None), str):
+            out[k] = v.name
+    return out
 
 
 def json_default(v: Any) -> Any:

@@ -66,9 +66,9 @@ def _level_takes(level: str, core: bool, sampled: bool) -> bool:
 class _Sub:
     """One subscriber: its queue, its thread, and the level it receives now."""
 
-    def __init__(self, plugin: Any):
+    def __init__(self, plugin: Any, level: str | None = None):
         self.plugin = plugin
-        self.level = getattr(plugin, "events", "all") or "all"
+        self.level = level or getattr(plugin, "events", "all") or "all"
         self.current = self.level
         self.overflow = getattr(plugin, "overflow", "drop")
         size = getattr(plugin, "queue_size", 10_000)
@@ -228,9 +228,14 @@ class Bus:
         self.acting = sum(fn not in self.passive for fn in self._registered())
 
     # ------------------------------------------------------------ subscribers
-    def subscribe(self, plugin: Any) -> None:
-        if id(plugin) not in self.subs:
-            self.subs[id(plugin)] = _Sub(plugin)
+    def subscribe(self, plugin: Any, level: str | None = None) -> None:
+        """Subscribe ``plugin``'s ``on_event`` at ``level`` (None: its ``events``); a plugin
+        already subscribed moves to ``level`` when one is given."""
+        sub = self.subs.get(id(plugin))
+        if sub is None:
+            self.subs[id(plugin)] = _Sub(plugin, level)
+        elif level is not None:
+            sub.level = sub.current = level
 
     def unsubscribe(self, plugin: Any, wait: bool = True, deadline: float | None = None) -> None:
         """End ``plugin``'s subscription. ``wait``: deliver its queued events and join its
@@ -243,6 +248,7 @@ class Bus:
             sub.close(deadline)
         else:
             sub.leave()
+            self.leaving = [s for s in self.leaving if s.thread.is_alive()]
             self.leaving.append(sub)
 
         # Its drops stay counted

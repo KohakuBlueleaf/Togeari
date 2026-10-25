@@ -7,8 +7,13 @@ Routes:
   (argument values are parsed as JSON, else kept as strings);
 - ``POST /commands/<name>`` with a JSON object body: a command applied by the
   dispatcher, its result as JSON;
-- ``GET /events``: Server-Sent Events, one ``event: <kind>`` / ``data: <json>``
-  message per bus event the plugin receives.
+- ``GET /events?kinds=a,b``: Server-Sent Events, one ``event: <kind>`` /
+  ``data: <json>`` message per bus event of those kinds (every kind without
+  ``kinds``).
+
+The plugin is subscribed to the bus only while a stream is open: at level
+"counters" when every open stream asks only for always-delivered kinds, else
+"all". With no stream open it costs the dispatcher nothing.
 
 Access: the ``Host`` header must name the server (``localhost``, a loopback
 address, the bound host, or one of ``allowed_hosts``) with its port; an
@@ -162,7 +167,9 @@ class _Handler(BaseHTTPRequestHandler):
                 args = {k: _arg(v[-1]) for k, v in query.items() if k != "token"}
                 self._answer(ctx.query_names(), ctx.inspect, name, args)
             case ["events"]:
-                self._stream()
+                given = (query.get("kinds") or [None])[-1]
+                kinds = {k for k in given.split(",") if k} if given else None
+                self._stream(kinds)
             case _:
                 self._send(404, {"error": f"no route {url.path}"})
 
@@ -204,14 +211,14 @@ class _Handler(BaseHTTPRequestHandler):
             case _:
                 self._send(404, {"error": f"no route {self.path}"})
 
-    def _stream(self) -> None:
+    def _stream(self, kinds: set[str] | None) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "close")
         self.end_headers()
         self.close_connection = True
-        q = self.plugin.open_stream()
+        q = self.plugin.open_stream(kinds)
         try:
             while not self.plugin.closing.is_set() and not self.plugin.ended(q):
                 try:
@@ -240,7 +247,7 @@ class Inspector(BasePlugin):
 
     name = "inspector"
     priority = 90
-    events = "all"
+    events = None
 
     def __init__(
         self,
@@ -264,6 +271,8 @@ class Inspector(BasePlugin):
         self.thread: threading.Thread | None = None
         self.closing = threading.Event()
         self.streams: list[queue.Queue] = []
+        # Each open stream's kinds (None: every kind), by id of its queue
+        self._kinds: dict[int, set[str] | None] = {}
         self._ending: set[int] = set()
         self.dropped = 0
         self._lock = threading.Lock()
@@ -347,17 +356,34 @@ class Inspector(BasePlugin):
         return {"token_required": token is not None}
 
     # ------------------------------------------------------------ event streams
-    def open_stream(self) -> queue.Queue:
+    def open_stream(self, kinds: set[str] | None = None) -> queue.Queue:
+        """A queue of the events of ``kinds`` (None: every kind); the subscription follows."""
         q: queue.Queue = queue.Queue(maxsize=self.stream_queue)
         with self._lock:
             self.streams.append(q)
+            self._kinds[id(q)] = kinds
+            self._subscribe()
         return q
 
     def close_stream(self, q: queue.Queue) -> None:
         with self._lock:
             if q in self.streams:
                 self.streams.remove(q)
+            self._kinds.pop(id(q), None)
             self._ending.discard(id(q))
+            self._subscribe()
+
+    def _subscribe(self) -> None:
+        """The subscription the open streams need (under the lock): none, "counters" when they
+        ask only for always-delivered kinds, else "all"."""
+        if self.ctx is None:
+            return
+        if not self.streams:
+            self.ctx.unsubscribe()
+        elif any(k is None for k in self._kinds.values()):
+            self.ctx.subscribe(kinds=None)
+        else:
+            self.ctx.subscribe(kinds=set().union(*self._kinds.values()))
 
     def ended(self, q: queue.Queue) -> bool:
         with self._lock:
@@ -365,9 +391,11 @@ class Inspector(BasePlugin):
 
     def on_event(self, ev: Any) -> None:
         with self._lock:
-            streams = list(self.streams)
+            streams = [(q, self._kinds.get(id(q))) for q in self.streams]
         full = 0
-        for q in streams:
+        for q, kinds in streams:
+            if kinds is not None and ev.kind not in kinds:
+                continue
             try:
                 q.put_nowait(ev)
             except queue.Full:

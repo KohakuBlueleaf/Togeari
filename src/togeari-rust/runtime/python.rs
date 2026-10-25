@@ -13,6 +13,7 @@ use pyo3::{PyTraverseError, PyVisit};
 use super::core::Core;
 use super::inbox::Inbox;
 use super::state::{effective, InfRef, JobRef, Key, Obj, SlotState};
+use crate::telemetry::python::TelemetryRing;
 
 /// The core, owned by its dispatcher instance. Only the dispatcher thread runs it; another
 /// thread reads it with the GIL held and outside any GIL-free region (``outside_region``).
@@ -584,6 +585,12 @@ impl PyCore {
     fn set_clock(&self, py: Python<'_>, clock: Obj) {
         self.c().outside_region(py);
         *self.c().clock.borrow_mut() = clock;
+    }
+
+    /// The telemetry ring the core writes (None: none).
+    fn set_telemetry(&self, py: Python<'_>, ring: Option<PyRef<'_, TelemetryRing>>) {
+        self.c().outside_region(py);
+        *self.c().tel.borrow_mut() = ring.map(|r| r.ring.clone());
     }
 
     fn begin_checkpoint(

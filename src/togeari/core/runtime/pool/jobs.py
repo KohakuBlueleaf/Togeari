@@ -8,6 +8,7 @@ from typing import Any
 
 from togeari.core.contracts.digest import digest_with_weak
 from togeari.core.contracts.io import JobRecord, SourceItem
+from togeari.core.contracts.telemetry import ADMIT, END
 from togeari.core.contracts.views import PoolView
 from togeari.core.plugin.base import PluginBlockError
 from togeari.core.program.execution import observe_execution, warn_unverified
@@ -293,6 +294,8 @@ class JobsStage:
         self.dirty[job.id] = None
         self.last_started = job
         self.bus.sample(job.id, job.sampled)
+        if self.ring is not None:
+            self.ring.put(ADMIT, job.id, entry.addr, None, None, None, None, 0, 0)
         if self.bus.wants("job.admit", job.id):
             self.bus.emit("job.admit", job=job.id, key=job.key, entry=name)
         self.plugins.notify(
@@ -380,7 +383,18 @@ class JobsStage:
         if snap is not None:
             self.store_delete(snap)
 
-        # Event, plugins, then the handle or the sink
+        # Telemetry, event, plugins, then the handle or the sink
+        if self.ring is not None:
+            match job.failure:
+                case None:
+                    status = 0
+                case {"kind": "Cancelled"}:
+                    status = 2
+                case _:
+                    status = 1
+            self.ring.put(
+                END, job.id, job.entry.addr, None, None, None, stats["seconds"], 0, status
+            )
         if self.bus.wants("job.end", job.id):
             self.bus.emit(
                 "job.end",

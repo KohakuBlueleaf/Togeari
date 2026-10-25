@@ -45,6 +45,82 @@ def test_sim_engines_keep_every_rule(make):
     assert b6.ok and b6.detail.startswith("n/a") is (make is not SimBatch)
 
 
+@pytest.mark.serial
+@pytest.mark.parametrize("make", [SimCall, SimBatch, SimStream], ids=["call", "batch", "stream"])
+def test_sim_engines_with_slots_keep_every_rule(make):
+    engine = make(latency_ms=0.5, seed=3, slots=2)
+    report = check_engine(
+        lambda: engine, samples(), failing_items=failing(), kill=lambda: outage(engine)
+    )
+    assert report.ok, str(report)
+
+
+def test_slots_hold_the_rest_inside_the_engine_in_order():
+    # Delays far longer than the test: nothing finishes on its own
+    engine = SimStream(latency_ms=60_000.0, tail=0.0, slots=2)
+    engine.start()
+    got: list[tuple[int, list]] = []
+    started = lambda: [t for t, e in engine.held.items() if e[2] is not None]  # noqa: E731
+    try:
+        tickets = [engine.submit(item, lambda t, r: got.append((t, r))) for item in samples(5)]
+
+        # Two run, three wait in the engine; its capacity counts both
+        assert (engine.load().running, engine.load().waiting) == (2, 3)
+        assert engine.capacity() == 256 - 5
+        assert started() == tickets[:2]
+
+        # A waiting submission cancels at once, without running
+        engine.cancel(tickets[4])
+        assert [(t, type(r[0]).__name__) for t, r in got] == [(tickets[4], "Cancelled")]
+        assert (engine.load().running, engine.load().waiting) == (2, 2)
+
+        # A running one leaving starts the next waiting one, in submission order
+        engine.cancel(tickets[0])
+        assert sorted(started()) == [tickets[1], tickets[2]]
+        engine.cancel(tickets[1])
+        assert sorted(started()) == [tickets[2], tickets[3]]
+        assert (engine.load().running, engine.load().waiting) == (2, 0)
+    finally:
+        engine.stop()
+
+    # Stop answers the two still running; every submission was answered exactly once
+    assert sorted(t for t, _ in got) == sorted(tickets)
+
+
+def test_slots_answer_every_item_once():
+    engine = SimStream(latency_ms=2.0, tail=0.0, slots=2)
+    engine.start()
+    got = []
+    lock = threading.Lock()
+    all_done = threading.Event()
+
+    def done(t, results):
+        with lock:
+            got.append((t, results))
+            if len(got) == 6:
+                all_done.set()
+
+    try:
+        tickets = [engine.submit(item, done) for item in samples(6)]
+        assert all_done.wait(10.0)
+        assert sorted(t for t, _ in got) == sorted(tickets)
+        assert sorted(r[0].value for _, r in got) == [0, 3, 6, 9, 12, 15]
+        assert (engine.load().running, engine.load().waiting) == (0, 0)
+    finally:
+        engine.stop()
+
+
+def test_stop_answers_running_and_waiting_submissions():
+    engine = SimCall(latency_ms=10_000.0, tail=0.0, slots=1)
+    engine.start()
+    got = []
+    for item in samples(3):
+        engine.submit(item, lambda t, r: got.append(r))
+    engine.stop()
+    assert len(got) == 3 and all(isinstance(r[0], UnitError) for r in got)
+    assert (engine.load().running, engine.load().waiting) == (0, 0)
+
+
 class _Doubler(EngineBase):
     """Answers every item twice from a thread: breaks B2."""
 

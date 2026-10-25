@@ -308,6 +308,14 @@ class NativeLane(Lane):
     def clock(self, clock: Any) -> None:
         self._native.clock = clock
 
+    def set_telemetry(self, ring: Any) -> None:
+        """The telemetry ring each submission is written to: a ``togeari._rs.TelemetryRing``
+        (None: none)."""
+        if ring is not None and not isinstance(ring, _rs.TelemetryRing):
+            raise TypeError("a native lane writes a togeari._rs.TelemetryRing")
+        self.telemetry = ring
+        self._native.set_telemetry(ring)
+
 
 for _name in INTERNAL:
     setattr(NativeLane, _name, _internal(_name))

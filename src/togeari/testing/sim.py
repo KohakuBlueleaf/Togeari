@@ -4,8 +4,12 @@ A simulated engine runs the node's Python function (``PythonAdapter`` payload)
 after a simulated delay on its own timer thread. Delays are heavy-tailed and
 differ by input; a seed shuffles completion order; ``item_error_rate`` injects
 ``ItemError``s; ``outages`` (seconds after start) block the whole unit.
+``slots`` caps the items running at once, as a serving engine's scheduler does: a
+submission that does not fit waits inside the engine (``load().waiting``) and starts,
+its delay counted from then, when running items leave room.
 """
 
+import collections
 import hashlib
 import heapq
 import itertools
@@ -98,8 +102,12 @@ class SimEngine(EngineBase):
         outages: list[tuple[float, float]] | None = None,
         speed: float = 1.0,
         samples_ms: list[float] | None = None,
+        slots: int | None = None,
     ):
         super().__init__(name or f"sim-{kind}")
+        if slots is not None and slots < 1:
+            raise ValueError(f"slots must be at least 1, not {slots}")
+        self.slots = slots
         self.kind = kind
         self.latency = latency_ms / 1000.0
         self.tail = tail
@@ -124,6 +132,13 @@ class SimEngine(EngineBase):
         self.tickets: dict[int, tuple[list, Any]] = {}
         self.counts = {"submits": 0, "items": 0, "errors": 0, "outage_rejects": 0}
 
+        # With ``slots``: every submission by its own ticket as ``[items, done, clock timer
+        # or None while it waits]``, the waiting ones in order, and their item count
+        self.held: dict[int, list] = {}
+        self.queued: collections.deque[int] = collections.deque()
+        self.waiting = 0
+        self.held_seq = itertools.count()
+
     # ------------------------------------------------------------ lifecycle
     def start(self) -> None:
         if self.clock is None:
@@ -138,10 +153,16 @@ class SimEngine(EngineBase):
         clock, self.clock = self.clock, None
         with self.lock:
             pending, self.tickets = self.tickets, {}
-            self.inflight = 0
+            held, self.held = self.held, {}
+            self.queued.clear()
+            self.inflight = self.waiting = 0
         clock.stop()
         for t, (items, done) in pending.items():
             clock.drop(t)
+            done(t, [UnitError(EngineStopped(f"{self.name} stopped"))] * len(items))
+        for t, (items, done, timer) in held.items():
+            if timer is not None:
+                clock.drop(timer)
             done(t, [UnitError(EngineStopped(f"{self.name} stopped"))] * len(items))
 
     def in_outage(self) -> bool:
@@ -158,12 +179,24 @@ class SimEngine(EngineBase):
         if self.in_outage():
             return 1
         with self.lock:
-            free = self.cap - self.inflight
+            free = self.cap - self.inflight - self.waiting
         return free if self.kind != "stream" else max(free, 0)
 
     def load(self) -> Load:
         with self.lock:
-            return Load(running=self.inflight, waiting=0)
+            return Load(running=self.inflight, waiting=self.waiting)
+
+    def metrics(self) -> dict:
+        """In flight, and submits, items and injected errors so far (thread-safe)."""
+        with self.lock:
+            c = self.counts
+            return {
+                "inflight": (float(self.inflight), "items"),
+                "submits": (float(c["submits"]), "submits"),
+                "items": (float(c["items"]), "items"),
+                "errors": (float(c["errors"]), "items"),
+                "outage_rejects": (float(c["outage_rejects"]), "submits"),
+            }
 
     # ------------------------------------------------------------ work
     def delay(self, item: Any) -> float:
@@ -207,6 +240,8 @@ class SimEngine(EngineBase):
             err = UnitError(SimOutage(f"{self.name} is down"))
             done(None, [err] * len(items))
             return -1
+        if self.slots is not None:
+            return self._submit_held(items, done)
 
         due = time.monotonic() + max(self.delay(it) for it in items)
         ticket_box: dict = {}
@@ -234,8 +269,71 @@ class SimEngine(EngineBase):
             return -1
         return t
 
+    # ------------------------------------------------------------ slots: the engine's own queue
+    def _size(self, items: list) -> int:
+        return 1 if self.kind == "batch" else len(items)
+
+    def _submit_held(self, items: list, done: Any) -> int:
+        with self.lock:
+            if self.clock is None:
+                t = None
+            else:
+                t = next(self.held_seq)
+                self.held[t] = [items, done, None]
+                self.queued.append(t)
+                self.waiting += self._size(items)
+                self._start_fitting()
+        if t is None:
+            done(None, [UnitError(EngineStopped(f"{self.name} stopped"))] * len(items))
+            return -1
+        return t
+
+    def _start_fitting(self) -> None:
+        """Start waiting submissions in order while they fit the slots (one always runs when
+        none does); the lock is held."""
+        while self.queued:
+            items = self.held[self.queued[0]][0]
+            n = self._size(items)
+            if self.inflight and self.inflight + n > self.slots:
+                return
+            t = self.queued.popleft()
+            self.waiting -= n
+            self.inflight += n
+            due = time.monotonic() + max(self.delay(it) for it in items)
+            self.held[t][2] = self.clock.at(due, lambda t=t: self._fire_held(t))
+
+    def _fire_held(self, t: int) -> None:
+        with self.lock:
+            entry = self.held.pop(t, None)
+            if entry is None:
+                return
+            self.inflight -= self._size(entry[0])
+            if self.clock is not None:
+                self._start_fitting()
+        entry[1](t, [self.run_one(it) for it in entry[0]])
+
+    def _cancel_held(self, t: int) -> None:
+        with self.lock:
+            entry = self.held.get(t)
+            if entry is None:
+                return
+            items, done, timer = entry
+            if timer is None:
+                self.queued.remove(t)
+                self.waiting -= self._size(items)
+            elif self.clock.drop(timer):
+                self.inflight -= self._size(items)
+            else:
+                return
+            del self.held[t]
+            self._start_fitting()
+        done(t, [Cancelled()] * len(items))
+
     def cancel(self, ticket: Any) -> None:
         if self.clock is None or ticket is None or ticket < 0:
+            return
+        if self.slots is not None:
+            self._cancel_held(ticket)
             return
         if self.clock.drop(ticket):
             with self.lock:

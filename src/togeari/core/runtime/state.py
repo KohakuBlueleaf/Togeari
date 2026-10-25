@@ -363,6 +363,7 @@ class Inflight:
         "result",
         "kept",
         "mutated",
+        "t_fetch",
         "t_issue",
         "t_done",
         "store_key",
@@ -405,7 +406,8 @@ class Inflight:
         self.kept = None
         self.mutated = None
 
-        # Timing, store and squash reuse
+        # Timing (``t_fetch`` only while a telemetry ring is attached), store and squash reuse
+        self.t_fetch = 0.0
         self.t_issue = 0.0
         self.t_done = 0.0
         self.store_key = None

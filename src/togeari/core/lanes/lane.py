@@ -100,8 +100,10 @@ class Lane(Pump, Health):
         self.retry = retry or Retry()
         self.timeout_s = timeout_s
         self.lane_dead_s = lane_dead_s
-        # The clock of the times the lane reads itself (monotonic seconds, the dispatcher's)
+        # The clock of the times the lane reads itself (monotonic seconds, the dispatcher's);
+        # the telemetry ring submissions are written to, when one is attached
         self.clock = time.monotonic
+        self.telemetry: Any = None
 
         # Queues: the shared one and one per unit (early forming)
         self._former = _checked(former, Former, "former")
@@ -187,6 +189,10 @@ class Lane(Pump, Health):
     @select.setter
     def select(self, select: Any) -> None:
         self._select = _checked(select, Selector, "select")
+
+    def set_telemetry(self, ring: Any) -> None:
+        """The telemetry ring each submission is written to (None: none)."""
+        self.telemetry = ring
 
     @property
     def queue(self) -> list:

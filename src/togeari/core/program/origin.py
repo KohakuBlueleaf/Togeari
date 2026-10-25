@@ -30,13 +30,15 @@ def origin_from_dict(data: dict) -> Origin:
     )
 
 
-def _statements(body: list[Stmt], prefix: str = "body") -> Iterator[tuple[str, Stmt]]:
+def statements(body: list[Stmt], prefix: str = "body") -> Iterator[tuple[str, Stmt]]:
+    """Every statement with its structural path (``body/2/body/0``), the ``path`` of its node
+    in ``kohakunode.graph.to_graph``."""
     for index, stmt in enumerate(body):
         path = f"{prefix}/{index}"
         yield path, stmt
         for child_index, block in enumerate(children(stmt)):
             field = "body" if child_index == 0 else "handler"
-            yield from _statements(block, f"{path}/{field}")
+            yield from statements(block, f"{path}/{field}")
 
 
 def program_origins(program: Program) -> dict:
@@ -45,7 +47,7 @@ def program_origins(program: Program) -> dict:
         "version": 1,
         "statements": {
             path: origin_dict(stmt.origin)
-            for path, stmt in _statements(program.body)
+            for path, stmt in statements(program.body)
             if stmt.origin is not None
         },
     }
@@ -55,10 +57,10 @@ def restore_origins(program: Program, sidecar: dict) -> None:
     """Restore an archived sidecar onto the same checked/lowered program structure."""
     if sidecar.get("version") != 1:
         raise ValueError(f"unsupported origin sidecar version {sidecar.get('version')!r}")
-    statements = dict(_statements(program.body))
-    for stmt in statements.values():
+    by_path = dict(statements(program.body))
+    for stmt in by_path.values():
         stmt.origin = None
     for path, data in sidecar["statements"].items():
-        if path not in statements:
+        if path not in by_path:
             raise ValueError(f"origin path {path!r} is absent from the rebuilt program")
-        statements[path].origin = origin_from_dict(data)
+        by_path[path].origin = origin_from_dict(data)

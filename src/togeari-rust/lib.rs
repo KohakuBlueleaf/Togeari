@@ -8,6 +8,7 @@ mod info;
 mod lanes;
 mod program;
 mod runtime;
+mod telemetry;
 
 #[pymodule(gil_used = true)]
 fn _rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -15,5 +16,6 @@ fn _rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     contracts::python::register(m)?;
     runtime::python::register(m)?;
     lanes::python::register(m)?;
+    telemetry::python::register(m)?;
     Ok(())
 }

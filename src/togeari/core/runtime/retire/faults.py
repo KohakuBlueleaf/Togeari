@@ -5,6 +5,7 @@ Completed calls the squash drops keep their results for their refetch (``squash_
 
 from togeari.core.contracts.digest import digest_with_weak
 from togeari.core.contracts.results import Ok
+from togeari.core.contracts.telemetry import FAULT
 from togeari.core.program.decode.instr import Op
 from togeari.core.runtime.backend.persistence import memo_execution
 from togeari.core.runtime.identity import record_invocation
@@ -211,6 +212,9 @@ class FaultStage:
         job.stats["fault_origin"] = origin
         info = {"job": job.id, "key": job.key, "origin": origin, **err, **policy_fields}
         self.plugins.notify("on_fault", info, where=self.where(job))
+        if self.ring is not None:
+            squashed = max(0, job.stats["squashed"])
+            self.ring.put(FAULT, job.id, x.instr.addr, None, None, None, None, squashed, 0)
         if self.bus.wants("fault.taken", job.id):
             self.bus.emit(
                 "fault.taken",

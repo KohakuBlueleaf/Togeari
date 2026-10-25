@@ -9,6 +9,7 @@ from typing import Any
 
 from togeari.core.contracts.resources import EstimateError
 from togeari.core.contracts.results import ItemError, UnitError
+from togeari.core.contracts.telemetry import SUBMIT
 from togeari.core.lanes.deadline import arm
 from togeari.core.lanes.health import State
 from togeari.core.lanes.resources import post_transform
@@ -296,9 +297,20 @@ class Pump:
         except Exception as exc:  # noqa: BLE001
             self.on_done(self, sub, [UnitError(exc)] * len(items))
         st.submit_lat = time.perf_counter() - t0
+        jid = items[0].ext.get("job")
+        # A record that cannot be built is skipped: telemetry never fails the submission (a
+        # plain try: ``contextlib.suppress`` builds an object per call)
+        if self.telemetry is not None:
+            addr = getattr(getattr(items[0].owner, "instr", None), "addr", None)
+            try:  # noqa: SIM105
+                self.telemetry.put(
+                    SUBMIT, jid or 0, addr, self.name, unit.name, None, None, len(items), 0
+                )
+            except (TypeError, ValueError, OverflowError):
+                pass
+
         # The event carries the first item's job, so job sampling applies to it, and each item's
         # (job key, address, order key)
-        jid = items[0].ext.get("job")
         if self.wants("lane.submit", jid):
             self.emit(
                 "lane.submit",

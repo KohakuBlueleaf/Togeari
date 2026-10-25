@@ -10,6 +10,7 @@ from kohakunode.events import Event
 from togeari.core.contracts.digest import digest, digest_with_weak
 from togeari.core.contracts.io import MISS, copy_value
 from togeari.core.contracts.results import ItemError, Ok
+from togeari.core.contracts.telemetry import ENQUEUE, HIT, INLINE
 from togeari.core.contracts.views import ReadyView
 from togeari.core.contracts.workitem import WorkItem
 from togeari.core.runtime.backend.persistence import result_execution
@@ -20,6 +21,11 @@ log = logging.getLogger("togeari.dispatcher")
 
 # Inline timing: the first median check, then one every this many samples
 _FIRST_CHECK, _CHECK_EVERY = 32, 1024
+
+
+def wait_of(inf: Inflight) -> float | None:
+    """Fetch-to-issue wait; none for a statement fetched before the ring was attached."""
+    return inf.t_issue - inf.t_fetch if inf.t_fetch else None
 
 
 class Gate:
@@ -40,6 +46,8 @@ class IssueStage:
         job.unfinished += 1
         job.stats["calls"] += 1
         self.stats["calls"] += 1
+        if self.ring is not None:
+            inf.t_fetch = time.perf_counter()
         if self.bus.wants("stmt.fetch", job.id):
             self.emit_stmt("stmt.fetch", inf)
         self.check(inf)
@@ -224,7 +232,11 @@ class IssueStage:
                 res: Any = Ok(b.fn(**inf.values), True)
             except Exception as exc:  # noqa: BLE001
                 res = ItemError(exc)
-            self.note_inline(ins.node, time.perf_counter() - t0, b.warn_us)
+            dt = time.perf_counter() - t0
+            if self.ring is not None:
+                err = int(isinstance(res, ItemError))
+                self.ring.put(INLINE, inf.job.id, ins.addr, None, None, wait_of(inf), dt, 0, err)
+            self.note_inline(ins.node, dt, b.warn_us)
             inf.job.issue(inf)
             self.complete(inf, res, None)
             return
@@ -239,6 +251,9 @@ class IssueStage:
                     inf.store_key = None
                 if hit is not MISS and eligible:
                     self.stats["store_hits"] += 1
+                    if self.ring is not None:
+                        ring_wait = wait_of(inf)
+                        self.ring.put(HIT, inf.job.id, ins.addr, None, None, ring_wait, None, 0, 0)
                     inf.hit = True
                     inf.resolution = "content_hit" if b.store == "content" else "positional_hit"
                     inf.job.issue(inf)
@@ -268,8 +283,12 @@ class IssueStage:
             item.ext["ordered_once"] = True
         inf.item = item
         inf.job.issue(inf)
-        b.lane.enqueue(item, now)
         jid = inf.job.id
+
+        # The record before the enqueue, so it precedes the item's submit in the ring
+        if self.ring is not None:
+            self.ring.put(ENQUEUE, jid, ins.addr, b.lane.name, None, wait_of(inf), None, 0, 0)
+        b.lane.enqueue(item, now)
         if self.bus.wants("stmt.issue", jid):
             self.emit_stmt("stmt.issue", inf)
         if self.bus.wants("lane.enqueue", jid):

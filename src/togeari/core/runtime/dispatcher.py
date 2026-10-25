@@ -41,6 +41,8 @@ class Dispatcher(
         self.event_rng = random.Random(seed + 1)
         # The scheduling clock (seconds, monotonic): deadlines, timers, batch waits
         self.clock = time.monotonic
+        # The telemetry ring (``togeari.core.observe.ring``), when one is attached
+        self.ring: Any = None
 
         # Job pool and scheduling sets; jobs to fetch for, in the order they became dirty
         self.jobs: dict[int, Job] = {}
@@ -99,6 +101,10 @@ class Dispatcher(
 
     def on_thread(self) -> bool:
         return self.thread is not None and threading.current_thread() is self.thread
+
+    def set_telemetry(self, ring: Any) -> None:
+        """The telemetry ring the dispatcher writes (None: none)."""
+        self.ring = ring
 
 
 __all__ = ["Dispatcher", "DispatcherDied", "JobHandle", "Reply", "UndeclaredMutation"]

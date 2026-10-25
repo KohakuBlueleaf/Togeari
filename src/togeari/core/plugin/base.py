@@ -22,10 +22,30 @@ import threading
 import time
 from typing import Any
 
+from togeari.core.contracts.telemetry import DEFAULT_RECORDS
+from togeari.core.observe.bus import CORE_EVENTS, LEVELS
+from togeari.core.observe.ring import Ring
 from togeari.core.runtime.state import InfState, StrandState
+
+try:
+    from togeari import _rs
+except ImportError:
+    _rs = None
 
 # What a resident job is doing, as counted by ``PluginContext.job_states``
 JOB_STATES = ("executing", "queued", "waiting", "parked")
+
+
+def native_ring() -> bool:
+    """True when the native telemetry ring (``togeari._rs.TelemetryRing``) is built."""
+    return _rs is not None and hasattr(_rs, "TelemetryRing")
+
+
+def open_ring(path: Any) -> Any:
+    """The native ring another process made at ``path`` (``make_ring(path=...)``), to drain."""
+    if not native_ring():
+        raise RuntimeError("the native telemetry ring needs togeari._rs")
+    return _rs.TelemetryRing.open(str(path))
 
 
 class PluginBlockError(Exception):
@@ -83,6 +103,10 @@ def _unit_view(lane: Any, st: Any, now: float, loads: bool) -> dict:
             view["load"] = {"running": ld.running, "waiting": ld.waiting, **ld.extra}
         except Exception:  # noqa: BLE001
             view["load"] = {}
+        try:
+            view["free"] = int(st.unit.capacity())
+        except Exception:  # noqa: BLE001
+            view["free"] = None
     return view
 
 
@@ -158,6 +182,16 @@ class PluginContext:
         """A deep copy of the dispatcher's counters (dispatcher thread)."""
         return copy.deepcopy(self._m.dispatcher.stats)
 
+    def dispatcher_totals(self) -> dict:
+        """The dispatcher's cumulative scalar counters (cycles, busy seconds, calls, ...) and
+        seconds per phase, without the per-node inline times (dispatcher thread)."""
+        s = self._m.dispatcher.stats
+        out = {
+            k: v for k, v in s.items() if isinstance(v, (int, float)) and not isinstance(v, bool)
+        }
+        out["phase_s"] = dict(s.get("phase_s", {}))
+        return out
+
     def summary(self, seconds: float) -> dict:
         """The machine's run totals over ``seconds`` (dispatcher thread)."""
         return self._m.summary(seconds)
@@ -172,6 +206,28 @@ class PluginContext:
                 except Exception as exc:  # noqa: BLE001
                     specs[unit.name] = {"error": repr(exc)}
         return specs
+
+    def unit_metrics(self) -> dict[str, dict]:
+        """Each unit's optional ``metrics()`` (spec/04), by unit name; from any thread (the
+        engine's ``metrics`` is thread-safe). A unit without it is left out; one that raises
+        gives ``{}``."""
+        out: dict[str, dict] = {}
+        for lane in list(self._m.lanes):
+            for unit in list(lane.units):
+                fn = getattr(unit, "metrics", None)
+                if fn is None:
+                    continue
+                try:
+                    got = fn()
+                    out[unit.name] = dict(got) if got else {}
+                except Exception:  # noqa: BLE001
+                    out[unit.name] = {}
+        return out
+
+    def regions(self) -> list:
+        """The committed regions of code memory (``togeari.core.program.code.Region``), in load
+        order; from any thread (regions are never changed once committed)."""
+        return list(self._m.code.regions)
 
     def resident_jobs(self) -> int:
         """Jobs resident in the pool (dispatcher thread)."""
@@ -224,11 +280,61 @@ class PluginContext:
         now = time.monotonic() if now is None else now
         return [_lane_view(lane, now, loads) for lane in self._m.lanes]
 
+    def sample(self) -> dict:
+        """The machine's numbers at one instant (dispatcher thread), plain values only: ``t``
+        (wall time), ``dispatcher`` (``dispatcher_totals``), ``resident``, ``states``
+        (``job_states``) and per lane ``signals``, ``stats`` and ``units`` (``held``: items
+        sent and unanswered, ``free``: ``capacity()``, ``busy_s``, ``done``, and ``load()``'s
+        ``running`` and ``waiting``; None where the engine raises)."""
+        now = time.monotonic()
+        lanes = []
+        for lane in self._m.lanes:
+            units = []
+            for st in lane.state.values():
+                unit = st.unit
+                busy = st.busy_total + (now - st.busy_since if st.busy_since is not None else 0.0)
+                try:
+                    ld = unit.load()
+                    running, waiting = ld.running, ld.waiting
+                except Exception:  # noqa: BLE001
+                    running = waiting = None
+                try:
+                    free = int(unit.capacity())
+                except Exception:  # noqa: BLE001
+                    free = None
+                units.append(
+                    {
+                        "name": unit.name,
+                        "held": st.inflight,
+                        "free": free,
+                        "busy_s": busy,
+                        "done": st.items_done,
+                        "running": running,
+                        "waiting": waiting,
+                    }
+                )
+            lanes.append(
+                {
+                    "name": lane.name,
+                    "signals": lane.signals(),
+                    "stats": dict(lane.stats),
+                    "units": units,
+                }
+            )
+        return {
+            "t": time.time(),
+            "dispatcher": self.dispatcher_totals(),
+            "resident": self.resident_jobs(),
+            "states": self.job_states(),
+            "lanes": lanes,
+        }
+
     def units(self, loads: bool = False) -> list[dict]:
         """Every unit as a dict (dispatcher thread): ``name``, ``lane``, ``state``,
         ``inflight``, ``rate``, ``done``, ``busy_s`` (busy time including a running busy
         span), ``submit_s`` (submit latency EWMA), ``errors``; with ``loads``, ``load``:
-        the unit's ``load()`` as a dict (empty when it raises).
+        the unit's ``load()`` as a dict (empty when it raises), and ``free``: its
+        ``capacity()`` (None when it raises).
         """
         return [u for lane in self.lanes(loads) for u in lane["units"]]
 
@@ -242,6 +348,64 @@ class PluginContext:
 
     def unlisten(self, fn: Any) -> None:
         self._m.bus.unlisten(fn)
+
+    # ------------------------------------------------------------ bus subscription, telemetry
+    def subscribe(self, level: str | None = None, kinds: Any = None) -> None:
+        """Subscribe this plugin's ``on_event`` at ``level`` ("all", "sampled", "counters"), or
+        move it there; without ``level``, the least level that delivers every one of ``kinds``
+        ("counters" when they are all always delivered, else "all"; None: every kind). From
+        any thread (posted to the dispatcher while it runs)."""
+        if level is None:
+            core = kinds is not None and set(kinds) <= CORE_EVENTS
+            level = "counters" if core else "all"
+        if level not in LEVELS:
+            raise ValueError(f"level must be one of {LEVELS}, not {level!r}")
+
+        # Checked when it runs: a plugin disabled or unloaded (the machine stopped) since the
+        # call was posted stays unsubscribed
+        def go() -> None:
+            if self.plugin.name in self._m.plugins.enabled:
+                self._m.bus.subscribe(self.plugin, level)
+
+        self._on_dispatcher(go)
+
+    def unsubscribe(self) -> None:
+        """End this plugin's subscription; its queued events are dropped (counted). From any
+        thread."""
+        self._on_dispatcher(lambda: self._m.bus.unsubscribe(self.plugin, wait=False))
+
+    def make_ring(
+        self, kind: str = "auto", capacity: int = DEFAULT_RECORDS, path: Any = None
+    ) -> Any:
+        """A new telemetry ring of ``capacity`` records: "native" (``togeari._rs``), "python",
+        or "auto" (the one this machine's core writes fastest: native on the native core).
+        With ``path``, a native ring in a file mapping another process can read."""
+        native = kind == "native" or (kind == "auto" and (self._m.core == "rust" or path))
+        if kind not in ("auto", "native", "python"):
+            raise ValueError(f"a ring is 'auto', 'native' or 'python', not {kind!r}")
+        if path is not None and not native:
+            raise ValueError("a ring in a file mapping is a native ring")
+        if native:
+            if not native_ring():
+                raise RuntimeError("the native telemetry ring needs togeari._rs")
+            return _rs.TelemetryRing(capacity, None if path is None else str(path))
+        return Ring(capacity)
+
+    def set_telemetry(self, ring: Any) -> None:
+        """Attach a telemetry ring to the machine (None: detach); from any thread."""
+        self._on_dispatcher(lambda: self._m.set_telemetry(ring))
+
+    def telemetry(self) -> Any:
+        """The machine's telemetry ring, or None."""
+        return self._m.telemetry
+
+    def _on_dispatcher(self, fn: Any) -> None:
+        """``fn()`` now when on the dispatcher thread or while it is stopped, else posted."""
+        d = getattr(self._m, "dispatcher", None)
+        if self.machine_running() and threading.current_thread() is not d.thread:
+            d.inbox.put(("call", fn, self.plugin.name))
+            return
+        fn()
 
     def signals(self) -> dict:
         """A copy of the admission signals, from any thread."""

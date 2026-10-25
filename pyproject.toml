@@ -32,7 +32,8 @@ Repository = "https://github.com/KohakuBlueleaf/Togeari"
 [project.optional-dependencies]
 torch = ["torch>=2.4"]
 web = ["httpx>=0.27", "sniffio"]
-vault = ["kohakuvault>=0.8"]
+vault = ["kohakuvault>=1.0"]
+telemetry = ["kohakuvault>=1.0", "numpy>=1.24"]
 report = ["zstandard>=0.22"]
 dev = [
     "maturin>=1.9,<2.0",

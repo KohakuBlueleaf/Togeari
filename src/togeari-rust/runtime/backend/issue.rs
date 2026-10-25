@@ -14,6 +14,7 @@ use crate::runtime::events::{Exc, Res};
 use crate::runtime::host::{is_exception, K};
 use crate::runtime::python::Owner;
 use crate::runtime::state::{effective, InfRef, InfState, JobRef, Key, Obj, SlotState, Waiter};
+use crate::telemetry::core as tel;
 
 // Inline timing: the first median check, then one every this many samples
 const FIRST_CHECK: u64 = 32;
@@ -69,6 +70,9 @@ impl Core {
             j.stats.calls += 1;
         }
         self.stats.borrow_mut().calls += 1;
+        if self.tel_on() {
+            inf.borrow_mut().t_fetch = self.perf();
+        }
         self.note_stmt(py, "stmt.fetch", inf)?;
         self.check(py, inf)
     }
@@ -580,6 +584,12 @@ impl Core {
                 Err(e) => return Err(e),
             };
             let dt = self.perf() - t0;
+            if self.tel_on() {
+                let mut p = self.tel_wait(tel::INLINE, inf);
+                p.service_s = Some(dt);
+                p.status = matches!(res, Res::ItemError(_)) as u8;
+                self.tel(&p);
+            }
             self.note_inline(py, &ins.node, dt, b.warn_us)?;
             job.borrow_mut().issue(inf);
             return self.complete(py, inf, res, None, None);
@@ -597,6 +607,9 @@ impl Core {
                 }
                 if eligible && !hit.bind(py).is(self.h.miss.bind(py)) {
                     self.stats.borrow_mut().store_hits += 1;
+                    if self.tel_on() {
+                        self.tel(&self.tel_wait(tel::HIT, inf));
+                    }
                     {
                         let mut inf = inf.borrow_mut();
                         inf.hit = true;
@@ -689,6 +702,13 @@ impl Core {
             .borrow_mut()
             .insert(inf_id, std::rc::Rc::downgrade(inf));
         job.borrow_mut().issue(inf);
+        // The record before the enqueue, so it precedes the item's submit in the ring
+        if self.tel_on() {
+            let mut p = self.tel_wait(tel::ENQUEUE, inf);
+            let name = b.lane_name.as_ref().and_then(|l| l.bind(py).to_cow().ok());
+            p.lane = name.as_deref();
+            self.tel(&p);
+        }
         let lane = b.lane.as_ref().expect("a lane").bind(py);
         match self.native_for(py, lane, ENQUEUE)? {
             Some(n) => n.get().c().enqueue(py, &item, t)?,

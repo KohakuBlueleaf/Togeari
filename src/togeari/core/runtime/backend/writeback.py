@@ -5,6 +5,7 @@ from typing import Any
 
 from togeari.core.contracts.digest import digest
 from togeari.core.contracts.results import Blocked, Cancelled, ItemError, Ok, UnitError
+from togeari.core.contracts.telemetry import RESULT, RESULT_OTHER, RESULT_STATUS, RESUME
 from togeari.core.contracts.workitem import WorkItem
 from togeari.core.lanes.deadline import replace as replace_deadline
 from togeari.core.plugin.base import PluginBlockError
@@ -35,6 +36,8 @@ class WritebackStage:
                 w.state = StrandState.RUNNABLE
                 w.job.mark_runnable(w)
                 self.dirty[w.job.id] = None
+                if self.ring is not None:
+                    self.ring.put(RESUME, w.job.id, w.pc, None, None, None, None, w.id, 0)
                 if self.bus.wants("strand.resume", w.job.id):
                     self.bus.emit("strand.resume", job=w.job.id, strand=w.id, addr=w.pc)
             case Inflight() if w.state == InfState.WAITING:
@@ -119,7 +122,26 @@ class WritebackStage:
         if inf is None:
             return
 
-        # The result event, with queue and service times
+        # The result record (one that cannot be built is skipped; a plain try: ``suppress``
+        # builds an object per call) and event, with queue and service times
+        if self.ring is not None:
+            ext = item.ext
+            sent = ext.get("sent")
+            enq = ext.get("enqueued")
+            try:  # noqa: SIM105
+                self.ring.put(
+                    RESULT,
+                    inf.job.id,
+                    inf.instr.addr,
+                    inf.instr.binding.lane.name,
+                    ext.get("unit"),
+                    sent - enq if sent and enq is not None else None,
+                    self.clock() - sent if sent else None,
+                    0,
+                    RESULT_STATUS.get(type(result).__name__, RESULT_OTHER),
+                )
+            except (TypeError, AttributeError, ValueError, OverflowError):
+                pass
         if self.bus.wants("lane.result", inf.job.id):
             sent = item.ext.get("sent")
             queued = sent - item.ext["enqueued"] if sent and "enqueued" in item.ext else None

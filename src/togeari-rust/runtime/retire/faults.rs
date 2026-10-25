@@ -16,6 +16,7 @@ use crate::runtime::state::{
     effective, Fault, FrameKind, InfRef, InfState, JobRef, Key, Memo, NameMap, Slot, SlotState,
     Snap, Strand,
 };
+use crate::telemetry::core::{self as tel, Put};
 
 impl Core {
     /// ``(kind, message, runtime)`` of a fault's error.
@@ -414,6 +415,11 @@ impl Core {
             ("on_fault", info),
             Some(&kw),
         )?;
+        if self.tel_on() {
+            let mut p = Put::new(tel::FAULT, jid, Some(ins.addr));
+            p.aux = job.borrow().stats.squashed.max(0) as u64;
+            self.tel(&p);
+        }
         if self.wants(py, "fault.taken", Some(jid))? {
             let f = PyDict::new(py);
             f.set_item("job", jid)?;

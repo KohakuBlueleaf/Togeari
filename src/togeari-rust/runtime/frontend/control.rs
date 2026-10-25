@@ -14,6 +14,7 @@ use crate::runtime::state::{
     effective, Frame, FrameKind, JobRef, Join, JoinRef, NameMap, Names, Resume, Slot, SlotRef,
     SlotState, Strand, StrandRef, StrandState, Val, Waiter,
 };
+use crate::telemetry::core::{self as tel, Put};
 
 impl Core {
     // ------------------------------------------------------------ joins
@@ -269,6 +270,11 @@ impl Core {
             .waiters
             .push(Waiter::Strand(st.clone()));
         let (sid, cid) = (st.borrow().id, c.borrow().id);
+        if self.tel_on() {
+            let mut p = Put::new(tel::PARK, jid, Some(ins.addr));
+            p.aux = sid;
+            self.tel(&p);
+        }
         self.note_strand(py, "strand.park", jid, sid, ins.addr, Some(cid))
     }
 

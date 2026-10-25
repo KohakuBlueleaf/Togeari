@@ -19,6 +19,7 @@ use crate::runtime::builtins::{plain_f64, Builtins, Tag};
 use crate::runtime::gate::Gate;
 use crate::runtime::host::is_exception;
 use crate::runtime::state::Obj;
+use crate::telemetry::core::Ring;
 
 // Health-poll backoff of a down unit: first wait and ceiling, in seconds
 pub const POLL_FIRST_S: f64 = 0.5;
@@ -272,6 +273,9 @@ pub struct LaneCore {
     pub resources: RefCell<Option<Obj>>,
     pub resource_helpers: Obj,
     pub rc: ResultClasses,
+
+    // The telemetry ring submissions are written to, when one is attached
+    pub tel: RefCell<Option<Arc<Ring>>>,
 }
 
 /// A count as the lane's own body gives it, or as a replacing method returned it.

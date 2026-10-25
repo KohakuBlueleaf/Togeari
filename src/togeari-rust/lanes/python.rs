@@ -18,6 +18,7 @@ use super::lane::{
 use super::queue::{Num, Order, Queue};
 use crate::runtime::builtins::Builtins;
 use crate::runtime::state::Obj;
+use crate::telemetry::python::TelemetryRing;
 
 /// The lane core, owned by its lane. Only the dispatcher thread runs it; another thread reads
 /// it with the GIL held and outside any GIL-free region (``wait``).
@@ -322,6 +323,7 @@ impl PyLane {
             policy_errors: Cell::new(0),
             overridden: Cell::new(0),
             gate: OnceCell::new(),
+            tel: RefCell::new(None),
             log: py
                 .import("logging")?
                 .call_method1("getLogger", ("togeari.lane",))?
@@ -731,6 +733,12 @@ impl PyLane {
     fn set_clock(&self, py: Python<'_>, clock: Obj) {
         self.c().wait(py);
         *self.c().clock.borrow_mut() = clock;
+    }
+
+    /// The telemetry ring the lane's submissions are written to (None: none).
+    fn set_telemetry(&self, py: Python<'_>, ring: Option<PyRef<'_, TelemetryRing>>) {
+        self.c().wait(py);
+        *self.c().tel.borrow_mut() = ring.map(|r| r.ring.clone());
     }
 
     // ------------------------------------------------------------ views

@@ -1,5 +1,6 @@
 """Branches without guessing: park, continuation strands, phis and joins (spec/03 §3.4)."""
 
+from togeari.core.contracts.telemetry import PARK
 from togeari.core.program.decode.instr import ALL
 from togeari.core.runtime.kir import UNDEF, RuntimeFault, undefined
 from togeari.core.runtime.state import (
@@ -130,6 +131,8 @@ class ControlOps:
         st.resume = "parked"
         job.stats["parks"] += 1
         waiting_on.waiters.append(st)
+        if self.d.ring is not None:
+            self.d.ring.put(PARK, job.id, ins.addr, None, None, None, None, st.id, 0)
         if self.d.bus.wants("strand.park", job.id):
             self.d.bus.emit("strand.park", job=job.id, strand=st.id, addr=ins.addr, cont=c.id)
 

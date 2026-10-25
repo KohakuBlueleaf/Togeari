@@ -110,6 +110,8 @@ class Machine(LoadStage, UnitStage, RunStage):
         self._persistence_warnings: set[tuple] = set()
         self.units_started = False
         self.dispatcher: Dispatcher | None = None
+        # The telemetry ring the dispatcher and the lanes write (``set_telemetry``)
+        self.telemetry: Any = None
         self._stopped = False
         self._run_lock = threading.Lock()
 

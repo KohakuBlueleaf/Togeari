@@ -21,7 +21,7 @@ RULES = {
 # Third-party packages each part may use
 EXTRAS = {
     "togeari.engines": ("torch", "httpx", "numpy"),
-    "togeari.plugins": ("zstandard", "kohakuvault"),
+    "togeari.plugins": ("zstandard", "kohakuvault", "numpy", "kohakunode"),
     "togeari.adapters": ("httpx", "torch"),
     "togeari.stores": ("kohakuvault",),
     "togeari.io": ("kohakuvault",),

@@ -72,6 +72,10 @@ class Engine(Protocol):
     # Optional: ``add_wake(fn)``; the engine calls every added ``fn()`` (from any
     # thread) when capacity() rose without a completion (a worker replaced, a
     # cancelled item's slot freed).
+    # Optional: ``metrics() -> dict[str, float | tuple[float, str]]``, numbers the
+    # telemetry plugin records as series (a value, or a value and its unit). It is
+    # called from the telemetry thread, not the dispatcher, so it must be
+    # thread-safe and cheap (B3 does not apply to it).
 
 
 class StreamEngine(Engine, Protocol):

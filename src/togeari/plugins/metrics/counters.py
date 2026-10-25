@@ -6,7 +6,10 @@ kinds, and rates of the machine's totals since the previous snapshot (read on
 the dispatcher thread through the plugin context). Resident jobs are counted
 by state (``executing``, ``queued``, ``waiting``, ``parked``) at each sample;
 ``job_seconds`` is each count times the interval: pool-wide job-seconds per
-state, sampled once per interval, not timed per job. Each snapshot goes to the
+state, sampled once per interval, not timed per job. Lane waits and unit
+service times are log histograms (``plugins/common/hist.py``): their p50 / p90
+are within one bin (0.42 or 0.58 of an octave) of the exact ones, and a
+sample costs the same at any rate. Each snapshot goes to the
 ``watchers``, answers the ``counters`` query and, with ``emit``, is a
 ``counters`` bus event.
 """
@@ -17,6 +20,7 @@ from collections.abc import Callable
 
 from togeari.core.contracts.io import JobRecord
 from togeari.core.plugin.base import BasePlugin, PluginContext
+from togeari.plugins.common.hist import Hist
 
 # Event kinds the listener counts by node, lane or unit.
 LISTENED = ("stmt.fetch", "lane.enqueue", "lane.submit", "lane.result", "job.admit")
@@ -78,8 +82,9 @@ class Counters(BasePlugin):
         self._nodes: dict[str, int] = {}
         self._enqueued: dict[str, int] = {}
         self._submits: dict[str, int] = {}
-        self._queued: dict[str, list[float]] = {}
-        self._service: dict[str, list[float]] = {}
+        # Queue waits and service times (µs) per unit
+        self._queued: dict[str, Hist] = {}
+        self._service: dict[str, Hist] = {}
         self._jobs = self._job_window()
 
     @staticmethod
@@ -146,9 +151,16 @@ class Counters(BasePlugin):
                 case "lane.result":
                     unit = fields.get("unit")
                     if fields.get("queued_s") is not None:
-                        self._queued.setdefault(unit, []).append(fields["queued_s"])
+                        self._hist(self._queued, unit).add(fields["queued_s"] * 1e6)
                     if fields.get("service_s") is not None:
-                        self._service.setdefault(unit, []).append(fields["service_s"])
+                        self._hist(self._service, unit).add(fields["service_s"] * 1e6)
+
+    @staticmethod
+    def _hist(table: dict, unit: str) -> Hist:
+        h = table.get(unit)
+        if h is None:
+            h = table[unit] = Hist()
+        return h
 
     def on_job_end(self, record: JobRecord) -> None:
         s = record.stats
@@ -289,18 +301,21 @@ class Counters(BasePlugin):
         out = {}
         for name, now in cur["lanes"].items():
             # Queue waits of the items answered since the previous sample
-            waits = [w for u in now["units"] for w in queued.get(u["name"], ())]
+            waits = Hist()
+            for u in now["units"]:
+                if u["name"] in queued:
+                    waits.merge(queued[u["name"]])
 
             before = prev["lanes"].get(name, {})
             stats, was = now["stats"], before.get("stats", {})
             hist = _delta(now["batch_sizes"], before.get("batch_sizes", {}))
-            p50, p90 = percentile(waits, 0.5), percentile(waits, 0.9)
+            p50, p90 = waits.quantile(0.5), waits.quantile(0.9)
             out[name] = {
                 **now["signals"],
                 "enqueued": enqueued.get(name, 0),
                 "submitted": stats["submitted"] - was.get("submitted", 0),
-                "wait_ms_p50": None if p50 is None else p50 * 1e3,
-                "wait_ms_p90": None if p90 is None else p90 * 1e3,
+                "wait_ms_p50": None if p50 is None else p50 / 1e3,
+                "wait_ms_p90": None if p90 is None else p90 / 1e3,
                 "batch_sizes": hist,
                 "retries": stats["retries"] - was.get("retries", 0),
                 "failovers": stats["failovers"] - was.get("failovers", 0),
@@ -315,8 +330,8 @@ class Counters(BasePlugin):
         out = {}
         for name, now in cur["units"].items():
             before = prev["units"].get(name, {})
-            times = service.get(name, [])
-            p50, p90 = percentile(times, 0.5), percentile(times, 0.9)
+            times = service.get(name) or Hist()
+            p50, p90 = times.quantile(0.5), times.quantile(0.9)
             busy = now["busy_s"] - before.get("busy_s", 0.0)
             out[name] = {
                 "lane": now["lane"],
@@ -327,8 +342,8 @@ class Counters(BasePlugin):
                 "items_per_s": (now["done"] - before.get("done", 0)) / dt,
                 "submits": submits.get(name, 0),
                 "submit_ms": now["submit_s"] * 1e3,
-                "service_ms_p50": None if p50 is None else p50 * 1e3,
-                "service_ms_p90": None if p90 is None else p90 * 1e3,
+                "service_ms_p50": None if p50 is None else p50 / 1e3,
+                "service_ms_p90": None if p90 is None else p90 / 1e3,
                 "load": now.get("load", {}),
                 "errors": now["errors"],
             }

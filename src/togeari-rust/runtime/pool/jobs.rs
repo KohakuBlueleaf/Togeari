@@ -14,6 +14,7 @@ use crate::runtime::state::frame::no_frames;
 use crate::runtime::state::key::empty_prefix;
 use crate::runtime::state::slot::hold;
 use crate::runtime::state::{Entry, InfState, Job, JobRef, NameMap, Param, Slot, Strand};
+use crate::telemetry::core::{self as tel, Put};
 
 enum SnapshotAdmission {
     New,
@@ -473,6 +474,7 @@ impl Core {
             .bus
             .bind(py)
             .call_method1(intern!(py, "sample"), (id, sampled))?;
+        self.tel(&Put::new(tel::ADMIT, id, Some(entry.addr)));
         if self.wants(py, "job.admit", Some(id))? {
             let f = PyDict::new(py);
             f.set_item("job", id)?;
@@ -806,7 +808,23 @@ impl Core {
             }
         }
 
-        // Event, plugins, then the handle or the sink
+        // Telemetry, event, plugins, then the handle or the sink
+        if self.tel_on() {
+            let mut p = Put::new(tel::END, jid, Some(entry.addr));
+            p.service_s = Some(seconds);
+            p.status = match &failure {
+                None => 0,
+                Some(f) => {
+                    let kind = f.bind(py).get_item("kind").ok().flatten();
+                    if kind.is_some_and(|k| k.eq("Cancelled").unwrap_or(false)) {
+                        2
+                    } else {
+                        1
+                    }
+                }
+            };
+            self.tel(&p);
+        }
         if self.wants(py, "job.end", Some(jid))? {
             let f = PyDict::new(py);
             f.set_item("job", jid)?;

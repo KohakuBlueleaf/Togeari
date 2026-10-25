@@ -30,6 +30,7 @@ from kohakunode.syntax.ast import (
 )
 
 from togeari.core.program.decode.instr import Instr, Op, Operand, Span, TryInfo
+from togeari.core.program.origin import statements
 
 Target = Callable[[], int]
 _DEF_PREFIX = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*?)__\d+__")
@@ -57,6 +58,7 @@ class Compiler:
         self.n_tries = 0
         self.each_body: dict[int, set[int]] = {}
         self.problems: list[str] = []
+        self.paths: dict[int, str] = {}
 
     # ------------------------------------------------------------ helpers
     def new(self, op: str, stmt: Stmt | None, each_ctx, try_id, **kw) -> Instr:
@@ -66,6 +68,7 @@ class Compiler:
         if stmt is not None:
             ins.hint = dict(stmt.hint)
             ins.span = self.span(stmt)
+            ins.path = self.paths.get(id(stmt))
         self.mem.append(ins)
         return ins
 
@@ -96,6 +99,7 @@ class Compiler:
 
     # ------------------------------------------------------------ blocks
     def compile(self, body: list[Stmt]) -> int:
+        self.paths = {id(stmt): path for path, stmt in statements(body)}
         end = self.new(Op.END, None, None, None)
         first = self.block(body, [], lambda: end.addr, None, None)
         for fn in self.pending:

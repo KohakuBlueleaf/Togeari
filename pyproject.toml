@@ -53,7 +53,12 @@ togeari = "togeari.cli.main:main"
 # Python source is in src/togeari; the crate is src/togeari-rust (Cargo.toml)
 python-source = "src"
 module-name = "togeari._rs"
-include = ["src/togeari/**/*.pyi", "src/togeari/py.typed"]
+include = [
+    "src/togeari/**/*.pyi",
+    "src/togeari/py.typed",
+    # The dashboard app, built by the release workflow (apps/dashboard); not in git
+    { path = "src/togeari/dash/static/**/*", format = ["sdist", "wheel"] },
+]
 
 [tool.black]
 line-length = 100

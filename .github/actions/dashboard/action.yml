@@ -1,0 +1,33 @@
+name: Build the dashboard app
+description: >
+  Builds apps/dashboard into src/togeari/dash/static (served by `togeari dash`, packaged by
+  maturin's include). The display library comes from the KIR revision CI pairs with
+  (KIR_REVISION in ci.yml), so both builds read one pin.
+runs:
+  using: composite
+  steps:
+    - name: The paired KIR revision
+      id: kir
+      shell: bash
+      run: |
+        set -euo pipefail
+        rev=$(sed -n "s/^  KIR_REVISION: '\([0-9a-f]\{40\}\)'.*/\1/p" .github/workflows/ci.yml)
+        test -n "$rev"
+        echo "rev=$rev" >> "$GITHUB_OUTPUT"
+    - uses: actions/checkout@v4
+      with:
+        repository: KohakuBlueleaf/KohakuNodeIR
+        ref: ${{ steps.kir.outputs.rev }}
+        path: paired-kir-app
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - name: Build
+      shell: bash
+      env:
+        KIR_GRAPH_SRC: ${{ github.workspace }}/paired-kir-app/packages/kir-graph/
+      run: |
+        set -euo pipefail
+        (cd paired-kir-app/packages/kir-graph && npm ci)
+        (cd apps/dashboard && npm ci && npm run build)
+        test -f src/togeari/dash/static/index.html

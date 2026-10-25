@@ -91,6 +91,30 @@ jobs:
       - name: cargo test
         run: cargo test --no-default-features
 
+  dashboard:
+    name: Dashboard app, built and packaged
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: ./.github/actions/dashboard
+      - name: The wheel and the sdist carry the app
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip maturin
+          maturin build --release --out dist
+          maturin sdist --out dist
+          python - <<'PY'
+          import glob, tarfile, zipfile
+          wheel = zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist()
+          sdist = tarfile.open(glob.glob("dist/*.tar.gz")[0]).getnames()
+          assert "togeari/dash/static/index.html" in wheel, "the wheel lacks the app"
+          assert any(n.endswith("src/togeari/dash/static/index.html") for n in sdist), "the sdist lacks the app"
+          assert any(n.startswith("togeari/dash/static/assets/") for n in wheel)
+          PY
+
   lint:
     name: Lint and boundaries
     runs-on: ubuntu-latest

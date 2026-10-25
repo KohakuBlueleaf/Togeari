@@ -12,8 +12,22 @@ permissions:
   contents: read
 
 jobs:
+  # The dashboard app, built once; every wheel and the sdist carry it (src/togeari/dash/static)
+  build-app:
+    name: Build the dashboard app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/dashboard
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-app
+          path: src/togeari/dash/static/
+          retention-days: 7
+
   build-wheels:
     name: Build cp${{ matrix.python-version }} for ${{ matrix.platform.target }}
+    needs: build-app
     runs-on: ${{ matrix.platform.os }}
     strategy:
       fail-fast: false
@@ -37,6 +51,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: dashboard-app
+          path: src/togeari/dash/static
+      - name: The dashboard app is in place
+        shell: bash
+        run: test -f src/togeari/dash/static/index.html
 
       # In the manylinux container the interpreter is named; elsewhere it is the one set up
       - name: Build the wheel (Linux)
@@ -63,14 +84,20 @@ jobs:
 
   build-sdist:
     name: Build the sdist
+    needs: build-app
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - uses: actions/download-artifact@v4
+        with:
+          name: dashboard-app
+          path: src/togeari/dash/static
       - name: Build
         run: |
+          test -f src/togeari/dash/static/index.html
           pip install maturin
           maturin sdist --out dist
       - uses: actions/upload-artifact@v4
@@ -91,11 +118,16 @@ jobs:
       contents: write
       id-token: write
     steps:
+      # The wheels and the sdist only (not the dashboard app they carry)
       - uses: actions/download-artifact@v4
         with:
           path: dist
-          pattern: '*'
+          pattern: 'wheels-*'
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          name: sdist
       - name: List artifacts
         run: ls -lh dist/
       - name: Upload to the GitHub release

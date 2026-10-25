@@ -72,7 +72,10 @@ address. Reaching the page under another name (a tunnel, a reverse proxy) takes
 ## Working on the page
 
 The app is `apps/dashboard` (Vue, uPlot, the KIR graph library); `npm run build` writes it into
-`src/togeari/dash/static`, which `togeari dash` serves.
+`src/togeari/dash/static`, which `togeari dash` serves. The directory is not in git: the
+release workflow builds it once (`.github/actions/dashboard`, the display library from the KIR
+revision CI pairs with) and maturin's `include` puts it in every wheel and the sdist; CI checks
+both carry it.
 
 ```
 python apps/dashboard/scripts/record_runs.py apps/dashboard/dev-runs          # recorded runs

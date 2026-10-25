@@ -21,6 +21,7 @@ For contributors: [paired KIR/Togeari validation and release order](paired-valid
 | [Resource budgets](resource-budgets.md) | additive budget-aware batches, cheap estimates, lifecycle accounting and new-job backpressure |
 | [Explaining waits](explaining-waits.md) | bounded causal snapshots linking input, control, effect, lane and checkpoint waits to source origins |
 | [Committed events](committed-events.md) | ordered semantic emit, bounded durable outbox, at-least-once delivery and event-sidecar conformance |
+| [The dashboard](dashboard.md) | telemetry directories, `togeari dash`, run states, reading and changing a live machine through its inspector, access rules |
 | [Conformance](conformance.md) | recording, `conform()` in replay and re-execute modes, `togeari conform`, reading records with `Archive`, `togeari doctor` |
 | [Examples](examples.md) | what each example shows and how to run it |
 

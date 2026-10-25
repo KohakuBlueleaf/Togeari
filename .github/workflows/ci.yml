@@ -8,7 +8,7 @@ on:
 # Update this immutable revision when validating a new compatible KIR pair.
 # Development CI builds it directly; releases still publish KIR before Togeari.
 env:
-  KIR_REVISION: 'a7dabca07860d5f8e82d76de39da1460c081d058'
+  KIR_REVISION: '0e63fab430349d819975d9dc5b51891edea236e9'
 
 jobs:
   test:

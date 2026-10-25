@@ -17,14 +17,23 @@ dispatcher reads or writes job state.
 |---|---|---|
 | `jobs` | — | per resident job: `id`, `key`, `entry`, live `strands`, `window` length, `unfinished`, `paused` |
 | `job` | `id` | `id`, `key`, `entry`, `inputs` (a `reprlib` repr bounded to 200 characters per value, without building the full repr), live strands (`id`, `state`, `pc`, `at` span, `key`, `spawner`), window entries (`node`, `at`, `key`, `state`, `unit`), `slots` (ready / pending over the slots named by any live strand, each once), `stats` (deep copy) |
-| `lanes` | — | per lane: `name`, `kind`, `signals()`, `stats`, `batch_sizes`, units (`name`, `state`, `inflight`, `rate`, `done`, `errors`) |
+| `lanes` | — | per lane: `name`, `kind`, `former` and `select` (type names; `former` None off batch lanes), `signals()`, `stats`, `batch_sizes`, units (`name`, `state`, `inflight`, `rate`, `done`, `errors`) |
 | `units` | — | the units of every lane, as in `lanes` |
 | `programs` | — | per region: `region`, `source`, `entry`, `hash` (16 hex), `addrs` `[start, end]`, `inputs`, `outputs` |
 | `signals` | — | a deep copy of `Dispatcher.signals()` |
 | `plugins` | — | `name`, `priority`, `enabled`, `errors`, `hook_s` (time per hook) |
 | `knobs` | — | the registry; non-scalar values (policies) as their class name |
+| `knob_specs` | — | `knobs`: per knob its spec from `KNOB_SPECS` with its `value` (as in `knobs`); `policies`: the contributed policies' names by the roles they fill (`admission`, `issue`, `former`, `select`), what `set_knob` and `set_lane_policy` take by name |
 | `stats` | — | a deep copy of the dispatcher totals; `inline_s` as total seconds per node |
 | `waits` | `job=None`, `limit=256` | version-1 detached causal metadata graph; numeric resident-job filter, total entity+relation bound, explicit truncation/unsupported capabilities |
+
+## Knob specs
+
+`KNOB_SPECS` (`core/construct/knobs.py`) says what each knob takes, for an editor: `kind` is
+`int`, `number`, `rate` (a number in [0, 1]), `bool`, `choice` (one of `choices`), `ints` (1 to
+3 ints, the first >= 1) or `policy` (a contributed policy of `role`); `min` is the lower bound
+and `nullable` that None is accepted. `checked` is the rule; `tests/machine/test_knob_specs.py`
+derives values each spec allows and rules out and checks `checked` agrees, for every knob.
 
 ## Wait snapshot schema
 

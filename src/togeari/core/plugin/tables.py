@@ -8,7 +8,8 @@ import copy
 import reprlib
 from typing import Any
 
-from togeari.core.construct.knobs import checked
+from togeari.core.construct.knobs import KNOB_SPECS, checked
+from togeari.core.contracts.policies import Admission, Former, Issue, Selector
 from togeari.core.observe.waits import waits
 from togeari.core.program.execution import current_execution, observe_execution
 
@@ -96,6 +97,8 @@ def _lane_row(lane: Any) -> dict:
     return {
         "name": lane.name,
         "kind": lane.kind,
+        "former": None if lane.former is None else type(lane.former).__name__,
+        "select": type(lane.select).__name__,
         **lane.signals(),
         "stats": dict(lane.stats),
         "batch_sizes": dict(lane.batch_sizes),
@@ -209,6 +212,27 @@ def q_knobs(m: Any) -> dict:
     return {k: _knob_value(v) for k, v in m.knobs.items()}
 
 
+def policy_roles(policy: Any) -> list[str]:
+    """The roles a policy fills by its methods: admission, issue, former, select."""
+    roles = (("admission", Admission), ("issue", Issue), ("former", Former), ("select", Selector))
+    return [role for role, contract in roles if isinstance(policy, contract)]
+
+
+def q_knob_specs(m: Any) -> dict:
+    """Each knob's spec (``KNOB_SPECS``) with its value now, and the contributed policies' names
+    by the roles they fill (what ``set_knob`` and ``set_lane_policy`` take by name)."""
+    by_role: dict[str, list[str]] = {"admission": [], "issue": [], "former": [], "select": []}
+    for name, policy in m.contributed_policies.items():
+        for role in policy_roles(policy):
+            by_role[role].append(name)
+    knobs = {
+        k: {**copy.deepcopy(KNOB_SPECS[k]), "value": _knob_value(v)}
+        for k, v in m.knobs.items()
+        if k in KNOB_SPECS
+    }
+    return {"knobs": knobs, "policies": by_role}
+
+
 def q_stats(m: Any) -> dict:
     s = copy.deepcopy({k: v for k, v in m.dispatcher.stats.items() if k != "inline_s"})
     s["inline_s"] = m.dispatcher.inline_totals()
@@ -248,6 +272,7 @@ QUERIES = {
     "signals": q_signals,
     "plugins": q_plugins,
     "knobs": q_knobs,
+    "knob_specs": q_knob_specs,
     "stats": q_stats,
 }
 

@@ -156,7 +156,7 @@ the plugin owns. The builtin plugins use only the context.
 ## Queries and commands
 
 Queries: `jobs`, `job(id)`, `lanes`, `units`, `programs`, `signals`, `plugins`, `knobs`,
-`stats`. Commands: `attach`, `detach`, `cancel_job`, `pause_job`, `resume_job`, `set_knob`,
+`knob_specs`, `stats`. Commands: `attach`, `detach`, `cancel_job`, `pause_job`, `resume_job`, `set_knob`,
 `set_lane_policy`, `load`, `plugin_add`, `plugin_enable`, `plugin_disable`. Plugins add their
 own.
 

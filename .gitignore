@@ -13,3 +13,7 @@ target/
 *.pdb
 .pytest_cache/
 .ruff_cache/
+node_modules/
+apps/dashboard/dev-runs/
+apps/dashboard/shots/
+src/togeari/dash/static/

@@ -1,0 +1,39 @@
+/* uPlot inside v2 cards: the legend is drawn by the app (ChartLegend), the tooltip floats. */
+.kt-chart .u-legend {
+  display: none;
+}
+.kt-chart .u-select {
+  background: color-mix(in srgb, var(--kt-color-iolite) 12%, transparent);
+}
+.kt-chart .u-cursor-x,
+.kt-chart .u-cursor-y {
+  border-color: var(--v2-line-strong) !important;
+}
+
+.kt-tip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 30;
+  min-width: 9rem;
+  padding: 0.4rem 0.55rem;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--v2-ink);
+}
+.kt-tip__row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.kt-tip__swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+.kt-tip__value {
+  margin-left: auto;
+  padding-left: 0.75rem;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}

@@ -1,6 +1,6 @@
 """The CLI commands; each module has ``add(subparsers)`` and ``run(args, out) -> exit code``."""
 
-from togeari.cli.commands import check, conform, decode, doctor, run, units
+from togeari.cli.commands import check, conform, dash, decode, doctor, run, units
 
 COMMANDS = {
     "check": check,
@@ -9,6 +9,7 @@ COMMANDS = {
     "conform": conform,
     "units": units,
     "doctor": doctor,
+    "dash": dash,
 }
 
 __all__ = ["COMMANDS"]

@@ -29,6 +29,33 @@ POLICY_KNOBS = ("admission", "issue")
 MUTATES_MODES = ("copy-if-speculative", "wait", "copy-always")
 PLUGIN_ERRORS = ("disable", "log")
 
+# What each knob takes, for an editor (the ``knob_specs`` query): ``kind`` is int, number, rate
+# (a number in [0, 1]), bool, choice (one of ``choices``), ints (1 to 3 ints, the first >= 1) or
+# policy (a contributed policy of ``role``); ``nullable``: None is accepted; ``min``: the lower
+# bound. ``_problem`` is the check; tests/machine/test_knob_specs.py holds the two in agreement.
+KNOB_SPECS: dict[str, dict] = {
+    "window": {"kind": "int", "min": 1},
+    "retire_buffer": {"kind": "int", "min": 1},
+    "run_ahead": {"kind": "bool"},
+    "mutates": {"kind": "choice", "choices": list(MUTATES_MODES)},
+    "inline_warn_us": {"kind": "number", "min": 0, "nullable": True},
+    "snapshot_every": {"kind": "int", "min": 1, "nullable": True},
+    "record": {"kind": "rate", "nullable": True},
+    "record_limit": {"kind": "int", "min": 1, "nullable": True},
+    "events": {"kind": "choice", "choices": list(LEVELS)},
+    "event_sample": {"kind": "rate"},
+    "fingerprint_inputs": {"kind": "bool"},
+    "assert_alias": {"kind": "bool"},
+    "step_budget": {"kind": "int", "min": 1, "nullable": True},
+    "plugin_errors": {"kind": "choice", "choices": list(PLUGIN_ERRORS)},
+    "gc_threshold": {"kind": "ints", "nullable": True},
+    "squash_reuse": {"kind": "int", "min": 0},
+    "squash_reuse_bytes": {"kind": "int", "min": 0, "nullable": True},
+    "gil_offer_us": {"kind": "number", "min": 0, "nullable": True},
+    "admission": {"kind": "policy", "role": "admission"},
+    "issue": {"kind": "policy", "role": "issue"},
+}
+
 
 def _int(v: Any) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)

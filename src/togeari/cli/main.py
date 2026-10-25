@@ -1,4 +1,4 @@
-"""``togeari``: check, decode, run, conform, units, doctor (spec/06 §6.3)."""
+"""``togeari``: check, decode, run, conform, units, doctor, dash (spec/06 §6.3)."""
 
 import argparse
 import sys

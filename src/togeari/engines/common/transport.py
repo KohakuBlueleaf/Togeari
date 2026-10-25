@@ -15,12 +15,13 @@ maps them in place and closes the mapping after use.
 
 import contextlib
 import io
+import os
 import pickle
 import sys
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from multiprocessing import shared_memory
+from multiprocessing import resource_tracker, shared_memory
 from typing import Any
 
 from togeari.engines.common.errors import RemoteError
@@ -126,7 +127,7 @@ class Codec:
         opened: list[shared_memory.SharedMemory] = []
         try:
             for name, _ in packet.blocks:
-                opened.append(shared_memory.SharedMemory(name=name, **_ATTACH))
+                opened.append(attach(name))
             if copy:
                 buffers = [bytearray(b.buf[:n]) for b, (_, n) in zip(opened, packet.blocks)]
             else:
@@ -141,6 +142,16 @@ class Codec:
             release(opened, unlink=False)
             return obj, []
         return obj, opened
+
+
+def attach(name: str) -> shared_memory.SharedMemory:
+    """Open a block another process owns. Before Python 3.13 opening registers it with this
+    process's resource tracker, which would unlink it at exit (and warn once the owner has):
+    the registration is taken back."""
+    block = shared_memory.SharedMemory(name=name, **_ATTACH)
+    if not _ATTACH and os.name == "posix":
+        resource_tracker.unregister(block._name, "shared_memory")
+    return block
 
 
 def release(blocks: list[shared_memory.SharedMemory], unlink: bool) -> list:

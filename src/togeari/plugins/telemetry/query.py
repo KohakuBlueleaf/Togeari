@@ -412,22 +412,124 @@ class Run:
         return {**{k: v[k] for k in v if k != "records"}, "key": key, "records": rows}
 
     # ------------------------------------------------------------ series of samples
-    def samples(self, names: list[str], t0: float, t1: float) -> dict[str, dict]:
-        """Sampled series by name: ``{name: {"t": [...], "v": [...], "unit": str}}``."""
+    def _sample_ids(self, names: list[str]) -> tuple[dict[int, str], dict[str, str]]:
+        """The series ids of ``names`` (unknown names left out), and each name's unit."""
         known = {v["name"]: (sid, v.get("unit", "")) for sid, v in self.series_names().items()}
-        sids = {known[n][0]: n for n in names if n in known}
-        out = {n: {"t": [], "v": [], "unit": known[n][1]} for n in names if n in known}
-        for start, p in files_of(self.path, "metrics", L.METRICS_SEGMENT_S):
+        return {known[n][0]: n for n in names if n in known}, {
+            n: known[n][1] for n in names if n in known
+        }
+
+    def _sample_files(self, sids: dict[int, str], t0: float, t1: float, newest: bool = False):
+        """``(start, t, sid, v)`` of each metrics segment overlapping ``[t0, t1)``, only those
+        series' finite samples inside the range; oldest file first (``newest``: newest first)."""
+        files = files_of(self.path, "metrics", L.METRICS_SEGMENT_S)
+        for start, p in reversed(files) if newest else files:
             if start + L.METRICS_SEGMENT_S <= t0 or start >= t1:
                 continue
             with _vault(p) as v:
                 if not _has(v, "t"):
                     continue
                 got = complete({c: v[c].read_array() for c in ("t", "sid", "v")})
-                t, sid, val = got["t"], got["sid"], got["v"]
-            keep = (t >= t0) & (t < t1) & np.isin(sid, list(sids))
-            for ti, si, vi in zip(t[keep], sid[keep], val[keep]):
-                o = out[sids[int(si)]]
-                o["t"].append(float(ti))
-                o["v"].append(float(vi))
+            t, sid, val = got["t"], got["sid"], got["v"]
+            keep = (t >= t0) & (t < t1) & np.isin(sid, list(sids)) & np.isfinite(val)
+            yield start, t[keep], sid[keep], val[keep]
+
+    def samples(self, names: list[str], t0: float, t1: float) -> dict[str, dict]:
+        """Every sample of the named series: ``{name: {"t": [...], "v": [...], "unit": str}}``,
+        in time order. Unbounded: a long range is read with ``sample_chunks``."""
+        sids, units = self._sample_ids(names)
+        out = {n: {"t": [], "v": [], "unit": u} for n, u in units.items()}
+        got = [(t, sid, val) for _, t, sid, val in self._sample_files(sids, t0, t1)]
+        if not got:
+            return out
+        t, sid, val = (np.concatenate(c) for c in zip(*got))
+        order = np.lexsort((t, sid))
+        t, sid, val = t[order], sid[order], val[order]
+        cut = np.flatnonzero(np.r_[True, np.diff(sid) != 0])
+        for i, j in zip(cut, np.r_[cut[1:], len(sid)]):
+            o = out[sids[int(sid[i])]]
+            o["t"], o["v"] = t[i:j].tolist(), val[i:j].tolist()
         return out
+
+    def sample_chunks(
+        self,
+        names: list[str],
+        t0: float,
+        t1: float,
+        points: int = 1000,
+        chunks: int = 8,
+        since: float | None = None,
+        step: int | None = None,
+    ):
+        """The named series over ``[t0, t1)`` in buckets of ``step``, newest first.
+
+        Yields a head ``{"step", "t0", "t1", "since", "units"}``, then chunks ``{"from", "to",
+        "series": {name: {"t", "v", "lo", "hi"}}}``, each the buckets of ``[from, to)`` in time
+        order, chunks going back in time, at most ``ceil(points / chunks)`` buckets per series.
+        ``step`` (``sample_step``) divides a metrics segment, so no bucket spans two files nor
+        two chunks. Per bucket: ``t`` / ``v`` the means of its samples' times and values,
+        ``lo`` / ``hi`` the least and greatest value.
+
+        A refresh passes the ``step`` it holds and ``since``, the start of its last bucket: if
+        the range still gives that step only buckets from ``since`` on are read (the head's
+        ``since``); otherwise ``since`` is ``t0``.
+        """
+        sids, units = self._sample_ids(names)
+        want = sample_step(t0, t1, points)
+        if since is not None and step == want and since > t0:
+            since = max(t0, math.floor(since / step) * step)
+        else:
+            since = t0
+        step = want
+        yield {"step": step, "t0": t0, "t1": t1, "since": since, "units": units}
+        width = max(1, math.ceil(points / max(1, chunks)))
+        for start, t, sid, val in self._sample_files(sids, since, t1, newest=True):
+            if not len(t):
+                continue
+            k = np.floor(t / step).astype(np.int64)
+            # Windows of `width` buckets at multiples of it, newest first; each is bucketed
+            # only when it is sent (samples arrive nearly in time order: the sort is cheap)
+            w = k // width
+            by_w = np.argsort(w, kind="stable")
+            cuts = np.flatnonzero(np.r_[True, np.diff(w[by_w]) != 0])
+            for a, b in zip(cuts[::-1], np.r_[cuts[1:], len(by_w)][::-1]):
+                idx = by_w[a:b]
+                ww = int(w[idx[0]])
+                yield {
+                    "from": max(since, start, ww * width * step),
+                    "to": min(t1, start + L.METRICS_SEGMENT_S, (ww + 1) * width * step),
+                    "series": _buckets(t[idx], sid[idx], val[idx], k[idx], sids),
+                }
+
+
+def _buckets(t, sid, val, k, sids: dict[int, str]) -> dict[str, dict]:
+    """Samples bucketed by ``k`` per series: ``{name: {"t", "v", "lo", "hi"}}`` in time order."""
+    order = np.lexsort((k, sid))
+    t, sid, val, k = t[order], sid[order], val[order], k[order]
+    heads = np.flatnonzero(np.r_[True, (np.diff(k) != 0) | (np.diff(sid) != 0)])
+    n = np.diff(np.r_[heads, len(t)])
+    gsid = sid[heads]
+    gt = np.add.reduceat(t, heads) / n
+    gv = np.add.reduceat(val, heads) / n
+    glo = np.minimum.reduceat(val, heads)
+    ghi = np.maximum.reduceat(val, heads)
+    cut = np.flatnonzero(np.r_[True, np.diff(gsid) != 0])
+    return {
+        sids[int(gsid[i])]: {
+            "t": gt[i:j].tolist(),
+            "v": gv[i:j].tolist(),
+            "lo": glo[i:j].tolist(),
+            "hi": ghi[i:j].tolist(),
+        }
+        for i, j in zip(cut, np.r_[cut[1:], len(gsid)])
+    }
+
+
+STEPS = (1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400)
+
+
+def sample_step(t0: float, t1: float, points: int) -> int:
+    """The least of ``STEPS`` (seconds, each dividing a day) giving at most ``points`` buckets
+    over ``[t0, t1)``; the largest when none does."""
+    want = (t1 - t0) / max(1, points)
+    return next((s for s in STEPS if s >= want), STEPS[-1])

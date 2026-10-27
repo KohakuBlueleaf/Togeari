@@ -18,7 +18,9 @@ Routes (all GET unless noted; an entity is ``kind:id``, e.g. ``node:12``, ``lane
 - ``/api/run/<id>/series?entity=&metric=&t0=&t1=&points=&stat=``;
 - ``/api/run/<id>/top?kind=&metric=&t0=&t1=&stat=&k=``;
 - ``/api/run/<id>/hist?entity=&metric=&t0=&t1=``;
-- ``/api/run/<id>/samples?names=a,b&t0=&t1=`` (or ``prefix=``);
+- ``/api/run/<id>/samples?names=a,b&prefix=p/,q/&t0=&t1=``: every sample; with
+  ``points=`` (and ``chunks=``, and for a refresh ``step=&since=``) the bucketed series
+  streamed newest first as JSON lines (``Run.sample_chunks``);
 - ``/api/run/<id>/traces?t0=&t1=&reason=&limit=``, ``/api/run/<id>/trace?key=``;
 - ``/api/run/<id>/records?t0=&t1=&limit=``: raw records;
 - ``/api/run/<id>/live/<path>`` (GET, POST): the inspector's ``/<path>``; ``live/events`` is
@@ -77,7 +79,8 @@ class Runs:
         self.by_id: dict[str, Path] = {}
         self.lock = threading.Lock()
 
-    def scan(self) -> list[dict]:
+    def find(self) -> tuple[list[dict], dict[str, dict]]:
+        """Every run under the roots with its ``machine.json``, not probed."""
         found, raw = [], {}
         for root in self.roots:
             for info in sorted(root.glob("**/machine.json")):
@@ -91,6 +94,10 @@ class Runs:
                     self.by_id[rid] = path
                 raw[rid] = data
                 found.append({"id": rid, "path": str(path), **public(data)})
+        return found, raw
+
+    def scan(self) -> list[dict]:
+        found, raw = self.find()
         # Every run that claims to be live is probed at once
         claims = [rid for rid, data in raw.items() if not data.get("stopped")]
         states: dict[str, str] = {}
@@ -111,7 +118,7 @@ class Runs:
         with self.lock:
             path = self.by_id.get(rid)
         if path is None:
-            self.scan()
+            self.find()
             with self.lock:
                 path = self.by_id.get(rid)
         return None if path is None else Run(path)
@@ -146,7 +153,7 @@ def probe(info: dict, token: str | None = None) -> tuple[str, dict]:
         return "unreachable", {}
 
 
-def _f(q: dict, name: str, default: float) -> float:
+def _f(q: dict, name: str, default: float | None) -> float | None:
     v = q.get(name)
     return float(v) if v not in (None, "") else default
 
@@ -185,6 +192,34 @@ class _Handler(BaseHTTPRequestHandler):
             log.warning("dash: %s returned a non-finite number", self.path)
             status, body = 500, json.dumps({"error": f"non-finite number in the reply: {exc}"})
         self._send(status, body.encode(), "application/json")
+
+    def _ndjson(self, values: Any) -> None:
+        """Each of ``values`` as one JSON line, sent as it is made (chunked); a failure while
+        streaming ends the stream with an ``{"error"}`` line. A client gone stops it."""
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+        def put(value: Any) -> None:
+            line = json.dumps(value, default=json_default, allow_nan=False).encode() + b"\n"
+            self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line))
+            self.wfile.flush()
+
+        try:
+            try:
+                for value in values:
+                    put(value)
+            except OSError:
+                raise
+            except Exception as exc:
+                log.warning("dash: %s failed while streaming", self.path, exc_info=True)
+                put({"error": f"{type(exc).__name__}: {exc}"})
+            self.wfile.write(b"0\r\n\r\n")
+            self.wfile.flush()
+        except OSError:
+            self.close_connection = True
 
     def do_GET(self) -> None:
         refused = self._refused()
@@ -290,10 +325,23 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(200, run.hist(entity(q["entity"]), q.get("metric", "service"), t0, t1))
             case ["samples"]:
                 names = [n for n in q.get("names", "").split(",") if n]
-                if "prefix" in q:
+                prefixes = tuple(p for p in q.get("prefix", "").split(",") if p)
+                if prefixes:
                     known = [v["name"] for v in run.series_names().values()]
-                    names += [n for n in known if n.startswith(q["prefix"])]
-                self._json(200, run.samples(names, t0, t1))
+                    names += [n for n in known if n.startswith(prefixes)]
+                if "points" not in q:
+                    self._json(200, run.samples(names, t0, t1))
+                    return
+                chunks = run.sample_chunks(
+                    names,
+                    t0,
+                    t1,
+                    int(q["points"]),
+                    int(q.get("chunks", 8)),
+                    _f(q, "since", None),
+                    int(q["step"]) if q.get("step") else None,
+                )
+                self._ndjson(chunks)
             case ["traces"]:
                 self._json(
                     200,

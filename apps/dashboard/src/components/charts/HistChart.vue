@@ -2,18 +2,7 @@
   <div class="relative" @mouseleave="hover = null">
     <svg v-if="bars.length" :viewBox="`0 0 ${W} ${H}`" class="w-full block" :style="{ height: `${H}px` }" preserveAspectRatio="none">
       <line :x1="0" :x2="W" :y1="H - AX" :y2="H - AX" :stroke="c.tick" />
-      <rect
-        v-for="(b, i) in bars"
-        :key="i"
-        :x="b.x + 1"
-        :y="b.y"
-        :width="Math.max(1, b.w - 2)"
-        :height="b.h"
-        rx="2"
-        :fill="color"
-        :opacity="hover === null || hover === i ? 1 : 0.45"
-        @mouseenter="hover = i"
-      />
+      <rect v-for="(b, i) in bars" :key="i" :x="b.x + 1" :y="b.y" :width="Math.max(1, b.w - 2)" :height="b.h" rx="2" :fill="color" :opacity="hover === null || hover === i ? 1 : 0.45" @mouseenter="hover = i" />
       <rect v-for="(b, i) in bars" :key="`hit${i}`" :x="b.x" :y="0" :width="b.w" :height="H - AX" fill="transparent" @mouseenter="hover = i" />
       <g v-for="m in marks" :key="m.label">
         <line :x1="m.x" :x2="m.x" :y1="10" :y2="H - AX" :stroke="c.ink" stroke-dasharray="3 3" stroke-width="1" opacity="0.55" />
@@ -34,9 +23,9 @@
 <script setup>
 import { computed, ref } from "vue"
 
-import { useRunStore } from "@/stores/run"
+import { useThemeStore } from "@/stores/theme"
 import { count, pct, us } from "@/utils/format"
-import { chrome, phase } from "@/utils/palette"
+import { chrome, phase as phaseColor } from "@/utils/palette"
 
 /**
  * A log-binned histogram (the telemetry's 64 bins, each 0.42 or 0.58 of an octave wide), drawn
@@ -51,13 +40,13 @@ const props = defineProps({
   phase: { type: String, default: "service" },
 })
 
-const run = useRunStore()
+const theme = useThemeStore()
 const W = 600
 const H = 120
 const AX = 16
 const hover = ref(null)
-const c = computed(() => (void run.theme, chrome()))
-const color = computed(() => (void run.theme, phase(props.phase)))
+const c = computed(() => (void theme.dark, chrome()))
+const color = computed(() => (void theme.dark, phaseColor(props.phase)))
 
 const range = computed(() => {
   const counts = props.hist?.counts || []

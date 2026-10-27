@@ -9,7 +9,8 @@
 import uPlot from "uplot"
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 
-import { useRunStore } from "@/stores/run"
+import { useRangeStore } from "@/stores/range"
+import { useThemeStore } from "@/stores/theme"
 import { clock } from "@/utils/format"
 import { chrome } from "@/utils/palette"
 
@@ -44,23 +45,50 @@ const props = defineProps({
 // How near (CSS px) the cursor must be to a mark for the tooltip to list it
 const MARK_HIT = 5
 
-const run = useRunStore()
+const range = useRangeStore()
+const theme = useThemeStore()
 const host = ref(null)
 const empty = ref(true)
 let plot = null
 let tip = null
 let observer = null
 let lines = []
+// What the plot was built for: series labels, colors, styles and the theme
+let shape = null
 // A drag started on this chart (not a selection synced from another)
 let dragged = false
+
+const shapeOf = () => JSON.stringify([theme.dark, props.stepped, props.integer, props.series.map((s) => [s.label, s.color, !!s.fill, s.dash, !!s.band])])
+
+/** uPlot's data: x, then per series its band's max and min (when it has one) and its values. */
+function columns() {
+  const data = [props.x]
+  for (const s of props.series) {
+    if (s.band) data.push(s.band[1], s.band[0])
+    data.push(s.values)
+  }
+  return data
+}
+
+/** New data on the plot already built, or a new plot when its series or theme changed. */
+function update() {
+  const isEmpty = !props.x.length || !props.series.length
+  if (plot && !isEmpty && shape === shapeOf()) {
+    plot.setData(columns())
+    return
+  }
+  build()
+}
 
 function build() {
   plot?.destroy()
   plot = null
   tip?.remove()
   tip = null
+  shape = null
   empty.value = !props.x.length || !props.series.length
   if (empty.value || !host.value) return
+  shape = shapeOf()
   const c = chrome()
   const width = host.value.clientWidth || 300
   const fmt = props.format
@@ -69,14 +97,11 @@ function build() {
   // Bands draw first, under their line; `lines` are the series the tooltip lists
   lines = []
   const series = [{}]
-  const data = [props.x]
   const bands = []
   for (const s of props.series) {
     if (s.band) {
       series.push({ label: `${s.label} max`, stroke: "transparent", points: { show: false }, paths })
-      data.push(s.band[1])
       series.push({ label: `${s.label} min`, stroke: "transparent", points: { show: false }, paths })
-      data.push(s.band[0])
       bands.push({ series: [series.length - 2, series.length - 1], fill: `${s.color}22` })
     }
     lines.push([series.length, s.color])
@@ -90,7 +115,6 @@ function build() {
       paths,
       value: (_, v) => fmt(v),
     })
-    data.push(s.values)
   }
 
   const axis = {
@@ -128,18 +152,18 @@ function build() {
             const a = u.posToVal(u.select.left, "x")
             const b = u.posToVal(u.select.left + u.select.width, "x")
             u.setSelect({ width: 0, height: 0 }, false)
-            if (mine) run.brush(a, b)
+            if (mine) range.brush(a, b)
           },
         ],
         setCursor: [(u) => showTip(u)],
         draw: [(u) => drawMarks(u)],
       },
     },
-    data,
+    columns(),
     host.value,
   )
   plot.over.addEventListener("mousedown", () => (dragged = true))
-  plot.over.addEventListener("dblclick", () => run.zoomOut())
+  plot.over.addEventListener("dblclick", () => range.zoomOut())
   tip = document.createElement("div")
   tip.className = "kt-tip kt-v2-float"
   tip.style.display = "none"
@@ -172,14 +196,10 @@ function showTip(u) {
     return
   }
   const near = props.marks.filter((m) => Math.abs(u.valToPos(m.t, "x") - u.cursor.left) <= MARK_HIT)
-  const rows = near.map(
-    (m) => `<div class="kt-tip__row"><span class="kt-tip__swatch" style="background:${m.color}"></span>${clock(m.t)} ${escape(m.label)}</div>`,
-  )
+  const rows = near.map((m) => `<div class="kt-tip__row"><span class="kt-tip__swatch" style="background:${m.color}"></span>${clock(m.t)} ${escape(m.label)}</div>`)
   for (const [k, color] of lines) {
     const v = u.data[k][i]
-    rows.push(
-      `<div class="kt-tip__row"><span class="kt-tip__swatch" style="background:${color}"></span>${u.series[k].label}<span class="kt-tip__value">${v === null || v === undefined ? "—" : props.format(v)}</span></div>`,
-    )
+    rows.push(`<div class="kt-tip__row"><span class="kt-tip__swatch" style="background:${color}"></span>${u.series[k].label}<span class="kt-tip__value">${v === null || v === undefined ? "—" : props.format(v)}</span></div>`)
   }
   tip.innerHTML = `<div style="opacity:.7;margin-bottom:2px">${clock(u.data[0][i], true)}</div>${rows.join("")}`
   tip.style.display = "block"
@@ -200,7 +220,11 @@ onBeforeUnmount(() => {
   observer?.disconnect()
   plot?.destroy()
 })
-watch(() => [props.x, props.series, run.theme], () => nextTick(build), { deep: false })
+watch(
+  () => [props.x, props.series, theme.dark],
+  () => nextTick(update),
+  { deep: false },
+)
 watch(
   () => props.marks,
   () => plot?.redraw(false, false),

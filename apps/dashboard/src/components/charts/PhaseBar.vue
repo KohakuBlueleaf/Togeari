@@ -1,18 +1,15 @@
 <template>
   <div class="relative w-full" @mouseleave="hover = false">
     <div class="h-3.5 flex" :style="{ width: `${Math.max(1.5, frac * 100)}%` }" @mouseenter="hover = true">
-      <div
-        v-for="p in parts"
-        :key="p.name"
-        class="h-full"
-        :style="{ width: `${p.share * 100}%`, background: p.color, marginRight: p.last ? 0 : '2px', borderRadius: radius(p) }"
-      />
+      <div v-for="p in parts" :key="p.name" class="h-full" :style="{ width: `${p.share * 100}%`, background: p.color, marginRight: p.last ? 0 : '2px', borderRadius: radius(p) }" />
     </div>
     <div v-if="hover" class="kt-tip kt-v2-float" style="top: 20px; left: 0">
       <div v-for="p in parts" :key="p.name" class="kt-tip__row">
         <span class="kt-tip__swatch" :style="{ background: p.color }" />{{ PHASE_LABEL[p.name] }}<span class="kt-tip__value">{{ us(p.value) }}</span>
       </div>
-      <div class="kt-tip__row" style="opacity: 0.7">per call<span class="kt-tip__value">{{ us(total) }}</span></div>
+      <div class="kt-tip__row" style="opacity: 0.7">
+        per call<span class="kt-tip__value">{{ us(total) }}</span>
+      </div>
     </div>
   </div>
 </template>
@@ -20,7 +17,7 @@
 <script setup>
 import { computed, ref } from "vue"
 
-import { useRunStore } from "@/stores/run"
+import { useThemeStore } from "@/stores/theme"
 import { us } from "@/utils/format"
 import { PHASE_LABEL, PHASES, phase } from "@/utils/palette"
 
@@ -35,11 +32,11 @@ const props = defineProps({
   frac: { type: Number, default: 1 },
 })
 
-const run = useRunStore()
+const theme = useThemeStore()
 const hover = ref(false)
 const total = computed(() => (props.wait || 0) + (props.queue || 0) + (props.service || 0))
 const parts = computed(() => {
-  void run.theme
+  void theme.dark
   const vals = { wait: props.wait || 0, queue: props.queue || 0, service: props.service || 0 }
   const shown = PHASES.filter((p) => vals[p] > 0)
   return shown.map((name, i) => ({

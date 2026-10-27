@@ -9,7 +9,7 @@
         <span v-else class="text-[13px] font-semibold">{{ program?.entries?.join(", ") || program?.name }}</span>
         <span class="num text-[10px] text-warm-400">{{ program?.hash?.slice(0, 10) }}</span>
         <Segmented v-if="sourceDoc" v-model="shape" :options="SHAPE_OPTIONS" />
-        <Segmented v-model="run.graphView" :options="GRAPH_VIEW_OPTIONS" />
+        <Segmented v-model="prefs.graphView" :options="GRAPH_VIEW_OPTIONS" />
         <!-- The opened @defs: the entry, then each call double-clicked into -->
         <nav v-if="framed" class="flex items-center gap-1 text-xs min-w-0" title="Double-click a call to open its @def">
           <template v-for="(f, i) in frames" :key="i">
@@ -24,19 +24,7 @@
         </div>
       </div>
       <div class="flex-1 min-h-0 relative">
-        <KirGraph
-          v-if="doc"
-          :key="`${programStart}-${style}-${shape}-${frames.length}`"
-          :doc="doc"
-          :graph="graphName"
-          :view="view"
-          :overlay="overlay"
-          :selected="run.selected"
-          :minimap="false"
-          class="absolute inset-0"
-          @select="onSelect"
-          @open="onOpen"
-        >
+        <KirGraph v-if="doc" :key="`${programStart}-${style}-${shape}-${frames.length}`" :doc="doc" :graph="graphName" :view="view" :overlay="overlay" :selected="selection.node" :minimap="false" class="absolute inset-0" @select="onSelect" @open="onOpen">
           <div class="absolute left-3 bottom-3 kt-v2-float px-2.5 py-1.5 text-[11px] flex items-center gap-3">
             <span class="text-warm-500">{{ HEAT_OPTIONS.find((o) => o[0] === heatBy)[1] }}</span>
             <span class="flex items-center gap-1"><span class="w-16 h-2 rounded-sm kg-heat-scale" /><span class="text-warm-500">low → high</span></span>
@@ -54,13 +42,13 @@
       <div v-else class="p-5 flex flex-col gap-3">
         <p class="section-title">Statements</p>
         <p class="text-xs text-warm-500">Pick an element on the graph, or a row below, to see its calls, phases and latency over time.</p>
-        <button v-for="g in hottest" :key="g.path" class="text-left kt-v2-card px-3 py-2 kt-row" @click="run.selected = g.path">
+        <button v-for="g in hottest" :key="g.path" class="text-left kt-v2-card px-3 py-2 kt-row" @click="selection.node = g.path">
           <div class="flex items-center gap-2 text-xs min-w-0">
             <span class="font-medium shrink-0">{{ g.node }}</span>
             <span class="num text-[10px] text-warm-400 truncate min-w-0" :title="g.path">{{ g.path }}</span>
             <span class="ml-auto num text-warm-500 shrink-0">{{ pct(g.time / totalTime, 0) }}</span>
           </div>
-          <div class="mt-1.5"><PhaseBar :wait="run.withWait ? g.wait?.mean : 0" :queue="g.queue?.mean" :service="g.service?.mean" /></div>
+          <div class="mt-1.5"><PhaseBar :wait="prefs.withWait ? g.wait?.mean : 0" :queue="g.queue?.mean" :service="g.service?.mean" /></div>
         </button>
       </div>
     </SidePane>
@@ -71,19 +59,20 @@
 import { KirGraph, viewData } from "@kohaku/kir-graph"
 import { computed, ref, watch } from "vue"
 
-import { api } from "@/api/client"
 import PhaseBar from "@/components/charts/PhaseBar.vue"
+import StatementPanel from "@/components/program/StatementPanel.vue"
 import SidePane from "@/components/shell/SidePane.vue"
 import Segmented from "@/components/ui/Segmented.vue"
 import WaitToggle from "@/components/ui/WaitToggle.vue"
 import { useCompact } from "@/composables/useCompact"
 import { useLoad } from "@/composables/useLoad"
 import { usePrograms } from "@/composables/usePrograms"
-import { useRunStore } from "@/stores/run"
+import { usePrefsStore } from "@/stores/prefs"
+import { useSelectionStore } from "@/stores/selection"
+import { api } from "@/utils/api"
 import { count, pct, rate, us } from "@/utils/format"
 import { status } from "@/utils/palette"
 import { byPath, frameKey, statementRows } from "@/utils/statements"
-import StatementPanel from "@/views/program/StatementPanel.vue"
 
 // KIR's three views; each draws one data style (viewData): the flowchart and the blocks the
 // variables style, the node view the wires style
@@ -104,11 +93,12 @@ const HEAT_OPTIONS = [
   ["calls", "Calls"],
 ]
 
-const run = useRunStore()
+const prefs = usePrefsStore()
+const selection = useSelectionStore()
 const compact = useCompact()
 const { programs, index } = usePrograms()
 const programStart = ref(null)
-const view = computed(() => run.graphView)
+const view = computed(() => prefs.graphView)
 const style = computed(() => viewData(view.value))
 const heatBy = ref("time")
 const shape = ref("source")
@@ -143,10 +133,14 @@ function onOpen(s) {
   const n = s?.type === "node" ? s.node : null
   if (!framed.value || n?.kind !== "call" || !names.value.has(n.name)) return
   frames.value.push({ graph: n.name, prefix: [...frame.value.prefix, n.origin?.node_id ?? s.key] })
-  run.selected = null
+  selection.node = null
 }
 
-const { data: table } = useLoad((r) => api.table(r.runId, "node", r.t0, r.t1), () => null, [])
+const { data: table } = useLoad(
+  (r) => api.table(r.runId, "node", r.t0, r.t1),
+  () => null,
+  [],
+)
 // Each statement under the node it shows on: its lowered path on the inlined graph, its
 // frame node (frameKey) on a source graph, where a call holds every statement inlined from it
 const rows = computed(() => {
@@ -162,7 +156,7 @@ const labels = computed(() => {
   return new Map((g?.nodes || []).map((n) => [n.path ?? n.id, n.name || n.kind]))
 })
 const groups = computed(() => {
-  const out = byPath(rows.value, run.phases)
+  const out = byPath(rows.value, prefs.phases)
   if (framed.value) for (const g of out.values()) g.node = labels.value.get(g.path) || g.node
   return out
 })
@@ -191,11 +185,11 @@ const overlay = computed(() => {
 })
 
 const hottest = computed(() => [...groups.value.values()].sort((a, b) => b.time - a.time).slice(0, 10))
-const selectedGroup = computed(() => (run.selected ? groups.value.get(run.selected) || { path: run.selected, node: run.selected, addrs: [] } : null))
-const selectedRows = computed(() => rows.value.filter((r) => r.path === run.selected))
+const selectedGroup = computed(() => (selection.node ? groups.value.get(selection.node) || { path: selection.node, node: selection.node, addrs: [] } : null))
+const selectedRows = computed(() => rows.value.filter((r) => r.path === selection.node))
 
 function onSelect(s) {
-  run.selected = s?.type === "node" ? s.key : null
+  selection.node = s?.type === "node" ? s.key : null
 }
 </script>
 

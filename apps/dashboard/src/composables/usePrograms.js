@@ -1,6 +1,6 @@
 import { ref, watch } from "vue"
 
-import { api } from "@/api/client"
+import { api } from "@/utils/api"
 import { useRunStore } from "@/stores/run"
 import { statementIndex } from "@/utils/statements"
 

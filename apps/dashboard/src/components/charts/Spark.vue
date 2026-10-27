@@ -8,10 +8,13 @@
 <script setup>
 import { computed } from "vue"
 
-import { useRunStore } from "@/stores/run"
+import { useThemeStore } from "@/stores/theme"
 import { series } from "@/utils/palette"
 
-/** A sparkline of `values` (nulls skipped) scaled to its own range, shrinking to its container. */
+/**
+ * A sparkline of `values` (nulls skipped) scaled to its own range, shrinking to its container.
+ * More values than two per pixel column are drawn as each column's least and greatest value.
+ */
 const props = defineProps({
   values: { type: Array, default: () => [] },
   width: { type: Number, default: 96 },
@@ -20,17 +23,52 @@ const props = defineProps({
   label: { type: String, default: "" },
 })
 
-const run = useRunStore()
-const stroke = computed(() => (void run.theme, props.color || series(0)))
+const theme = useThemeStore()
+const stroke = computed(() => (void theme.dark, props.color || series(0)))
 const points = computed(() => {
   const vs = props.values
-  const ok = vs.map((v, i) => [i, v]).filter(([, v]) => v !== null && v !== undefined && Number.isFinite(v))
-  if (ok.length < 2) return []
-  const hi = Math.max(...ok.map(([, v]) => v))
-  const lo = Math.min(0, ...ok.map(([, v]) => v))
+  let hi = -Infinity
+  let lo = 0
+  let ok = 0
+  for (const v of vs) {
+    if (!Number.isFinite(v)) continue
+    if (v > hi) hi = v
+    if (v < lo) lo = v
+    ok++
+  }
+  if (ok < 2) return []
   const span = hi - lo || 1
   const n = vs.length - 1 || 1
-  return ok.map(([i, v]) => [(i / n) * props.width, props.height - 1 - ((v - lo) / span) * (props.height - 3)])
+  const x = (i) => (i / n) * props.width
+  const y = (v) => props.height - 1 - ((v - lo) / span) * (props.height - 3)
+  const cols = Math.max(1, Math.round(props.width))
+  const out = []
+  if (vs.length <= cols * 2) {
+    vs.forEach((v, i) => Number.isFinite(v) && out.push([x(i), y(v)]))
+    return out
+  }
+  // Per pixel column its least and greatest value, in the order they come
+  let col = -1
+  let a = -1
+  let b = -1
+  const flush = () => {
+    if (a < 0) return
+    for (const i of a === b ? [a] : a < b ? [a, b] : [b, a]) out.push([x(i), y(vs[i])])
+  }
+  vs.forEach((v, i) => {
+    if (!Number.isFinite(v)) return
+    const c = Math.floor((i / n) * (cols - 1))
+    if (c !== col) {
+      flush()
+      col = c
+      a = b = i
+    } else {
+      if (v < vs[a]) a = i
+      if (v > vs[b]) b = i
+    }
+  })
+  flush()
+  return out
 })
 const line = computed(() => points.value.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join(""))
 const area = computed(() => {

@@ -20,12 +20,16 @@
       </g>
     </svg>
     <div v-if="hover !== null" class="kt-tip kt-v2-float" :style="{ left: `${label + 8}px`, top: `${y(hover) + ROW + 4}px` }">
-      <div class="kt-tip__row font-medium">{{ row.node }} <span style="opacity: 0.6">@{{ row.addr }}</span></div>
+      <div class="kt-tip__row font-medium">
+        {{ row.node }} <span style="opacity: 0.6">@{{ row.addr }}</span>
+      </div>
       <div class="kt-tip__row" style="opacity: 0.7">{{ [row.lane, row.unit].filter(Boolean).join(" · ") }}</div>
       <div v-for="s in row.segs" :key="s.phase" class="kt-tip__row">
         <span class="kt-tip__swatch" :style="{ background: phaseColor(s.phase) }" />{{ PHASE_LABEL[s.phase] }}<span class="kt-tip__value">{{ us(s.b - s.a) }}</span>
       </div>
-      <div class="kt-tip__row" style="opacity: 0.7">from admission<span class="kt-tip__value">{{ us(row.start) }} → {{ us(row.end) }}</span></div>
+      <div class="kt-tip__row" style="opacity: 0.7">
+        from admission<span class="kt-tip__value">{{ us(row.start) }} → {{ us(row.end) }}</span>
+      </div>
       <div v-if="row.status" class="kt-tip__row" :style="{ color: bad }">failed (status {{ row.status }})</div>
     </div>
   </div>
@@ -34,7 +38,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from "vue"
 
-import { useRunStore } from "@/stores/run"
+import { useThemeStore } from "@/stores/theme"
 import { us } from "@/utils/format"
 import { chrome, PHASE_LABEL, phase, status } from "@/utils/palette"
 
@@ -43,15 +47,15 @@ const props = defineProps({ fall: { type: Object, required: true } })
 
 const ROW = 22
 const AXIS = 20
-const run = useRunStore()
+const theme = useThemeStore()
 const host = ref(null)
 const width = ref(800)
 const hover = ref(null)
 let observer = null
 
-const c = computed(() => (void run.theme, { ...chrome(), hover: run.theme === "dark" ? "rgba(255,255,255,0.04)" : "rgba(36,33,29,0.04)" }))
-const bad = computed(() => (void run.theme, status("bad")))
-const phaseColor = (p) => (void run.theme, phase(p))
+const c = computed(() => ({ ...chrome(), hover: theme.dark ? "rgba(255,255,255,0.04)" : "rgba(36,33,29,0.04)" }))
+const bad = computed(() => (void theme.dark, status("bad")))
+const phaseColor = (p) => (void theme.dark, phase(p))
 const height = computed(() => AXIS + props.fall.rows.length * ROW + 8)
 const row = computed(() => props.fall.rows[hover.value])
 const total = computed(() => Math.max(1, props.fall.total, ...props.fall.rows.map((r) => r.end)))

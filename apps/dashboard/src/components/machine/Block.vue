@@ -1,13 +1,5 @@
 <template>
-  <div
-    role="button"
-    tabindex="0"
-    class="kt-v2-card kt-block text-left flex flex-col min-w-0 min-h-0 px-3 py-2 transition-colors cursor-pointer"
-    :class="[on ? 'kt-block--on' : '', accent ? `kt-block--${accent}` : '']"
-    :aria-pressed="on"
-    @click="$emit('pick')"
-    @keydown.enter.prevent="$emit('pick')"
-  >
+  <div role="button" tabindex="0" class="kt-v2-card kt-block text-left flex flex-col min-w-0 min-h-0 px-3 py-2 transition-colors cursor-pointer" :class="[on ? 'kt-block--on' : '', accent ? `kt-block--${accent}` : '']" :aria-pressed="on" @click="$emit('pick')" @keydown.enter.prevent="$emit('pick')">
     <div class="flex items-center gap-1.5 min-w-0">
       <span v-if="icon" :class="icon" class="text-[13px] text-warm-500 dark:text-warm-400 shrink-0" />
       <span class="text-[12.5px] font-semibold truncate" :class="accent ? `kt-block__title--${accent}` : ''">{{ title }}</span>

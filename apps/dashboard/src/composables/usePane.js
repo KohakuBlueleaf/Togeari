@@ -7,30 +7,15 @@
 
 import { reactive } from "vue"
 
+import { readPref, writePref } from "@/utils/prefs"
+
 const PANES = new Map()
-
-function read(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key)
-    return raw === null ? fallback : JSON.parse(raw)
-  } catch {
-    return fallback
-  }
-}
-
-function write(key, value) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value))
-  } catch {
-    /* a private window or blocked storage: the pane still works, unpersisted */
-  }
-}
 
 export function usePane(name, { initial, min, max, edge }) {
   if (PANES.has(name)) return PANES.get(name)
-  const key = `togeari.dash.pane.${name}`
+  const key = `pane.${name}`
   const clamp = (w) => Math.max(min, Math.min(max, Math.round(w)))
-  const saved = read(key, {})
+  const saved = readPref(key, {})
   const pane = reactive({
     width: clamp(Number.isFinite(saved.width) ? saved.width : initial),
     collapsed: saved.collapsed === true,
@@ -39,7 +24,7 @@ export function usePane(name, { initial, min, max, edge }) {
     max,
     edge,
     persist() {
-      write(key, { width: pane.width, collapsed: pane.collapsed })
+      writePref(key, { width: pane.width, collapsed: pane.collapsed })
     },
     toggle() {
       pane.collapsed = !pane.collapsed

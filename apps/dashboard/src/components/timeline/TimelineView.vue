@@ -53,21 +53,27 @@
 <script setup>
 import { computed } from "vue"
 
-import { api } from "@/api/client"
 import TimeChart from "@/components/charts/TimeChart.vue"
 import SectionCard from "@/components/ui/SectionCard.vue"
 import { useLoad } from "@/composables/useLoad"
 import { RARE, useLiveStore } from "@/stores/live"
 import { useRunStore } from "@/stores/run"
+import { useThemeStore } from "@/stores/theme"
+import { api, SAMPLE_POINTS } from "@/utils/api"
 import { count, num, rate, us } from "@/utils/format"
 import { phase, series, status } from "@/utils/palette"
 
 const POINTS = 300
 const run = useRunStore()
+const theme = useThemeStore()
 const live = useLiveStore()
 const rateFmt = (v) => `${rate(v)}/s`
 
-const { data: entries } = useLoad((r) => api.table(r.runId, "entry", r.t0, r.t1), () => null, [])
+const { data: entries } = useLoad(
+  (r) => api.table(r.runId, "entry", r.t0, r.t1),
+  () => null,
+  [],
+)
 const { data: jobSeries } = useLoad(
   async (r) => {
     const out = await Promise.all((entries.value || []).map((e) => api.series(r.runId, e.entity, "job", r.t0, r.t1, POINTS, "rate")))
@@ -76,7 +82,7 @@ const { data: jobSeries } = useLoad(
   () => (entries.value || []).map((e) => e.entity).join(","),
 )
 const { data: samples } = useLoad(
-  (r) => api.samples(r.runId, { names: ["jobs/resident", "writer/tick_ms", "ring/pending", "ring/dropped"], prefix: "lane/", t0: r.t0, t1: r.t1 }),
+  (r, { signal, emit, previous, refresh }) => api.sampleStream(r.runId, { names: ["jobs/resident", "writer/tick_ms", "ring/pending", "ring/dropped"], prefix: ["lane/"], t0: r.t0, t1: r.t1, points: SAMPLE_POINTS }, { signal, previous, refresh, onPart: emit }),
   () => null,
   {},
 )
@@ -95,10 +101,10 @@ const { data: laneSeries } = useLoad(
   [],
 )
 
-const line = (s, label, color, opts = {}) => (s?.t?.length ? { x: s.t, series: [{ label, values: s.v, color, ...opts }] } : { x: [], series: [] })
+const line = (s, label, color, opts = {}) => (s?.t?.length ? { x: s.t, series: [{ label, values: s.v, color, ...(s.lo ? { band: [s.lo, s.hi] } : {}), ...opts }] } : { x: [], series: [] })
 
 const jobs = computed(() => {
-  void run.theme
+  void theme.dark
   const all = jobSeries.value || []
   if (!all.length || !all[0].t.length) return { x: [], series: [] }
   // Entries add up on the first entry's buckets
@@ -106,12 +112,12 @@ const jobs = computed(() => {
   const sum = x.map((t, i) => all.reduce((acc, s) => acc + (s.t[i] === t ? (s.v[i] ?? 0) : 0), 0))
   return { x, series: [{ label: "jobs/s", values: sum, color: series(1), fill: true }] }
 })
-const resident = computed(() => (void run.theme, line(samples.value?.["jobs/resident"], "resident", series(0), { fill: true })))
+const resident = computed(() => (void theme.dark, line(samples.value?.["jobs/resident"], "resident", series(0), { fill: true })))
 
 // Rare events of the live machine as rules: every event on the job charts; on a lane's charts,
 // the events naming that lane or one of its units, and the machine-wide ones
 const marks = computed(() => {
-  void run.theme
+  void theme.dark
   return live.events.map((e) => ({ t: e.t, label: [e.kind, e.unit ?? e.lane ?? e.plugin ?? e.error ?? ""].join(" "), color: status(RARE[e.kind] || "idle"), e }))
 })
 const unitsOf = computed(() => new Map((run.info?.machine?.lanes || []).map((l) => [l.name, new Set(l.units)])))
@@ -122,7 +128,7 @@ const laneMarks = computed(() => {
 })
 
 const lanes = computed(() => {
-  void run.theme
+  void theme.dark
   return (laneSeries.value || []).map((l) => ({
     id: l.id,
     name: l.name,
@@ -133,7 +139,7 @@ const lanes = computed(() => {
 })
 
 const health = computed(() => {
-  void run.theme
+  void theme.dark
   const s = samples.value || {}
   return {
     tick: line(s["writer/tick_ms"], "tick", series(0)),

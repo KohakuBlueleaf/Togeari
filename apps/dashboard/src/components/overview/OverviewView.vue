@@ -2,25 +2,11 @@
   <div class="p-3 md:p-5 flex flex-col gap-4 max-w-[1600px] mx-auto">
     <!-- Headline numbers -->
     <div class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
-      <StatTile label="Jobs done" icon="i-carbon-checkmark-outline" :value="count(jobs.done)" :note="`${rate(jobs.done / run.seconds)} / s`" :trend="throughputTrend" />
+      <StatTile label="Jobs done" icon="i-carbon-checkmark-outline" :value="count(jobs.done)" :note="`${rate(jobs.done / range.seconds)} / s`" :trend="throughputTrend" />
       <StatTile label="Job time p50" icon="i-carbon-time" :value="us(jobs.p50)" :note="`p90 ${us(jobs.p90)} · p99 ${us(jobs.p99)}`" />
-      <StatTile
-        label="Failed jobs"
-        icon="i-carbon-warning-alt"
-        :value="count(jobs.failed)"
-        :status="jobs.failed ? 'bad' : 'good'"
-        :status-text="jobs.failed ? pct(jobs.failed / Math.max(1, jobs.admitted)) : 'none'"
-        :note="jobs.failed ? 'failed or cancelled' : null"
-      />
+      <StatTile label="Failed jobs" icon="i-carbon-warning-alt" :value="count(jobs.failed)" :status="jobs.failed ? 'bad' : 'good'" :status-text="jobs.failed ? pct(jobs.failed / Math.max(1, jobs.admitted)) : 'none'" :note="jobs.failed ? 'failed or cancelled' : null" />
       <StatTile label="Calls" icon="i-carbon-function" :value="rate(calls.rate)" unit="/ s" :note="`${count(calls.n)} in range`" />
-      <StatTile
-        label="Failed attempts"
-        icon="i-carbon-error"
-        :value="count(calls.errors)"
-        :status="calls.errors ? 'warn' : 'good'"
-        :status-text="calls.errors ? pct(calls.errors / Math.max(1, calls.n), 2) : 'none'"
-        :note="calls.faults ? `${count(calls.faults)} reached a job` : null"
-      />
+      <StatTile label="Failed attempts" icon="i-carbon-error" :value="count(calls.errors)" :status="calls.errors ? 'warn' : 'good'" :status-text="calls.errors ? pct(calls.errors / Math.max(1, calls.n), 2) : 'none'" :note="calls.faults ? `${count(calls.faults)} reached a job` : null" />
       <StatTile label="Resident jobs" icon="i-carbon-layers" :value="count(resident.last)" :note="`peak ${count(resident.peak)}`" :trend="resident.values" />
     </div>
 
@@ -36,14 +22,12 @@
           <WaitToggle />
         </template>
         <div class="px-4 py-3 flex flex-col gap-2.5">
-          <button
-            v-for="r in timeRows"
-            :key="r.addr"
-            class="text-left grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)_4.5rem] items-center gap-3 rounded-md -mx-1.5 px-1.5 py-0.5 kt-row"
-            @click="openStatement(r)"
-          >
-            <span class="truncate text-xs"><span class="font-medium">{{ r.node }}</span><span class="text-warm-400 num text-[10px] ml-1">@{{ r.addr }}</span></span>
-            <PhaseBar :wait="run.withWait ? mean(r, 'wait') : 0" :queue="mean(r, 'queue')" :service="mean(r, 'service')" :frac="r.perCall / maxPerCall" />
+          <button v-for="r in timeRows" :key="r.addr" class="text-left grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)_4.5rem] items-center gap-3 rounded-md -mx-1.5 px-1.5 py-0.5 kt-row" @click="openStatement(r)">
+            <span class="truncate text-xs"
+              ><span class="font-medium">{{ r.node }}</span
+              ><span class="text-warm-400 num text-[10px] ml-1">@{{ r.addr }}</span></span
+            >
+            <PhaseBar :wait="prefs.withWait ? mean(r, 'wait') : 0" :queue="mean(r, 'queue')" :service="mean(r, 'service')" :frac="r.perCall / maxPerCall" />
             <span class="num text-[11px] text-right text-warm-600 dark:text-warm-300">{{ pct(r.share, 0) }} <span class="text-warm-400">time</span></span>
           </button>
           <p v-if="!timeRows.length" class="text-xs text-warm-400">No calls in this range.</p>
@@ -53,7 +37,9 @@
 
     <!-- The live machine's rare events -->
     <SectionCard v-if="live.live" title="Machine events" icon="i-carbon-activity" :count="live.events.length" hint="units, lanes, plugins, the machine · newest first" flush>
-      <template #actions><span class="chip-sage"><span class="i-carbon-dot-mark text-[10px] animate-pulse" />live</span></template>
+      <template #actions
+        ><span class="chip-sage"><span class="i-carbon-dot-mark text-[10px] animate-pulse" />live</span></template
+      >
       <EventFeed :events="live.events" :limit="8" />
     </SectionCard>
 
@@ -75,7 +61,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="l in lanes" :key="l.name" class="kt-v2-line border-b last:border-b-0 kt-row cursor-pointer" @click="run.view = 'machine'">
+          <tr v-for="l in lanes" :key="l.name" class="kt-v2-line border-b last:border-b-0 kt-row cursor-pointer" @click="router.push(viewPath(run.runId, 'machine'))">
             <td class="px-4 h-10 font-medium">{{ l.name }}</td>
             <td class="px-3 text-right num">{{ l.units }}</td>
             <td class="px-3 text-right num">{{ rate(l.rate) }}</td>
@@ -84,7 +70,11 @@
             <td class="px-3 text-right num">{{ us(l.queue?.p90) }}</td>
             <td class="px-3 text-right num">{{ us(l.service?.p50) }}</td>
             <td class="px-3 text-right num">{{ us(l.service?.p90) }}</td>
-            <td class="px-3"><div class="flex items-center gap-2"><Spark :values="l.queueLen" :label="`${l.name} queue`" /><span class="num text-warm-500">{{ count(l.queueLast) }}</span></div></td>
+            <td class="px-3">
+              <div class="flex items-center gap-2">
+                <Spark :values="l.queueLen" :label="`${l.name} queue`" /><span class="num text-warm-500">{{ count(l.queueLast) }}</span>
+              </div>
+            </td>
             <td class="px-4 text-right num" :class="l.errors ? 'text-coral-shadow dark:text-coral-light' : 'text-warm-400'">{{ l.errors ? count(l.errors) : "—" }}</td>
           </tr>
         </tbody>
@@ -106,7 +96,8 @@
 <script setup>
 import { computed } from "vue"
 
-import { api } from "@/api/client"
+import { useRouter } from "vue-router"
+
 import ChartLegend from "@/components/charts/ChartLegend.vue"
 import PhaseBar from "@/components/charts/PhaseBar.vue"
 import Spark from "@/components/charts/Spark.vue"
@@ -115,24 +106,55 @@ import EventFeed from "@/components/ui/EventFeed.vue"
 import SectionCard from "@/components/ui/SectionCard.vue"
 import StatTile from "@/components/ui/StatTile.vue"
 import StatementTable from "@/components/ui/StatementTable.vue"
+import WaitToggle from "@/components/ui/WaitToggle.vue"
 import { useLoad } from "@/composables/useLoad"
 import { usePrograms } from "@/composables/usePrograms"
 import { useLiveStore } from "@/stores/live"
+import { usePrefsStore } from "@/stores/prefs"
+import { useRangeStore } from "@/stores/range"
 import { useRunStore } from "@/stores/run"
+import { useSelectionStore } from "@/stores/selection"
+import { useThemeStore } from "@/stores/theme"
+import { api, SAMPLE_POINTS } from "@/utils/api"
 import { count, num, pct, rate, us } from "@/utils/format"
-import WaitToggle from "@/components/ui/WaitToggle.vue"
 import { PHASE_LABEL, phase, series } from "@/utils/palette"
 import { mean, statementRows, totalTime } from "@/utils/statements"
+import { viewPath } from "@/utils/views"
 
+const router = useRouter()
 const run = useRunStore()
+const range = useRangeStore()
+const prefs = usePrefsStore()
+const selection = useSelectionStore()
+const theme = useThemeStore()
 const live = useLiveStore()
 const { index } = usePrograms()
 
-const { data: nodeTable } = useLoad((r) => api.table(r.runId, "node", r.t0, r.t1), () => null, [])
-const { data: entryTable } = useLoad((r) => api.table(r.runId, "entry", r.t0, r.t1), () => null, [])
-const { data: laneTable } = useLoad((r) => api.table(r.runId, "lane", r.t0, r.t1), () => null, [])
-const { data: unitTable } = useLoad((r) => api.table(r.runId, "unit", r.t0, r.t1), () => null, [])
-const { data: samples } = useLoad((r) => api.samples(r.runId, { names: ["jobs/resident"], prefix: "lane/", t0: r.t0, t1: r.t1 }), () => null, {})
+const { data: nodeTable } = useLoad(
+  (r) => api.table(r.runId, "node", r.t0, r.t1),
+  () => null,
+  [],
+)
+const { data: entryTable } = useLoad(
+  (r) => api.table(r.runId, "entry", r.t0, r.t1),
+  () => null,
+  [],
+)
+const { data: laneTable } = useLoad(
+  (r) => api.table(r.runId, "lane", r.t0, r.t1),
+  () => null,
+  [],
+)
+const { data: unitTable } = useLoad(
+  (r) => api.table(r.runId, "unit", r.t0, r.t1),
+  () => null,
+  [],
+)
+const { data: samples } = useLoad(
+  (r, { signal, emit, previous, refresh }) => api.sampleStream(r.runId, { names: ["jobs/resident"], prefix: ["lane/"], t0: r.t0, t1: r.t1, points: SAMPLE_POINTS }, { signal, previous, refresh, onPart: emit }),
+  () => null,
+  {},
+)
 
 // The entry with the most jobs drives the throughput chart
 const mainEntry = computed(() => [...(entryTable.value || [])].sort((a, b) => (b.metrics.admitted?.n ?? 0) - (a.metrics.admitted?.n ?? 0))[0])
@@ -175,7 +197,8 @@ const calls = computed(() => {
 const resident = computed(() => {
   const s = samples.value?.["jobs/resident"]
   const values = s?.v || []
-  return { values, last: values[values.length - 1] ?? null, peak: values.length ? Math.max(...values) : null }
+  const highs = s?.hi || values
+  return { values, last: values[values.length - 1] ?? null, peak: highs.length ? highs.reduce((a, b) => Math.max(a, b)) : null }
 })
 
 // Throughput: admitted and done on one x (the done series' buckets)
@@ -183,7 +206,7 @@ const throughput = computed(() => {
   const d = tp.value
   if (!d || !d.done.t.length) return { x: [], series: [] }
   const at = new Map(d.adm.t.map((t, i) => [t, d.adm.v[i]]))
-  void run.theme
+  void theme.dark
   return {
     x: d.done.t,
     series: [
@@ -194,12 +217,12 @@ const throughput = computed(() => {
 })
 const throughputTrend = computed(() => throughput.value.series[1]?.values || null)
 const throughputLegend = computed(() => throughput.value.series.map((s) => ({ label: s.label, color: s.color })))
-const phaseLegend = computed(() => (void run.theme, run.phases.map((p) => ({ label: PHASE_LABEL[p], color: phase(p) }))))
+const phaseLegend = computed(() => (void theme.dark, prefs.phases.map((p) => ({ label: PHASE_LABEL[p], color: phase(p) }))))
 const rateFmt = (v) => `${rate(v)}/s`
 
 // Where the time goes: statements by total time, bars by mean time per call
 const timeRows = computed(() => {
-  const phases = run.phases
+  const phases = prefs.phases
   const all = rows.value.map((r) => ({ ...r, time: totalTime(r, phases), perCall: phases.reduce((t, p) => t + mean(r, p), 0) }))
   const total = all.reduce((t, r) => t + r.time, 0) || 1
   return all
@@ -239,11 +262,21 @@ const lanes = computed(() => {
   })
 })
 
-const slowest = computed(() => [...rows.value].filter((r) => r.service?.p99).sort((a, b) => b.service.p99 - a.service.p99).slice(0, 8))
-const failing = computed(() => [...rows.value].filter((r) => r.errors || r.faults).sort((a, b) => b.errors - a.errors).slice(0, 8))
+const slowest = computed(() =>
+  [...rows.value]
+    .filter((r) => r.service?.p99)
+    .sort((a, b) => b.service.p99 - a.service.p99)
+    .slice(0, 8),
+)
+const failing = computed(() =>
+  [...rows.value]
+    .filter((r) => r.errors || r.faults)
+    .sort((a, b) => b.errors - a.errors)
+    .slice(0, 8),
+)
 
 function openStatement(r) {
-  run.selected = r.path || null
-  run.view = "program"
+  selection.node = r.path || null
+  router.push(viewPath(run.runId, "program"))
 }
 </script>

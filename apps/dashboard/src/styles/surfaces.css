@@ -115,6 +115,25 @@ html.dark .kt-v2 {
   background: color-mix(in srgb, var(--kt-color-iolite) 9%, transparent);
 }
 
+/* Category toggles: on reads as a filled chip, off as a struck-through outline */
+.kt-cat {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--kt-color-iolite) 35%, transparent);
+  background: color-mix(in srgb, var(--kt-color-iolite) 10%, transparent);
+  cursor: pointer;
+}
+.kt-cat--off {
+  background: transparent;
+  border-color: var(--v2-tab-hover);
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+.kt-cat:focus-visible {
+  outline: 2px solid var(--kt-color-iolite);
+  outline-offset: 1px;
+}
+
 /* Inputs: a card-coloured field, iolite focus ring */
 .kt-input {
   height: 1.5rem;

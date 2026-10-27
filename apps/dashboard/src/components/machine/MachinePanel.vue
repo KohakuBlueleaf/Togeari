@@ -6,7 +6,7 @@
         <span :class="head.icon" class="text-warm-500 text-[15px]" />
         <span class="text-[15px] font-semibold truncate">{{ head.title }}</span>
         <span v-if="head.chip" class="chip-warm">{{ head.chip }}</span>
-        <button class="btn-icon ml-auto" title="Close" @click="run.part = null"><span class="i-carbon-close" /></button>
+        <button class="btn-icon ml-auto" title="Close" @click="selection.part = null"><span class="i-carbon-close" /></button>
       </div>
       <p v-if="head.note" class="mt-0.5 text-[11px] text-warm-500">{{ head.note }}</p>
       <div v-if="lane" class="mt-2 flex flex-wrap gap-1">
@@ -37,11 +37,8 @@
     <!-- Unit, live: its state and detaching it -->
     <div v-if="unit && liveUnit" class="px-5 py-2.5 kt-v2-line border-b flex items-center gap-2 text-[11px]">
       <span class="chip-sage !text-[10px]">live</span>
-      <span class="text-warm-500">state</span><span class="num font-medium">{{ liveUnit.state }}</span>
-      <span class="text-warm-500 ml-2">in flight</span><span class="num">{{ count(liveUnit.inflight) }}</span>
-      <button class="btn-ghost ml-auto !text-coral-shadow dark:!text-coral-light" :disabled="liveUnit.state === 'detached'" @click="proposeDetach">
-        <span class="i-carbon-unlink" />Detach
-      </button>
+      <span class="text-warm-500">state</span><span class="num font-medium">{{ liveUnit.state }}</span> <span class="text-warm-500 ml-2">in flight</span><span class="num">{{ count(liveUnit.inflight) }}</span>
+      <button class="btn-ghost ml-auto !text-coral-shadow dark:!text-coral-light" :disabled="liveUnit.state === 'detached'" @click="proposeDetach"><span class="i-carbon-unlink" />Detach</button>
     </div>
 
     <!-- Charts of the open part -->
@@ -71,7 +68,8 @@
     <div v-if="kind === 'pool'" class="px-5 py-3.5 kt-v2-line border-b grid grid-cols-2 gap-x-3 gap-y-2">
       <div v-for="s in model.pool.states" :key="s.key" class="min-w-0">
         <div class="flex items-baseline gap-1.5 text-[11px]" :title="s.note">
-          <span class="font-medium">{{ s.key }}</span><span class="ml-auto num text-warm-500">mean {{ num(s.mean, 1) }}</span>
+          <span class="font-medium">{{ s.key }}</span
+          ><span class="ml-auto num text-warm-500">mean {{ num(s.mean, 1) }}</span>
         </div>
         <TimeChart :x="s.series?.t || []" :series="s.series ? [{ label: s.key, values: s.series.v, color: seriesColor(0), fill: true }] : []" :format="(v) => count(v)" :height="80" stepped integer />
       </div>
@@ -90,10 +88,8 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="u in lane.units" :key="u.name" class="kt-row cursor-pointer" @click="run.part = `unit:${u.name}`">
-            <td class="px-5 h-8">
-              <span :class="UNIT_STATE[u.state].icon" :style="{ color: stateColor(u.state) }" class="text-[10px] mr-1" />{{ u.name }}
-            </td>
+          <tr v-for="u in lane.units" :key="u.name" class="kt-row cursor-pointer" @click="selection.part = `unit:${u.name}`">
+            <td class="px-5 h-8"><span :class="UNIT_STATE[u.state].icon" :style="{ color: stateColor(u.state) }" class="text-[10px] mr-1" />{{ u.name }}</td>
             <td class="px-2 text-right num">{{ rate(u.items) }}</td>
             <td class="px-2 text-right num">{{ pct(u.fill, 0) }}</td>
             <td class="px-2 text-right num">{{ pct(u.busy, 0) }}</td>
@@ -108,7 +104,9 @@
       <div v-if="engine.length" class="px-5 py-3.5 kt-v2-line border-b">
         <div class="section-title mb-1.5">The engine's own numbers (last sample)</div>
         <div class="flex flex-wrap gap-1">
-          <span v-for="e in engine" :key="e.k" class="chip-warm">{{ e.k }} <b class="num font-medium">{{ e.v }}</b></span>
+          <span v-for="e in engine" :key="e.k" class="chip-warm"
+            >{{ e.k }} <b class="num font-medium">{{ e.v }}</b></span
+          >
         </div>
       </div>
       <div class="px-5 py-3.5">
@@ -169,18 +167,20 @@
 <script setup>
 import { computed, ref } from "vue"
 
-import { api } from "@/api/client"
 import ChartLegend from "@/components/charts/ChartLegend.vue"
 import HistChart from "@/components/charts/HistChart.vue"
 import TimeChart from "@/components/charts/TimeChart.vue"
+import KnobRow from "@/components/machine/KnobRow.vue"
+import { configChips, perSecond, UNIT_STATE } from "@/components/machine/model"
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue"
 import { useLoad } from "@/composables/useLoad"
 import { useLiveStore } from "@/stores/live"
 import { useRunStore } from "@/stores/run"
+import { useSelectionStore } from "@/stores/selection"
+import { useThemeStore } from "@/stores/theme"
+import { api } from "@/utils/api"
 import { count, num, pct, rate, us } from "@/utils/format"
 import { phase, series as seriesColor, status } from "@/utils/palette"
-import KnobRow from "@/views/machine/KnobRow.vue"
-import { configChips, perSecond, UNIT_STATE } from "@/views/machine/model"
 
 /** The side panel of the Machine view: the open part's numbers, charts and tables. */
 const props = defineProps({
@@ -189,8 +189,10 @@ const props = defineProps({
 })
 
 const run = useRunStore()
-const kind = computed(() => (run.part || "").split(":")[0])
-const name = computed(() => (run.part || "").split(":").slice(1).join(":"))
+const selection = useSelectionStore()
+const theme = useThemeStore()
+const kind = computed(() => (selection.part || "").split(":")[0])
+const name = computed(() => (selection.part || "").split(":").slice(1).join(":"))
 const lane = computed(() => (kind.value === "lane" ? props.model.lanes.find((l) => l.name === name.value) : null))
 const unit = computed(() => {
   if (kind.value !== "unit") return null
@@ -198,7 +200,7 @@ const unit = computed(() => {
   return null
 })
 const S = (n) => props.samples?.[n] || null
-const stateColor = (s) => (void run.theme, status({ up: "good", errors: "warn", down: "bad" }[s] || "idle"))
+const stateColor = (s) => (void theme.dark, status({ up: "good", errors: "warn", down: "bad" }[s] || "idle"))
 const one = (label, s, color, extra = {}) => (s ? { label, values: s.v, color, ...extra } : null)
 
 /** Series sampled together, summed index by index (null when none). */
@@ -209,7 +211,11 @@ function sumOf(list) {
   return { t: got[0].t.slice(0, n), v: Array.from({ length: n }, (_, i) => got.reduce((a, s) => a + s.v[i], 0)) }
 }
 
-const { data: entryTable } = useLoad((r) => (kind.value === "jobs" ? api.table(r.runId, "entry", r.t0, r.t1) : null), () => kind.value, [])
+const { data: entryTable } = useLoad(
+  (r) => (kind.value === "jobs" ? api.table(r.runId, "entry", r.t0, r.t1) : null),
+  () => kind.value,
+  [],
+)
 const entries = computed(() => entryTable.value || [])
 const mainEntry = computed(() => [...entries.value].sort((a, b) => (b.metrics.admitted?.n ?? 0) - (a.metrics.admitted?.n ?? 0))[0])
 const { data: tp } = useLoad(
@@ -227,7 +233,10 @@ const unitId = computed(() => {
   for (const [id, row] of run.names.unit) if (row.name === unit.value.name) return id
   return null
 })
-const { data: hist } = useLoad((r) => (unitId.value === null ? null : api.hist(r.runId, `unit:${unitId.value}`, "service", r.t0, r.t1)), () => unitId.value)
+const { data: hist } = useLoad(
+  (r) => (unitId.value === null ? null : api.hist(r.runId, `unit:${unitId.value}`, "service", r.t0, r.t1)),
+  () => unitId.value,
+)
 
 const OWN = new Set(["held", "free", "busy_s", "done", "running", "waiting"])
 const engine = computed(() => {
@@ -279,10 +288,7 @@ function proposePolicy(p, event) {
     command: "set_lane_policy",
     body: { lane: liveLane.value.name, policy: p.role, value },
     changes: [{ label: `${liveLane.value.name} ${p.role}`, from: p.current, to: value }],
-    note:
-      p.role === "former"
-        ? "Set between cycles; every item queued on the lane is re-bucketed under the new former. A policy the lane refuses leaves the old one set."
-        : "Set between cycles; the new selector picks the unit for the next batches sent. A policy the lane refuses leaves the old one set.",
+    note: p.role === "former" ? "Set between cycles; every item queued on the lane is re-bucketed under the new former. A policy the lane refuses leaves the old one set." : "Set between cycles; the new selector picks the unit for the next batches sent. A policy the lane refuses leaves the old one set.",
   }
 }
 
@@ -335,7 +341,7 @@ const head = computed(() => {
     case "unit":
       return { icon: "i-carbon-chip", title: name.value, chip: unit.value?.lane ? `lane ${unit.value.lane}` : null, note: "Fill: items the lane sent and the unit has not answered, over those plus its free capacity." }
   }
-  return { icon: "", title: run.part }
+  return { icon: "", title: selection.part }
 })
 
 const tiles = computed(() => {
@@ -384,7 +390,7 @@ const tiles = computed(() => {
 })
 
 const charts = computed(() => {
-  void run.theme
+  void theme.dark
   const out = []
   const add = (title, s, list, format, extra = {}) => {
     const sl = list.filter(Boolean)

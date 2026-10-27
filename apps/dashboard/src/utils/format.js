@@ -38,12 +38,21 @@ export function num(v, digits = 1) {
   return Number.isInteger(v) ? count(v) : v.toFixed(digits)
 }
 
+// One formatter each, made once: `toLocale*String` builds a new one on every call
+const HMS = new Intl.DateTimeFormat("en-GB", {
+  hour12: false,
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+})
+const YMD = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" })
+
 /** Unix seconds as a local clock time. */
 export function clock(t, withDate = false) {
   if (!t) return DASH
   const d = new Date(t * 1000)
-  const hms = d.toLocaleTimeString("en-GB", { hour12: false })
-  return withDate ? `${d.toLocaleDateString("en-CA")} ${hms}` : hms
+  const hms = HMS.format(d)
+  return withDate ? `${YMD.format(d)} ${hms}` : hms
 }
 
 /** A span of seconds: "45 s", "12 min", "3.5 h". */

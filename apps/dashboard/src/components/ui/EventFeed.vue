@@ -13,7 +13,7 @@
 import { computed } from "vue"
 
 import { RARE } from "@/stores/live"
-import { useRunStore } from "@/stores/run"
+import { useThemeStore } from "@/stores/theme"
 import { clock } from "@/utils/format"
 import { status } from "@/utils/palette"
 
@@ -24,9 +24,9 @@ const props = defineProps({
 })
 
 const ICON = { good: "i-carbon-checkmark-filled", bad: "i-carbon-error-filled", warn: "i-carbon-warning-alt-filled", idle: "i-carbon-dot-mark" }
-const run = useRunStore()
+const theme = useThemeStore()
 const shown = computed(() => props.events.slice(0, props.limit))
-const tone = (kind) => (void run.theme, status(RARE[kind] || "idle"))
+const tone = (kind) => (void theme.dark, status(RARE[kind] || "idle"))
 const detail = (e) =>
   Object.entries(e)
     .filter(([k]) => k !== "kind" && k !== "t")

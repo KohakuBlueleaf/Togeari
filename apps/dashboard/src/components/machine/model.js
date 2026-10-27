@@ -49,7 +49,9 @@ export function perSecond(s) {
 
 export const mean = (s) => (s?.v.length ? s.v.reduce((a, b) => a + b, 0) / s.v.length : null)
 export const last = (s) => (s?.v.length ? s.v[s.v.length - 1] : null)
-export const peak = (s) => (s?.v.length ? Math.max(...s.v) : null)
+/** The greatest sample: the buckets' highs when the series is bucketed. */
+export const peak = (s) =>
+  (s?.hi || s?.v)?.length ? (s.hi || s.v).reduce((a, b) => Math.max(a, b)) : null
 
 /** `a + b` sample by sample (either alone when the other is missing). */
 function added(a, b) {
@@ -78,7 +80,12 @@ function share(a, b) {
 export function machineModel(samples, built, tables) {
   const S = (name) => samples?.[name] || null
 
-  const phases = PHASES.map(([key, label, note]) => ({ key, label, note, share: growth(S(`dispatcher/phase/${key}`)) ?? 0 }))
+  const phases = PHASES.map(([key, label, note]) => ({
+    key,
+    label,
+    note,
+    share: growth(S(`dispatcher/phase/${key}`)) ?? 0,
+  }))
   const dispatcher = {
     busy: growth(S("dispatcher/busy_s")),
     busyTrend: perSecond(S("dispatcher/busy_s")),
@@ -90,13 +97,28 @@ export function machineModel(samples, built, tables) {
     phaseTop: Math.max(1e-9, ...phases.map((p) => p.share)),
   }
 
-  const states = JOB_STATES.map((s) => ({ key: s, note: JOB_STATE_NOTE[s], mean: mean(S(`jobs/${s}`)), last: last(S(`jobs/${s}`)), series: S(`jobs/${s}`) }))
+  const states = JOB_STATES.map((s) => ({
+    key: s,
+    note: JOB_STATE_NOTE[s],
+    mean: mean(S(`jobs/${s}`)),
+    last: last(S(`jobs/${s}`)),
+    series: S(`jobs/${s}`),
+  }))
   const resident = S("jobs/resident")
-  const pool = { states, mean: mean(resident), last: last(resident), peak: peak(resident), trend: resident?.v || [], series: resident }
+  const pool = {
+    states,
+    mean: mean(resident),
+    last: last(resident),
+    peak: peak(resident),
+    trend: resident?.v || [],
+    series: resident,
+  }
 
   const entries = tables.entry || []
   const sum = (k, f) => entries.reduce((n, e) => n + (e.metrics[k]?.[f] ?? 0), 0)
-  const main = [...entries].sort((a, b) => (b.metrics.admitted?.n ?? 0) - (a.metrics.admitted?.n ?? 0))[0]
+  const main = [...entries].sort(
+    (a, b) => (b.metrics.admitted?.n ?? 0) - (a.metrics.admitted?.n ?? 0),
+  )[0]
   const jobs = {
     admitted: sum("admitted", "n"),
     admittedRate: sum("admitted", "rate"),
@@ -126,8 +148,16 @@ export function machineModel(samples, built, tables) {
       config: l.config,
       units,
       queue: { mean: mean(queue), last: last(queue), peak: peak(queue), series: queue },
-      engineQueue: { mean: mean(engineWaiting), last: last(engineWaiting), peak: peak(engineWaiting), series: engineWaiting },
-      waiting: { mean: (mean(queue) ?? 0) + (mean(engineWaiting) ?? 0), series: added(queue, engineWaiting) },
+      engineQueue: {
+        mean: mean(engineWaiting),
+        last: last(engineWaiting),
+        peak: peak(engineWaiting),
+        series: engineWaiting,
+      },
+      waiting: {
+        mean: (mean(queue) ?? 0) + (mean(engineWaiting) ?? 0),
+        series: added(queue, engineWaiting),
+      },
       inflight: { mean: mean(inflight), last: last(inflight), series: inflight },
       unitsUp: last(S(`lane/${l.name}/units_up`)),
       capacity: cap || null,
@@ -152,7 +182,9 @@ function unitModel(name, S, spec, table) {
   const fill = share(inflight, S(`${p}free`))
   const caps = []
   const free = S(`${p}free`)
-  if (inflight && free) for (let i = 0; i < Math.min(inflight.v.length, free.v.length); i++) caps.push(inflight.v[i] + free.v[i])
+  if (inflight && free)
+    for (let i = 0; i < Math.min(inflight.v.length, free.v.length); i++)
+      caps.push(inflight.v[i] + free.v[i])
   const errors = table?.errors?.n ?? 0
   const outages = last(S(`${p}outage_rejects`)) ?? 0
   const items = growth(S(`${p}done`))
@@ -187,7 +219,8 @@ export const UNIT_STATE = {
 /** A policy as the machine record describes it (`{type, ...settings}`), or a plain value. */
 export function policyText(v) {
   if (v === null || v === undefined) return null
-  if (typeof v !== "object") return String(v).replace(/^<(?:[\w.]+\.)?(\w+) object at 0x[0-9A-Fa-f]+>$/, "$1")
+  if (typeof v !== "object")
+    return String(v).replace(/^<(?:[\w.]+\.)?(\w+) object at 0x[0-9A-Fa-f]+>$/, "$1")
   if (!v.type) return JSON.stringify(v)
   const args = Object.entries(v)
     .filter(([k]) => k !== "type")

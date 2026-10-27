@@ -1,7 +1,7 @@
 import { defineStore } from "pinia"
 import { computed, ref, watch } from "vue"
 
-import { api } from "@/api/client"
+import { api } from "@/utils/api"
 import { useRunStore } from "@/stores/run"
 
 /** The machine's rare events, kept from the stream while the run is live, with their tone. */

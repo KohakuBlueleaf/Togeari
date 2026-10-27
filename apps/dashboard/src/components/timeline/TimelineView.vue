@@ -56,14 +56,15 @@ import { computed } from "vue"
 import TimeChart from "@/components/charts/TimeChart.vue"
 import SectionCard from "@/components/ui/SectionCard.vue"
 import { useLoad } from "@/composables/useLoad"
+import { useStep } from "@/composables/useStep"
 import { RARE, useLiveStore } from "@/stores/live"
 import { useRunStore } from "@/stores/run"
 import { useThemeStore } from "@/stores/theme"
 import { api, SAMPLE_POINTS } from "@/utils/api"
+import { bucket } from "@/utils/fine"
 import { count, num, rate, us } from "@/utils/format"
 import { phase, series, status } from "@/utils/palette"
 
-const POINTS = 300
 const run = useRunStore()
 const theme = useThemeStore()
 const live = useLiveStore()
@@ -74,42 +75,44 @@ const { data: entries } = useLoad(
   () => null,
   [],
 )
-const { data: jobSeries } = useLoad(
-  async (r) => {
-    const out = await Promise.all((entries.value || []).map((e) => api.series(r.runId, e.entity, "job", r.t0, r.t1, POINTS, "rate")))
-    return out
-  },
-  () => (entries.value || []).map((e) => e.entity).join(","),
+// Every entry's jobs and every lane's items, all stored rows in one read; bucketed here at the
+// chosen resolution. A lane's p90 needs its histograms: the server merges them at that step.
+const { step, clip } = useStep()
+const laneList = computed(() => (run.info?.names || []).filter((n) => n.kind === "lane"))
+const finePairs = computed(() => [...(entries.value || []).map((e) => [e.entity, "job"]), ...laneList.value.map((l) => [`lane:${l.id}`, "service"])])
+const { data: fine } = useLoad(
+  (r, { signal, previous, refresh }) => (finePairs.value.length ? api.fine(r.runId, finePairs.value, { t0: r.t0, t1: r.t1, signal, previous, refresh }) : null),
+  () => finePairs.value.map((p) => p.join("/")).join(","),
 )
 const { data: samples } = useLoad(
   (r, { signal, emit, previous, refresh }) => api.sampleStream(r.runId, { names: ["jobs/resident", "writer/tick_ms", "ring/pending", "ring/dropped"], prefix: ["lane/"], t0: r.t0, t1: r.t1, points: SAMPLE_POINTS }, { signal, previous, refresh, onPart: emit }),
   () => null,
   {},
 )
-const { data: laneSeries } = useLoad(
-  async (r) => {
-    const lanes = (r.info?.names || []).filter((n) => n.kind === "lane")
-    return Promise.all(
-      lanes.map(async (l) => {
-        const e = `lane:${l.id}`
-        const [rateS, p90] = await Promise.all([api.series(r.runId, e, "service", r.t0, r.t1, POINTS, "rate"), api.series(r.runId, e, "service", r.t0, r.t1, POINTS, "p90")])
-        return { id: l.id, name: l.name, rate: rateS, p90 }
-      }),
-    )
-  },
-  () => null,
+const { data: laneP90 } = useLoad(
+  (r, { signal, previous, refresh }) =>
+    laneList.value.length
+      ? api.seriesEach(
+          r.runId,
+          laneList.value.map((l) => `lane:${l.id}`),
+          "service",
+          { t0: r.t0, t1: r.t1, step: step.value, stat: "p90", signal, previous, refresh },
+        )
+      : [],
+  () => [laneList.value.map((l) => l.id).join(","), step.value],
   [],
 )
+const rated = (k) => (fine.value?.series?.[k] ? bucket(fine.value.series[k], { stat: "rate", step: step.value, clip: clip.value }) : null)
 
 const line = (s, label, color, opts = {}) => (s?.t?.length ? { x: s.t, series: [{ label, values: s.v, color, ...(s.lo ? { band: [s.lo, s.hi] } : {}), ...opts }] } : { x: [], series: [] })
 
 const jobs = computed(() => {
   void theme.dark
-  const all = jobSeries.value || []
+  const all = (entries.value || []).map((_, k) => rated(k)).filter(Boolean)
   if (!all.length || !all[0].t.length) return { x: [], series: [] }
-  // Entries add up on the first entry's buckets
+  // Entries add up bucket by bucket (the same stored rows, so the same buckets)
   const x = all[0].t
-  const sum = x.map((t, i) => all.reduce((acc, s) => acc + (s.t[i] === t ? (s.v[i] ?? 0) : 0), 0))
+  const sum = x.map((_, i) => all.reduce((acc, s) => acc + (s.v[i] ?? 0), 0))
   return { x, series: [{ label: "jobs/s", values: sum, color: series(1), fill: true }] }
 })
 const resident = computed(() => (void theme.dark, line(samples.value?.["jobs/resident"], "resident", series(0), { fill: true })))
@@ -129,13 +132,17 @@ const laneMarks = computed(() => {
 
 const lanes = computed(() => {
   void theme.dark
-  return (laneSeries.value || []).map((l) => ({
-    id: l.id,
-    name: l.name,
-    rate: line(l.rate, "items/s", series(0), { fill: true }),
-    queue: line(samples.value?.[`lane/${l.name}/queue`], "queued", phase("queue"), { fill: true }),
-    p90: l.p90?.t?.length ? { x: l.p90.t, series: [{ label: "p90", values: l.p90.v, color: phase("service"), band: [l.p90.lo, l.p90.hi] }] } : { x: [], series: [] },
-  }))
+  const lead = (entries.value || []).length
+  return laneList.value.map((l, i) => {
+    const p90 = laneP90.value?.[i]
+    return {
+      id: l.id,
+      name: l.name,
+      rate: line(rated(lead + i), "items/s", series(0), { fill: true }),
+      queue: line(samples.value?.[`lane/${l.name}/queue`], "queued", phase("queue"), { fill: true }),
+      p90: p90?.t?.length ? { x: p90.t, series: [{ label: "p90", values: p90.v, color: phase("service"), band: [p90.lo, p90.hi] }] } : { x: [], series: [] },
+    }
+  })
 })
 
 const health = computed(() => {

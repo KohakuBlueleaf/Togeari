@@ -109,6 +109,7 @@ import StatementTable from "@/components/ui/StatementTable.vue"
 import WaitToggle from "@/components/ui/WaitToggle.vue"
 import { useLoad } from "@/composables/useLoad"
 import { usePrograms } from "@/composables/usePrograms"
+import { useStep } from "@/composables/useStep"
 import { useLiveStore } from "@/stores/live"
 import { usePrefsStore } from "@/stores/prefs"
 import { useRangeStore } from "@/stores/range"
@@ -116,6 +117,7 @@ import { useRunStore } from "@/stores/run"
 import { useSelectionStore } from "@/stores/selection"
 import { useThemeStore } from "@/stores/theme"
 import { api, SAMPLE_POINTS } from "@/utils/api"
+import { bucket } from "@/utils/fine"
 import { count, num, pct, rate, us } from "@/utils/format"
 import { PHASE_LABEL, phase, series } from "@/utils/palette"
 import { mean, statementRows, totalTime } from "@/utils/statements"
@@ -158,12 +160,17 @@ const { data: samples } = useLoad(
 
 // The entry with the most jobs drives the throughput chart
 const mainEntry = computed(() => [...(entryTable.value || [])].sort((a, b) => (b.metrics.admitted?.n ?? 0) - (a.metrics.admitted?.n ?? 0))[0])
+// Admitted and done, every stored row; bucketed here at the chosen resolution
+const { step, clip } = useStep()
 const { data: tp } = useLoad(
-  async (r) => {
+  (r, { signal, previous, refresh }) => {
     const e = mainEntry.value
     if (!e) return null
-    const [adm, done] = await Promise.all([api.series(r.runId, e.entity, "admitted", r.t0, r.t1, 300, "rate"), api.series(r.runId, e.entity, "job", r.t0, r.t1, 300, "rate")])
-    return { adm, done }
+    const pairs = [
+      [e.entity, "admitted"],
+      [e.entity, "job"],
+    ]
+    return api.fine(r.runId, pairs, { t0: r.t0, t1: r.t1, signal, previous, refresh })
   },
   () => mainEntry.value?.entity,
 )
@@ -201,17 +208,20 @@ const resident = computed(() => {
   return { values, last: values[values.length - 1] ?? null, peak: highs.length ? highs.reduce((a, b) => Math.max(a, b)) : null }
 })
 
-// Throughput: admitted and done on one x (the done series' buckets)
+// Throughput: admitted and done on one x (both on the same rows, so the same buckets)
 const throughput = computed(() => {
   const d = tp.value
-  if (!d || !d.done.t.length) return { x: [], series: [] }
-  const at = new Map(d.adm.t.map((t, i) => [t, d.adm.v[i]]))
+  if (!d?.series?.length) return { x: [], series: [] }
+  const opts = { stat: "rate", step: step.value, clip: clip.value }
+  const adm = bucket(d.series[0], opts)
+  const done = bucket(d.series[1], opts)
+  if (!done.t.length) return { x: [], series: [] }
   void theme.dark
   return {
-    x: d.done.t,
+    x: done.t,
     series: [
-      { label: "Admitted", values: d.done.t.map((t) => at.get(t) ?? 0), color: series(0) },
-      { label: "Done", values: d.done.v, color: series(1), fill: true },
+      { label: "Admitted", values: adm.v, color: series(0) },
+      { label: "Done", values: done.v, color: series(1), fill: true },
     ],
   }
 })

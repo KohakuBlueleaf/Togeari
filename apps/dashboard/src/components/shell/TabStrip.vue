@@ -22,6 +22,12 @@
         </button>
         <button v-if="range.brushed" class="seg-btn seg-btn-on flex items-center gap-1" title="Back to the preset range (double-click a chart: back one zoom)" @click="range.unbrush()"><span class="i-carbon-zoom-area text-[12px]" /><span v-if="!compact">brushed</span><span class="i-carbon-close text-[12px]" /></button>
       </div>
+      <label class="flex items-center gap-1 text-[11px] text-warm-500 shrink-0" title="Rate charts' buckets: Auto one per screen pixel, Full every stored row (1 s), or a fixed step">
+        <span class="i-carbon-chart-average text-[13px]" />
+        <select v-model="prefs.resolution" class="bg-transparent kt-v2-line border rounded-md h-6 px-1 text-[11px]">
+          <option v-for="[value, label] in RESOLUTIONS" :key="value" :value="value">{{ label }}</option>
+        </select>
+      </label>
       <button class="btn-icon shrink-0" title="Refresh" @click="run.refresh()"><span class="i-carbon-renew" /></button>
     </div>
   </div>
@@ -33,6 +39,7 @@ import { useRoute } from "vue-router"
 
 import { useCompact } from "@/composables/useCompact"
 import { useLiveStore } from "@/stores/live"
+import { RESOLUTIONS, usePrefsStore } from "@/stores/prefs"
 import { PRESETS, useRangeStore } from "@/stores/range"
 import { useRunStore } from "@/stores/run"
 import { useRunsStore } from "@/stores/runs"
@@ -44,6 +51,7 @@ const route = useRoute()
 const run = useRunStore()
 const runs = useRunsStore()
 const range = useRangeStore()
+const prefs = usePrefsStore()
 const live = useLiveStore()
 const compact = useCompact()
 const view = computed(() => viewOf(route))

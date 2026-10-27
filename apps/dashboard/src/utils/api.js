@@ -5,6 +5,8 @@
  * unix seconds; every call returns parsed JSON or throws with the server's error.
  */
 
+import { decodeFine, lastRow, mergeFine } from "@/utils/fine"
+
 async function parsed(r, url) {
   const text = await r.text()
   let body
@@ -42,6 +44,53 @@ async function post(path, body) {
 }
 
 const run = (id, path, params) => get(`run/${encodeURIComponent(id)}/${path}`, params)
+
+/**
+ * The finest rows of `pairs` (`[[entity, metric], ...]`) over `[t0, t1)`, decoded
+ * (`decodeFine`); `columns` among n, sum, lo, hi. A `refresh` of `previous` (a result of the
+ * same pairs) reads only from its last row on and appends.
+ */
+async function fine(id, pairs, { t0, t1, columns = ["n"], signal, previous, refresh = false }) {
+  const since = refresh ? lastRow(previous) : null
+  const params = {
+    pairs: pairs.map(([e, m]) => `${e}/${m}`).join(","),
+    t0,
+    t1,
+    since,
+    columns: columns.join(","),
+  }
+  const url = `/api/run/${encodeURIComponent(id)}/fine${query(params)}`
+  const r = await fetch(url, { signal })
+  if (!r.ok) await parsed(r, url)
+  const got = decodeFine(await r.arrayBuffer())
+  return since === null ? got : mergeFine(previous, got, t0)
+}
+
+/**
+ * One series per entity of `entities`, bucketed by the server at `step` seconds (quantiles:
+ * merged histograms), read together. A `refresh` of `previous` (a result of the same query at
+ * the same step) reads only from its last bucket on and appends.
+ */
+async function seriesEach(id, entities, metric, { t0, t1, step, stat, signal, previous, refresh }) {
+  const held =
+    refresh && previous?.length === entities.length && previous.every((s) => s.step === step)
+  const since = held
+    ? Math.max(...previous.map((s) => (s.t.length ? s.t[s.t.length - 1] : -Infinity)))
+    : null
+  const params = { entities: entities.join(","), metric, t0, t1, step, stat }
+  if (Number.isFinite(since)) params.since = since
+  const url = `/api/run/${encodeURIComponent(id)}/series_each${query(params)}`
+  const got = await parsed(await fetch(url, { signal }), url)
+  if (params.since === undefined) return got
+  return got.map((s, k) => {
+    const p = previous[k]
+    const a = lowerBound(p.t, Math.floor(t0 / step) * step)
+    const b = lowerBound(p.t, since)
+    const out = { ...s, step }
+    for (const c of ["t", "v", "lo", "hi"]) out[c] = p[c].slice(a, b).concat(s[c])
+    return out
+  })
+}
 
 /** Buckets per sampled series a view asks for (`sampleStream`), whatever the range. */
 export const SAMPLE_POINTS = 1000
@@ -192,6 +241,8 @@ export const api = {
   table: (id, kind, t0, t1) => run(id, "table", { kind, t0, t1 }),
   series: (id, entity, metric, t0, t1, points = 600, stat = "rate") =>
     run(id, "series", { entity, metric, t0, t1, points, stat }),
+  seriesEach,
+  fine,
   top: (id, kind, metric, t0, t1, stat = "p90", k = 10) =>
     run(id, "top", { kind, metric, t0, t1, stat, k }),
   hist: (id, entity, metric, t0, t1) => run(id, "hist", { entity, metric, t0, t1 }),

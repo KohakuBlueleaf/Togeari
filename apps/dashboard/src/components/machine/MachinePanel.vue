@@ -174,11 +174,13 @@ import KnobRow from "@/components/machine/KnobRow.vue"
 import { configChips, perSecond, UNIT_STATE } from "@/components/machine/model"
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue"
 import { useLoad } from "@/composables/useLoad"
+import { useStep } from "@/composables/useStep"
 import { useLiveStore } from "@/stores/live"
 import { useRunStore } from "@/stores/run"
 import { useSelectionStore } from "@/stores/selection"
 import { useThemeStore } from "@/stores/theme"
 import { api } from "@/utils/api"
+import { bucket } from "@/utils/fine"
 import { count, num, pct, rate, us } from "@/utils/format"
 import { phase, series as seriesColor, status } from "@/utils/palette"
 
@@ -218,15 +220,26 @@ const { data: entryTable } = useLoad(
 )
 const entries = computed(() => entryTable.value || [])
 const mainEntry = computed(() => [...entries.value].sort((a, b) => (b.metrics.admitted?.n ?? 0) - (a.metrics.admitted?.n ?? 0))[0])
-const { data: tp } = useLoad(
-  async (r) => {
+// Admitted and done from every stored row, bucketed here at the chosen resolution
+const { step, clip } = useStep()
+const { data: tpRows } = useLoad(
+  (r, { signal, previous, refresh }) => {
     const e = mainEntry.value
     if (kind.value !== "jobs" || !e) return null
-    const [adm, done] = await Promise.all([api.series(r.runId, e.entity, "admitted", r.t0, r.t1, 300, "rate"), api.series(r.runId, e.entity, "job", r.t0, r.t1, 300, "rate")])
-    return { adm, done }
+    const pairs = [
+      [e.entity, "admitted"],
+      [e.entity, "job"],
+    ]
+    return api.fine(r.runId, pairs, { t0: r.t0, t1: r.t1, signal, previous, refresh })
   },
   () => [kind.value, mainEntry.value?.entity],
 )
+const tp = computed(() => {
+  const d = tpRows.value
+  if (!d?.series?.length) return null
+  const opts = { stat: "rate", step: step.value, clip: clip.value }
+  return { adm: bucket(d.series[0], opts), done: bucket(d.series[1], opts) }
+})
 
 const unitId = computed(() => {
   if (!unit.value) return null
@@ -412,12 +425,11 @@ const charts = computed(() => {
     case "jobs": {
       const d = tp.value
       if (d?.done.t.length) {
-        const at = new Map(d.adm.t.map((t, i) => [t, d.adm.v[i]]))
         out.push({
           title: "Jobs per second",
           x: d.done.t,
           series: [
-            { label: "Admitted", values: d.done.t.map((t) => at.get(t) ?? 0), color: seriesColor(0) },
+            { label: "Admitted", values: d.adm.v, color: seriesColor(0) },
             { label: "Done", values: d.done.v, color: seriesColor(1), fill: true },
           ],
           format: (v) => rate(v),

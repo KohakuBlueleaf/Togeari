@@ -79,9 +79,11 @@ import HistChart from "@/components/charts/HistChart.vue"
 import TimeChart from "@/components/charts/TimeChart.vue"
 import Segmented from "@/components/ui/Segmented.vue"
 import { useLoad } from "@/composables/useLoad"
+import { useStep } from "@/composables/useStep"
 import { useSelectionStore } from "@/stores/selection"
 import { useThemeStore } from "@/stores/theme"
 import { api } from "@/utils/api"
+import { bucket } from "@/utils/fine"
 import { count, pct, rate, us } from "@/utils/format"
 import { PHASE_LABEL, PHASE_NOTE, PHASES, phase, series } from "@/utils/palette"
 
@@ -122,14 +124,22 @@ const tiles = computed(() => {
   ]
 })
 
+// Calls per second from every stored row, bucketed here; the p90 needs histograms, merged by
+// the server at the same step
+const { step, clip } = useStep()
 const { data: lat } = useLoad(
-  (r) => (entity.value ? api.series(r.runId, entity.value, metric.value, r.t0, r.t1, 200, "p90") : null),
-  () => [entity.value, metric.value],
+  async (r, { signal, previous, refresh }) => {
+    if (!entity.value) return null
+    const opts = { t0: r.t0, t1: r.t1, step: step.value, stat: "p90", signal, previous: previous && [previous], refresh }
+    return (await api.seriesEach(r.runId, [entity.value], metric.value, opts))[0]
+  },
+  () => [entity.value, metric.value, step.value],
 )
-const { data: callSeries } = useLoad(
-  (r) => (entity.value ? api.series(r.runId, entity.value, "calls", r.t0, r.t1, 200, "rate") : null),
+const { data: callRows } = useLoad(
+  (r, { signal, previous, refresh }) => (entity.value ? api.fine(r.runId, [[entity.value, "calls"]], { t0: r.t0, t1: r.t1, signal, previous, refresh }) : null),
   () => entity.value,
 )
+const callSeries = computed(() => (callRows.value?.series?.[0] ? bucket(callRows.value.series[0], { stat: "rate", step: step.value, clip: clip.value }) : null))
 const { data: hist } = useLoad(
   (r) => (entity.value ? api.hist(r.runId, entity.value, metric.value, r.t0, r.t1) : null),
   () => [entity.value, metric.value],

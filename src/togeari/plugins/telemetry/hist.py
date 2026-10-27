@@ -4,7 +4,7 @@ import numpy as np
 
 from togeari.plugins.common.hist import BINS, quantile
 
-__all__ = ["BINS", "bins", "dense", "edges", "quantile", "sparse"]
+__all__ = ["BINS", "bins", "dense", "dense_rows", "edges", "quantile", "sparse"]
 
 
 def bins(values: np.ndarray) -> np.ndarray:
@@ -36,4 +36,24 @@ def dense(blob: bytes) -> np.ndarray:
     if blob:
         counts = np.frombuffer(blob, dtype="<u4", offset=1)
         out[blob[0] : blob[0] + len(counts)] = counts
+    return out
+
+
+def dense_rows(payload, offsets: np.ndarray, idx: np.ndarray) -> np.ndarray:
+    """The ``(len(idx), 64)`` counts of the ``sparse`` histograms ``idx`` of a column's
+    buffers (``payload`` the bytes, blob ``i`` at ``offsets[i]:offsets[i + 1]``)."""
+    raw = np.frombuffer(payload, np.uint8)
+    off = np.asarray(offsets, np.int64)
+    a, z = off[idx], off[np.asarray(idx) + 1]
+    k = np.where(z > a, (z - a - 1) // 4, 0)
+    out = np.zeros((len(idx), BINS), np.uint64)
+    if not k.sum():
+        return out
+    row = np.repeat(np.arange(len(idx)), k)
+    j = np.arange(int(k.sum())) - np.repeat(np.cumsum(k) - k, k)
+    at = a[row] + 1 + 4 * j
+    vals = raw[at].astype(np.uint64)
+    for s in (1, 2, 3):
+        vals |= raw[at + s].astype(np.uint64) << np.uint64(8 * s)
+    out[row, raw[a[row]].astype(np.int64) + j] = vals
     return out

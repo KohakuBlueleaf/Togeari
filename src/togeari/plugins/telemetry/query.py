@@ -18,7 +18,7 @@ from kohakuvault import ColumnVault, KVault
 
 from togeari.core.contracts import telemetry as T
 from togeari.plugins.telemetry import layout as L
-from togeari.plugins.telemetry.hist import BINS, dense, edges, quantile
+from togeari.plugins.telemetry.hist import BINS, dense_rows, edges, quantile
 from togeari.plugins.telemetry.rollup import Rows, concat
 from togeari.plugins.telemetry.store import files_of
 
@@ -169,9 +169,7 @@ class Run:
                     continue
                 cols = {n: a[idx] for n, a in full.items()}
                 if tier == "r1s":
-                    h = np.stack(
-                        [dense(payload[int(offsets[i]) : int(offsets[i + 1])]) for i in idx]
-                    )
+                    h = dense_rows(payload, offsets, idx)
                 else:
                     h = hs[idx].astype(np.uint64)
             parts.append(Rows(**cols, h=h.reshape(len(idx), BINS)))
@@ -256,41 +254,130 @@ class Run:
         t1: float,
         points: int = 2000,
         stat: str = "rate",
+        step: float | None = None,
     ) -> dict:
         """One series of ``stat`` over ``[t0, t1)``: ``t`` (bucket starts), ``v``, and for the
         band ``lo`` / ``hi`` (the least and greatest value inside each bucket).
 
         ``tier`` is the coarsest one whose bucket fits the point budget (the finest when none
         does), read fine first (``cover``) with the coarser tiers where retention deleted its
-        rows; ``step`` is at least the coarsest bucket that returned rows.
+        rows; ``step`` is at least the coarsest bucket that returned rows. A given ``step``
+        replaces the budget, its buckets at multiples of it (else they start at ``t0``).
         """
+        return self.series_each([entity], metric, t0, t1, points, stat, step)[0]
+
+    def series_each(
+        self,
+        entities: list[int],
+        metric: str | int,
+        t0: float,
+        t1: float,
+        points: int = 2000,
+        stat: str = "rate",
+        step: float | None = None,
+    ) -> list[dict]:
+        """``series`` of each of ``entities``, their rows read together."""
         met = L.METRICS[metric] if isinstance(metric, str) else metric
-        want = max(1.0, (t1 - t0) / max(1, points))
+        want = max(1.0, step if step else (t1 - t0) / max(1, points))
         names = list(TIER)
         base = max([i for i, n in enumerate(names) if TIER[n][0] <= want], default=0)
-        parts = [
-            (t, self.rows(t, a, b, [entity], [met]))
+        read = [
+            (t, self.rows(t, a, b, list(entities), [met]))
             for t, a, b in self.cover(t0, t1, names[base:], fine=True)
         ]
-        parts = [(t, r) for t, r in parts if len(r)]
+        out = []
+        for e in entities:
+            parts = [(t, r.take(np.flatnonzero(r.ent == e))) for t, r in read]
+            parts = [(t, r) for t, r in parts if len(r)]
+            out.append(self._bucketed(parts, names[base], want, 0.0 if step else t0, stat))
+        return out
+
+    @staticmethod
+    def _bucketed(parts: list[tuple[str, Rows]], tier: str, want: float, origin: float, stat):
+        """One series' rows (per tier read) in buckets of at least ``want`` from ``origin``."""
         if not parts:
             return {"tier": None, "step": None, "t": [], "v": [], "lo": [], "hi": []}
         rows = concat(*(r for _, r in parts))
-        tier = names[base]
         period = TIER[tier][0]
         step = max(int(np.ceil(want / period)) * period, *(TIER[t][0] for t, _ in parts))
-        b = ((rows.t - t0) // step).astype(np.int64)
-        out_t, out_v, out_lo, out_hi = [], [], [], []
-        for k in np.unique(b):
-            m = b == k
-            n, s = float(rows.n[m].sum()), float(rows.sum[m].sum())
-            lo, hi = float(rows.lo[m].min()), float(rows.hi[m].max())
-            h = rows.h[m].sum(axis=0)
-            out_t.append(t0 + float(k) * step)
-            out_v.append(_stat(stat, n, s, lo, hi, h, step))
-            out_lo.append(lo if np.isfinite(lo) else None)
-            out_hi.append(hi if np.isfinite(hi) else None)
-        return {"tier": tier, "step": step, "t": out_t, "v": out_v, "lo": out_lo, "hi": out_hi}
+        b = ((rows.t - origin) // step).astype(np.int64)
+        order = np.argsort(b, kind="stable")
+        b = b[order]
+        keys, at = np.unique(b, return_index=True)
+        n = np.add.reduceat(rows.n[order].astype(np.float64), at)
+        s = np.add.reduceat(rows.sum[order].astype(np.float64), at)
+        lo = np.minimum.reduceat(rows.lo[order], at)
+        hi = np.maximum.reduceat(rows.hi[order], at)
+        h = np.add.reduceat(rows.h[order], at) if stat.startswith("p") else None
+        out_v = [
+            _stat(stat, n[i], s[i], lo[i], hi[i], None if h is None else h[i], step)
+            for i in range(len(keys))
+        ]
+        return {
+            "tier": tier,
+            "step": step,
+            "t": (origin + keys.astype(np.float64) * step).tolist(),
+            "v": [None if v is None else float(v) for v in out_v],
+            "lo": [float(y) if np.isfinite(y) else None for y in lo],
+            "hi": [float(y) if np.isfinite(y) else None for y in hi],
+        }
+
+    def fine(self, pairs: list[tuple[int, str | int]], t0: float, t1: float) -> list[list[dict]]:
+        """The finest stored rows of each ``(entity, metric)`` over ``[t0, t1)``, undivided.
+
+        Per pair, its pieces oldest first (``cover``, fine first: a coarser tier only where
+        retention deleted the finer rows): ``{"tier", "period", "start", "n", "sum", "lo",
+        "hi"}``, row ``i`` the bucket at ``start + i * period`` on a dense grid (float32; a
+        bucket without values n and sum 0, lo and hi NaN). A piece starts at the bucket
+        holding its first second, so the range's first bucket is whole.
+        """
+        want = [(e, L.METRICS[m] if isinstance(m, str) else m) for e, m in pairs]
+        ents = np.asarray(sorted({e for e, _ in want}), np.uint64)
+        mets = np.asarray(sorted({m for _, m in want}), np.uint8)
+        out: list[list[dict]] = [[] for _ in want]
+        for tier, a, b in self.cover(t0, t1, None, fine=True):
+            period, seg = TIER[tier]
+            start = math.floor(a / period) * period
+            size = max(0, math.ceil((b - start) / period))
+            if not size:
+                continue
+            pieces = [
+                {
+                    "tier": tier,
+                    "period": period,
+                    "start": start,
+                    "n": np.zeros(size, np.float32),
+                    "sum": np.zeros(size, np.float32),
+                    "lo": np.full(size, np.nan, np.float32),
+                    "hi": np.full(size, np.nan, np.float32),
+                }
+                for _ in want
+            ]
+            for fstart, p in files_of(self.path, tier, seg):
+                if seg is not None and (fstart + seg <= start - period or fstart >= b):
+                    continue
+                with _vault(p) as v:
+                    if not _has(v, "t"):
+                        continue
+                    cols = complete(
+                        {c: v[c].read_array() for c in ("t", "ent", "met", "n", "sum", "lo", "hi")}
+                    )
+                t = cols["t"]
+                keep = (t >= start) & (t < b) & np.isin(cols["ent"], ents)
+                keep &= np.isin(cols["met"], mets)
+                rows = {c: x[keep] for c, x in cols.items()}
+                for (e, m), piece in zip(want, pieces):
+                    sel = (rows["ent"] == e) & (rows["met"] == m)
+                    if not sel.any():
+                        continue
+                    idx = ((rows["t"][sel] - start) // period).astype(np.int64)
+                    np.add.at(piece["n"], idx, rows["n"][sel])
+                    np.add.at(piece["sum"], idx, rows["sum"][sel])
+                    np.fmin.at(piece["lo"], idx, rows["lo"][sel])
+                    np.fmax.at(piece["hi"], idx, rows["hi"][sel])
+            for got, piece in zip(out, pieces):
+                got.append(piece)
+        return out
 
     def hist(self, entity: int, metric: str | int, t0: float, t1: float) -> dict:
         """The merged histogram of one entity's metric over a range, with its quantiles.

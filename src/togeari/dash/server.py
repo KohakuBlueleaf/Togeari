@@ -15,7 +15,13 @@ Routes (all GET unless noted; an entity is ``kind:id``, e.g. ``node:12``, ``lane
   the machine record;
 - ``/api/run/<id>/programs``, ``/api/run/<id>/program/<start>``;
 - ``/api/run/<id>/table?kind=&t0=&t1=``: each entity's metrics over a range;
-- ``/api/run/<id>/series?entity=&metric=&t0=&t1=&points=&stat=``;
+- ``/api/run/<id>/series?entity=&metric=&t0=&t1=&points=&stat=`` (or ``step=``: buckets at
+  multiples of it);
+- ``/api/run/<id>/series_each?entities=a,b&metric=&t0=&t1=&step=&stat=&since=``: one list of
+  those series, read together, from ``since`` (a refresh's last bucket) on;
+- ``/api/run/<id>/fine?pairs=entity/metric,...&t0=&t1=&since=&columns=n,sum,lo,hi``: the
+  finest stored rows of each pair (``Run.fine``) from ``since`` on, undivided, the chosen
+  columns as float32 (``fine_body``), gzipped when accepted;
 - ``/api/run/<id>/top?kind=&metric=&t0=&t1=&stat=&k=``;
 - ``/api/run/<id>/hist?entity=&metric=&t0=&t1=``;
 - ``/api/run/<id>/samples?names=a,b&prefix=p/,q/&t0=&t1=``: every sample; with
@@ -34,6 +40,7 @@ send commands through the proxy (a cross-origin JSON POST needs a preflight this
 grants) nor read the API by rebinding a name to the loopback address.
 """
 
+import gzip
 import hashlib
 import json
 import logging
@@ -58,6 +65,8 @@ MAX_BODY = 1 << 20
 # for its next bytes (the inspector sends a keepalive every second)
 PROBE_S = 1.0
 STREAM_IDLE_S = 15.0
+GZIP_LEVEL = 5
+FINE_COLUMNS = ("n", "sum", "lo", "hi")
 
 
 def entity(text: str) -> int:
@@ -122,6 +131,27 @@ class Runs:
             with self.lock:
                 path = self.by_id.get(rid)
         return None if path is None else Run(path)
+
+
+def fine_body(
+    t0: float, t1: float, series: list[list[dict]], columns: tuple = FINE_COLUMNS
+) -> bytes:
+    """``Run.fine`` as bytes: a little-endian u32 header length, the JSON header (``t0``,
+    ``t1``, ``columns``, per pair its pieces ``{tier, period, start, len}``) padded with
+    spaces to a multiple of 4, then per pair, per piece, each of ``columns`` as float32."""
+    header = {
+        "t0": t0,
+        "t1": t1,
+        "columns": columns,
+        "series": [
+            [{k: p[k] for k in ("tier", "period", "start")} | {"len": len(p["n"])} for p in pieces]
+            for pieces in series
+        ],
+    }
+    head = json.dumps(header).encode()
+    head += b" " * (-len(head) % 4)
+    cols = [p[c].astype("<f4").tobytes() for pieces in series for p in pieces for c in columns]
+    return b"".join([len(head).to_bytes(4, "little"), head, *cols])
 
 
 def public(info: dict) -> dict:
@@ -192,6 +222,18 @@ class _Handler(BaseHTTPRequestHandler):
             log.warning("dash: %s returned a non-finite number", self.path)
             status, body = 500, json.dumps({"error": f"non-finite number in the reply: {exc}"})
         self._send(status, body.encode(), "application/json")
+
+    def _binary(self, body: bytes) -> None:
+        """Bytes, gzipped when the client takes gzip."""
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        if "gzip" in self.headers.get("Accept-Encoding", ""):
+            body = gzip.compress(body, compresslevel=GZIP_LEVEL)
+            self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
 
     def _ndjson(self, values: Any) -> None:
         """Each of ``values`` as one JSON line, sent as it is made (chunked); a failure while
@@ -309,8 +351,31 @@ class _Handler(BaseHTTPRequestHandler):
                         t1,
                         int(q.get("points", 600)),
                         q.get("stat", "rate"),
+                        _f(q, "step", None),
                     ),
                 )
+            case ["series_each"]:
+                # A refresh reads from `since` (the start of the last bucket it holds) on
+                self._json(
+                    200,
+                    run.series_each(
+                        [entity(e) for e in q.get("entities", "").split(",") if e],
+                        q.get("metric", "calls"),
+                        max(t0, _f(q, "since", t0)),
+                        t1,
+                        stat=q.get("stat", "rate"),
+                        step=float(q["step"]),
+                    ),
+                )
+            case ["fine"]:
+                pairs = [p.rsplit("/", 1) for p in q.get("pairs", "").split(",") if p]
+                # A refresh reads from `since` (the start of the last row it holds) on
+                a = max(t0, _f(q, "since", t0))
+                columns = tuple(c for c in q.get("columns", "").split(",") if c) or FINE_COLUMNS
+                if not set(columns) <= set(FINE_COLUMNS):
+                    raise ValueError(f"columns are among {FINE_COLUMNS}")
+                got = run.fine([(entity(e), m) for e, m in pairs], a, t1)
+                self._binary(fine_body(a, t1, got, columns))
             case ["top"]:
                 rows = run.top(
                     q.get("kind", "node"),

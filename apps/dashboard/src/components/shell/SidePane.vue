@@ -9,12 +9,7 @@
   </section>
 
   <!-- Desktop: a fixed column, resizable from its inner edge, collapsible to a strip -->
-  <aside
-    v-else
-    class="relative shrink-0 kt-v2-panel kt-v2-edge flex flex-col min-h-0"
-    :class="side === 'right' ? 'border-l' : 'border-r'"
-    :style="{ width: `${pane.collapsed ? STRIP : pane.width}px` }"
-  >
+  <aside v-else class="relative shrink-0 kt-v2-panel kt-v2-edge flex flex-col min-h-0" :class="side === 'right' ? 'border-l' : 'border-r'" :style="{ width: `${pane.collapsed ? STRIP : pane.width}px` }">
     <template v-if="pane.collapsed">
       <button class="btn-icon mx-auto mt-2" :title="`Show ${label}`" @click="pane.toggle()"><span :class="side === 'right' ? 'i-carbon-chevron-left' : 'i-carbon-chevron-right'" /></button>
       <button class="mt-2 mx-auto flex flex-col items-center gap-2 text-[11px] text-warm-500 hover:text-warm-700 dark:hover:text-warm-200" :title="`Show ${label}`" @click="pane.toggle()">
@@ -24,19 +19,8 @@
     </template>
     <template v-else>
       <div class="flex-1 min-h-0 flex flex-col" :class="scroll ? 'overflow-auto' : ''"><slot /></div>
-      <div
-        class="absolute top-0 h-full w-1.5 cursor-col-resize z-10 transition-colors hover:bg-iolite/30"
-        :class="[side === 'right' ? '-left-[3px]' : '-right-[3px]', pane.dragging ? 'bg-iolite/50' : '']"
-        title="Drag to resize · double-click to reset"
-        @pointerdown="pane.startDrag"
-        @dblclick="pane.reset()"
-      />
-      <button
-        class="absolute top-2.5 z-20 w-5 h-5 rounded-full kt-v2-float flex items-center justify-center text-warm-500 hover:text-warm-800 dark:hover:text-warm-100"
-        :class="side === 'right' ? '-left-2.5' : '-right-2.5'"
-        :title="`Hide ${label}`"
-        @click="pane.toggle()"
-      >
+      <div class="absolute top-0 h-full w-1.5 cursor-col-resize z-10 transition-colors hover:bg-iolite/30" :class="[side === 'right' ? '-left-[3px]' : '-right-[3px]', pane.dragging ? 'bg-iolite/50' : '']" title="Drag to resize · double-click to reset" @pointerdown="pane.startDrag" @dblclick="pane.reset()" />
+      <button class="absolute top-2.5 z-20 w-5 h-5 rounded-full kt-v2-float flex items-center justify-center text-warm-500 hover:text-warm-800 dark:hover:text-warm-100" :class="side === 'right' ? '-left-2.5' : '-right-2.5'" :title="`Hide ${label}`" @click="pane.toggle()">
         <span :class="side === 'right' ? 'i-carbon-chevron-right' : 'i-carbon-chevron-left'" class="text-[11px]" />
       </button>
     </template>

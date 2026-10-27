@@ -57,6 +57,18 @@ export function status(name, m = mode()) {
 /** Axis, grid and ink colours for uPlot in the current mode. */
 export function chrome(m = mode()) {
   return m === "dark"
-    ? { axis: "#8a8078", grid: "rgba(255,255,255,0.06)", tick: "rgba(255,255,255,0.10)", ink: "#e8e0d8", band: "rgba(128,118,230,0.14)" }
-    : { axis: "#77706a", grid: "rgba(36,33,29,0.07)", tick: "rgba(36,33,29,0.14)", ink: "#2e2a26", band: "rgba(90,79,207,0.12)" }
+    ? {
+        axis: "#8a8078",
+        grid: "rgba(255,255,255,0.06)",
+        tick: "rgba(255,255,255,0.10)",
+        ink: "#e8e0d8",
+        band: "rgba(128,118,230,0.14)",
+      }
+    : {
+        axis: "#77706a",
+        grid: "rgba(36,33,29,0.07)",
+        tick: "rgba(36,33,29,0.14)",
+        ink: "#2e2a26",
+        band: "rgba(90,79,207,0.12)",
+      }
 }

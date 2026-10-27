@@ -72,10 +72,11 @@ export default defineConfig({
       "inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] leading-none border border-solid border-amber/40 bg-amber/10 text-amber-shadow dark:text-amber-light",
     "chip-coral":
       "inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] leading-none border border-solid border-coral/40 bg-coral/10 text-coral-shadow dark:text-coral-light",
-    "section-title": "text-[10px] uppercase tracking-wider font-medium text-warm-500 dark:text-warm-400",
+    "section-title":
+      "text-[10px] uppercase tracking-wider font-medium text-warm-500 dark:text-warm-400",
     "card-head": "flex items-center gap-2 h-10 px-4 border-b shrink-0",
     "card-title": "text-sm font-semibold text-warm-800 dark:text-warm-100",
-    "num": "font-mono tabular-nums",
+    num: "font-mono tabular-nums",
     "seg-btn":
       "px-2 h-6 rounded-md text-[11px] font-medium text-warm-600 dark:text-warm-300 hover:bg-warm-200/60 dark:hover:bg-warm-700/40 transition-colors",
     "seg-btn-on": "bg-[var(--v2-card)] text-warm-800 dark:text-warm-100 shadow-sm",

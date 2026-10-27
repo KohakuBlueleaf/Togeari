@@ -26,9 +26,7 @@
         </div>
         <footer class="px-4 py-3 kt-v2-line border-t flex items-center justify-end gap-2">
           <button class="btn-ghost" @click="close">{{ done ? "Close" : "Cancel" }}</button>
-          <button v-if="!done" class="btn-primary" :class="ask.danger ? '!bg-coral hover:!bg-coral-shadow' : ''" :disabled="sending" @click="send">
-            <span v-if="sending" class="i-carbon-circle-dash animate-spin" />{{ ask.confirm || "Apply" }}
-          </button>
+          <button v-if="!done" class="btn-primary" :class="ask.danger ? '!bg-coral hover:!bg-coral-shadow' : ''" :disabled="sending" @click="send"><span v-if="sending" class="i-carbon-circle-dash animate-spin" />{{ ask.confirm || "Apply" }}</button>
         </footer>
       </div>
     </div>

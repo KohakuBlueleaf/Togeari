@@ -20,7 +20,9 @@
       <tr v-for="r in rows" :key="r.addr" class="kt-v2-line border-b last:border-b-0 kt-row cursor-pointer" @click="emit('open', r)">
         <td class="px-4 h-9">
           <span class="font-medium">{{ r.node }}</span>
-          <span class="num text-[10px] text-warm-400 ml-1.5">@{{ r.addr }}<template v-if="r.line"> · L{{ r.line }}</template></span>
+          <span class="num text-[10px] text-warm-400 ml-1.5"
+            >@{{ r.addr }}<template v-if="r.line"> · L{{ r.line }}</template></span
+          >
         </td>
         <td class="px-3 text-right num">{{ count(r.calls) }}</td>
         <template v-if="metric === 'errors'">

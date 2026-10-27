@@ -7,7 +7,8 @@
 /** addr -> statement, over every program. */
 export function statementIndex(programs) {
   const out = new Map()
-  for (const p of programs) for (const s of p.statements || []) out.set(s.addr, { ...s, program: p.start })
+  for (const p of programs)
+    for (const s of p.statements || []) out.set(s.addr, { ...s, program: p.start })
   return out
 }
 
@@ -63,7 +64,17 @@ export function byPath(rows, phases = VALUED) {
   const out = new Map()
   for (const r of rows) {
     if (!r.path) continue
-    const g = out.get(r.path) || { path: r.path, node: r.node, addrs: [], calls: 0, rate: 0, errors: 0, faults: 0, cancelled: 0, time: 0 }
+    const g = out.get(r.path) || {
+      path: r.path,
+      node: r.node,
+      addrs: [],
+      calls: 0,
+      rate: 0,
+      errors: 0,
+      faults: 0,
+      cancelled: 0,
+      time: 0,
+    }
     g.addrs.push(r.addr)
     for (const k of ["calls", "rate", "errors", "faults", "cancelled"]) g[k] += r[k]
     g.time += totalTime(r, phases)

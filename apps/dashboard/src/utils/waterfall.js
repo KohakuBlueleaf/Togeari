@@ -11,7 +11,7 @@ export function waterfall(trace, index, laneName, unitName) {
   const recs = trace?.records || []
   const admit = recs.find((r) => r.kind === "admit")
   const end = recs.find((r) => r.kind === "end")
-  const t0 = admit ? admit.t : recs[0]?.t ?? 0
+  const t0 = admit ? admit.t : (recs[0]?.t ?? 0)
   const at = (t) => (t - t0) * 1e6
   const rows = []
   const open = new Map()
@@ -25,7 +25,13 @@ export function waterfall(trace, index, laneName, unitName) {
     switch (r.kind) {
       case "enqueue": {
         const issue = at(r.t)
-        const row = { addr: r.addr, node: label(r.addr), lane: laneName(r.lane), segs: [], start: issue - (r.queued_us ?? 0) }
+        const row = {
+          addr: r.addr,
+          node: label(r.addr),
+          lane: laneName(r.lane),
+          segs: [],
+          start: issue - (r.queued_us ?? 0),
+        }
         if (r.queued_us) row.segs.push({ phase: "wait", a: issue - r.queued_us, b: issue })
         rows.push(row)
         if (!open.has(r.addr)) open.set(r.addr, [])
@@ -53,17 +59,31 @@ export function waterfall(trace, index, laneName, unitName) {
         const segs = []
         if (wait) segs.push({ phase: "wait", a: done - svc - wait, b: done - svc })
         if (svc) segs.push({ phase: "service", a: done - svc, b: done })
-        rows.push({ addr: r.addr, node: label(r.addr), lane: r.kind === "hit" ? "store hit" : "inline", segs, start: done - svc - wait, end: done, status: r.status })
+        rows.push({
+          addr: r.addr,
+          node: label(r.addr),
+          lane: r.kind === "hit" ? "store hit" : "inline",
+          segs,
+          start: done - svc - wait,
+          end: done,
+          status: r.status,
+        })
         break
       }
       case "fault":
       case "park":
       case "resume":
-        marks.push({ kind: r.kind, t: at(r.t), addr: r.addr, node: r.addr !== null ? label(r.addr) : "" })
+        marks.push({
+          kind: r.kind,
+          t: at(r.t),
+          addr: r.addr,
+          node: r.addr !== null ? label(r.addr) : "",
+        })
         break
     }
   }
-  for (const row of rows) if (row.end === undefined) row.end = Math.max(row.start, ...row.segs.map((s) => s.b))
+  for (const row of rows)
+    if (row.end === undefined) row.end = Math.max(row.start, ...row.segs.map((s) => s.b))
   rows.sort((a, b) => a.start - b.start)
   return { rows, marks, total: end ? at(end.t) : Math.max(0, ...rows.map((r) => r.end)) }
 }

@@ -1,0 +1,17 @@
+{
+  "semi": false,
+  "singleQuote": false,
+  "printWidth": 100,
+  "tabWidth": 2,
+  "trailingComma": "all",
+  "vueIndentScriptAndStyle": false,
+  "endOfLine": "lf",
+  "overrides": [
+    {
+      "files": "*.vue",
+      "options": {
+        "printWidth": 9999
+      }
+    }
+  ]
+}

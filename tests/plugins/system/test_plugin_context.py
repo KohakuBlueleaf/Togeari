@@ -8,7 +8,7 @@ from plugin_programs import PROGRAM, jobs
 
 import togeari.plugins
 from conftest import build, run_jobs
-from togeari.core.plugin.base import BasePlugin
+from togeari.core.plugin.base import JOB_STATES, BasePlugin, job_state
 from togeari.plugins import Counters
 from togeari.plugins.metrics.counters import LISTENED
 
@@ -76,6 +76,40 @@ def test_context_reads_are_copies_of_the_machine_state():
     assert views["events"]["job.admit"] == 8 and views["resident"] == 0
     assert sorted(reader.kinds) == ["job.admit"] * 8 + ["running"] * 8
     assert ctx.libraries == [LIB]
+
+
+class StateProbe(BasePlugin):
+    """At each job end (other jobs still resident): the context's job-state counts beside
+    ``job_state`` applied to every resident job's view."""
+
+    name = "state_probe"
+
+    def __init__(self):
+        self.ctx = None
+        self.pairs: list[tuple[dict, dict]] = []
+
+    def on_load(self, ctx):
+        self.ctx = ctx
+
+    def on_job_end(self, record):
+        by_rule = dict.fromkeys(JOB_STATES, 0)
+        for job in list(self.ctx._m.dispatcher.jobs.values()):
+            by_rule[job_state(job)] += 1
+        self.pairs.append((self.ctx.job_states(), by_rule))
+
+
+def test_job_state_counts_follow_the_job_state_rule():
+    probe = StateProbe()
+    m = build(PROGRAM, "main", n_units=2, latency_ms=2.0, plugins=[probe])
+    try:
+        run_jobs(m, jobs(40))
+    finally:
+        m.stop()
+    assert len(probe.pairs) == 40
+    for counted, by_rule in probe.pairs:
+        assert counted == by_rule
+    seen = {state for counted, _ in probe.pairs for state, n in counted.items() if n}
+    assert {"executing", "queued"} & seen
 
 
 def test_counters_listen_to_their_kinds_only():

@@ -85,6 +85,7 @@ class RunReport(BasePlugin):
         self._closed = False
         self.ctx: PluginContext | None = None
         self.counters: Counters | None = None
+        self._reader: tuple | None = None
         self.own_counters = False
         self.worker: Worker | None = None
         self.started: float | None = None
@@ -132,6 +133,8 @@ class RunReport(BasePlugin):
             self.counters.on_load(ctx.for_plugin(self.counters))
             self.own_counters = True
         self.counters.watchers.append(self._on_counters)
+        self._reader = (self._summary_read, self._on_summary)
+        self.counters.readers.append(self._reader)
         self.recorder.on_load(ctx)
 
     def on_unload(self) -> None:
@@ -139,6 +142,8 @@ class RunReport(BasePlugin):
         if self.counters is not None:
             if self._on_counters in self.counters.watchers:
                 self.counters.watchers.remove(self._on_counters)
+            if self._reader in self.counters.readers:
+                self.counters.readers.remove(self._reader)
             if self.own_counters:
                 self.counters.on_unload()
             self.counters = None
@@ -221,9 +226,14 @@ class RunReport(BasePlugin):
             return
         worker.put(("metrics", snap))
 
-        # The summary so far, read here (dispatcher thread); it replaces the pending one
+    def _on_summary(self, raw: dict, snap: dict) -> None:
+        """The summary so far, built from the sample's raw read where the snapshot is derived;
+        it replaces the pending one."""
+        worker = self.worker
+        if worker is None:
+            return
         records = {**self._records(self.recorder.writer), "writer_dropped": worker.dropped}
-        self._pending = {**self.summary(self._seconds()), **records}
+        self._pending = {**self._compose(raw, snap), **records}
 
     def _handle(self, task: tuple) -> None:
         with self._io:
@@ -284,30 +294,51 @@ class RunReport(BasePlugin):
     def summary(self, seconds: float) -> dict:
         """Totals, throughput, slowest lanes, top waits, weak digests; dispatcher thread or
         stopped dispatcher."""
+        return self._compose(self._summary_read(seconds), self.last)
+
+    def _summary_read(self, seconds: float | None = None) -> dict:
+        """What the summary reads from the machine (dispatcher thread or stopped dispatcher);
+        ``seconds`` None: the run time so far."""
         ctx = self.ctx
-        totals = ctx.summary(seconds)
+        seconds = self._seconds() if seconds is None else seconds
         stats = ctx.stats()
-        weak = stats.get("weak_digests", {})
+        return {
+            "seconds": seconds,
+            "totals": ctx.summary(seconds),
+            "weak": stats.get("weak_digests", {}),
+            "store_weak": stats.get("store_weak", 0),
+            "unit_busy_s": {u["name"]: u["busy_s"] for u in ctx.units()},
+            "plugins": ctx.query_now("plugins"),
+            "events": ctx.event_counts(),
+            "dropped": ctx.events_dropped(),
+        }
+
+    def _compose(self, raw: dict, snap: dict | None) -> dict:
+        """The summary of a read and the snapshot it came with; any thread."""
+        seconds, weak = raw["seconds"], raw["weak"]
 
         # Lanes by their p90 wait, and each unit's busy share
-        lanes = (self.last or {}).get("lanes", {})
+        lanes = (snap or {}).get("lanes", {})
         waits = sorted(
             ((name, ln.get("wait_ms_p90")) for name, ln in lanes.items()),
             key=lambda x: -(x[1] or 0.0),
         )
-        busy = {u["name"]: u["busy_s"] / seconds if seconds > 0 else 0.0 for u in ctx.units()}
+        busy = {
+            name: busy_s / seconds if seconds > 0 else 0.0
+            for name, busy_s in raw["unit_busy_s"].items()
+        }
 
         return {
-            **totals,
+            **raw["totals"],
             "slowest_lanes": [name for name, _ in waits],
             "top_waits_ms_p90": dict(waits[:10]),
             "unit_busy": busy,
             "weak_digests": weak,
             "weak_digest_count": sum(weak.values()),
-            "store_weak": stats.get("store_weak", 0),
-            "plugins": ctx.query_now("plugins"),
-            "events": ctx.event_counts(),
-            "dropped": ctx.events_dropped(),
+            "store_weak": raw["store_weak"],
+            "plugins": raw["plugins"],
+            "events": raw["events"],
+            "dropped": raw["dropped"],
             "metric_lines": self.metric_lines,
             "event_lines": self.event_lines,
         }

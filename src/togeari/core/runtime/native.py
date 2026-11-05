@@ -163,6 +163,9 @@ class NativeDispatcher(_Base):
     """The dispatcher of ``Machine(core="rust")``: the same attributes and methods the machine,
     plugins and queries use on the Python ``Dispatcher``."""
 
+    # ``stats`` is a new dict on every read (``PluginContext.stats`` copies nothing)
+    stats_fresh = True
+
     def __init__(self, machine: Any, seed: int = 0):
         self.m = machine
         self.code = machine.code

@@ -79,11 +79,11 @@ or while the machine is stopped; what they return is a copy the plugin owns.
 | `machine_running()` | whether the dispatcher thread runs; any thread |
 | `for_plugin(plugin)` | a context of the same machine for a plugin run inside this one |
 | `query_names()`, `command_names()` | the table names |
-| `stats()` | a deep copy of the dispatcher's counters (dispatcher thread) |
+| `stats()` | a copy of the dispatcher's counters the plugin owns (dispatcher thread): the native core's `stats` is built afresh on each read and returned as is; the Python core's dict is copied two levels deep |
 | `summary(seconds)` | the machine's run totals (dispatcher thread) |
 | `unit_specs()` | each unit's `spec()` by name (`{"error": repr}` when it raises) |
 | `resident_jobs()` | jobs resident (dispatcher thread) |
-| `job_states()` | resident jobs by `JOB_STATES` (dispatcher thread): `executing` (a call handed to a unit), `queued` (calls issued, none handed to a unit), `waiting` (statements waiting on values or a gate, strands stalled on the window), `parked` (paused, or strands parked with nothing unfinished); per job with issued calls, a scan in window order up to its first call handed to a unit or its last issued call |
+| `job_states()` | resident jobs by `JOB_STATES` (dispatcher thread): `executing` (a call handed to a unit), `queued` (calls issued, none handed to a unit), `waiting` (statements waiting on values or a gate, strands stalled on the window), `parked` (paused, or strands parked with nothing unfinished); per job with issued calls, a scan in window order up to its first call handed to a unit or its last issued call; the native core counts them in one pass (`_job_states`) without building job views |
 | `hook_seconds()` | seconds spent in each plugin's hooks (dispatcher thread) |
 | `event_counts()`, `events_dropped()` | events emitted by kind; events each subscriber dropped |
 | `construction()` | `default_entry`, `passes`, `bind`, `store`, `contributed_policies` (names), `warnings` |

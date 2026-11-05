@@ -12,11 +12,18 @@ are within one bin (0.42 or 0.58 of an octave) of the exact ones, and a
 sample costs the same at any rate. Each snapshot goes to the
 ``watchers``, answers the ``counters`` query and, with ``emit``, is a
 ``counters`` bus event.
+
+Threads: the dispatcher only takes the raw read of each sample (the machine's totals, the
+job states, the listener windows, and each ``readers`` entry's read); the ticker thread
+derives the snapshot from it and calls the watchers and each reader's use. The last sample,
+at machine stop, is read and derived on the stopping thread. Samples are derived in the order
+they are read, and every listener window and job-end window lands in exactly one snapshot.
 """
 
 import threading
 import time
 from collections.abc import Callable
+from typing import Any
 
 from togeari.core.contracts.io import JobRecord
 from togeari.core.plugin.base import BasePlugin, PluginContext
@@ -69,11 +76,16 @@ class Counters(BasePlugin):
         self.interval_s = interval_s
         self.emit = emit
         self.watchers: list[Callable[[dict], None]] = []
+        # (read, use): ``read()`` runs on the dispatcher with the sample's raw read,
+        # ``use(value, snap)`` where the snapshot is derived
+        self.readers: list[tuple[Callable[[], Any], Callable[[Any, dict], None]]] = []
         self.latest: dict = {}
         self.ctx: PluginContext | None = None
         self._lock = threading.Lock()
+        # One sample read and derived at a time, in order
+        self._sample_lock = threading.Lock()
         self._halt = threading.Event()
-        self._pending = threading.Event()
+        self._stopped = False
         self._ticker: threading.Thread | None = None
         self._reset()
 
@@ -109,9 +121,9 @@ class Counters(BasePlugin):
         self._prev = self._totals(loads=False)
         ctx.listen(self._listen, LISTENED, passive=True)
 
-        # The ticker posts one sampling call at a time to the dispatcher.
+        # The ticker posts one raw read at a time to the dispatcher and derives it
         self._halt.clear()
-        self._pending.clear()
+        self._stopped = False
         self._ticker = threading.Thread(
             target=self._tick_loop, name=f"togeari-{self.name}", daemon=True
         )
@@ -125,9 +137,15 @@ class Counters(BasePlugin):
         if self.ctx is not None:
             self.ctx.unlisten(self._listen)
 
+    def on_machine_start(self) -> None:
+        self._stopped = False
+
     def on_machine_stop(self) -> None:
-        # The dispatcher has stopped: the last sample is taken here.
-        self._sample()
+        # The dispatcher has stopped: a read the ticker still waits for is abandoned (it never
+        # runs, or runs as a no-op), and the last sample is taken here
+        self._stopped = True
+        with self._sample_lock:
+            self._sample()
 
     def contribute_queries(self) -> dict:
         return {"counters": lambda m: dict(self.latest)}
@@ -178,15 +196,29 @@ class Counters(BasePlugin):
     # ------------------------------------------------------------ sampling
     def _tick_loop(self) -> None:
         while not self._halt.wait(self.interval_s):
-            if self._pending.is_set() or self.ctx is None:
+            if self.ctx is None or self._stopped:
                 continue
-            self._pending.set()
-            if not self.ctx.post(self._tick):
-                self._pending.clear()
+            with self._sample_lock:
+                raw = self._posted_read()
+                if raw is not None:
+                    self._publish(self._derive(raw), raw)
 
-    def _tick(self) -> None:
-        self._pending.clear()
-        self._sample()
+    def _posted_read(self) -> dict | None:
+        """The raw read, taken on the dispatcher; None when the machine stops first."""
+        box: list[dict] = []
+        done = threading.Event()
+
+        def read() -> None:
+            if not self._stopped:
+                box.append(self._read())
+            done.set()
+
+        if not self.ctx.post(read):
+            return None
+        while not done.wait(0.05):
+            if self._halt.is_set() or self._stopped:
+                return None
+        return box[0] if box else None
 
     def _totals(self, loads: bool) -> dict:
         """Cumulative numbers read from the machine; dispatcher thread or stopped dispatcher."""
@@ -218,31 +250,54 @@ class Counters(BasePlugin):
         }
 
     def _sample(self) -> dict:
+        """Read, derive and hand on one sample on this thread (the dispatcher's, or after it
+        stopped)."""
         if self.ctx is None or self._prev is None:
             return {}
-        prev, cur = self._prev, self._totals(loads=True)
+        raw = self._read()
+        snap = self._derive(raw)
+        self._publish(snap, raw)
+        return snap
+
+    def _read(self) -> dict:
+        """The sample's raw read: dispatcher thread, or a stopped dispatcher. Takes the
+        listener and job-end windows."""
+        with self._lock:
+            windows = {
+                "nodes": self._nodes,
+                "enqueued": self._enqueued,
+                "submits": self._submits,
+                "queued": self._queued,
+                "service": self._service,
+            }
+            self._nodes, self._enqueued, self._submits = {}, {}, {}
+            self._queued, self._service = {}, {}
+        jobs, self._jobs = self._jobs, self._job_window()
+        return {
+            "t": time.time(),
+            "cur": self._totals(loads=True),
+            "states": self.ctx.job_states(),
+            "dropped": self.ctx.events_dropped(),
+            "windows": windows,
+            "jobs": jobs,
+            "readers": [read() for read, _ in list(self.readers)],
+        }
+
+    def _derive(self, raw: dict) -> dict:
+        """The snapshot of a raw read, against the previous one; any thread, in read order."""
+        prev, cur, w = self._prev, raw["cur"], raw["windows"]
         dt = max(1e-9, cur["t"] - prev["t"])
         kinds = _delta(cur["events"], prev["events"])
-
-        # Listener counts since the previous sample
-        with self._lock:
-            nodes, self._nodes = self._nodes, {}
-            enqueued, self._enqueued = self._enqueued, {}
-            submits, self._submits = self._submits, {}
-            queued, self._queued = self._queued, {}
-            service, self._service = self._service, {}
-        jobs, self._jobs = self._jobs, self._job_window()
-
         snap = {
-            "t": time.time(),
+            "t": raw["t"],
             "dt": dt,
-            "dispatcher": self._dispatcher(prev, cur, dt, kinds, self.ctx.events_dropped()),
-            "lanes": self._lanes(prev, cur, enqueued, queued),
-            "units": self._units(prev, cur, dt, cur["tm"] - prev["tm"], submits, service),
-            "jobs": self._job_counters(self.ctx.job_states(), dt, jobs, kinds),
+            "dispatcher": self._dispatcher(prev, cur, dt, kinds, raw["dropped"]),
+            "lanes": self._lanes(prev, cur, w["enqueued"], w["queued"]),
+            "units": self._units(prev, cur, dt, cur["tm"] - prev["tm"], w["submits"], w["service"]),
+            "jobs": self._job_counters(raw["states"], dt, raw["jobs"], kinds),
             "work": {
                 "calls_per_s": (cur["calls"] - prev["calls"]) / dt,
-                "calls_by_node": nodes,
+                "calls_by_node": w["nodes"],
                 "store_hits": cur["store_hits"] - prev["store_hits"],
                 "store_misses": cur["store_misses"] - prev["store_misses"],
                 "wasted": cur["wasted"] - prev["wasted"],
@@ -250,14 +305,17 @@ class Counters(BasePlugin):
             },
         }
         self._prev = cur
-        self.latest = snap
+        return snap
 
-        # Hand the snapshot on
+    def _publish(self, snap: dict, raw: dict) -> None:
+        """The snapshot to the query, the watchers, each reader's use and the bus."""
+        self.latest = snap
         for fn in list(self.watchers):
             fn(snap)
+        for (_, use), value in zip(list(self.readers), raw["readers"]):
+            use(value, snap)
         if self.emit:
             self.ctx.emit("counters", source=self.name, **snap)
-        return snap
 
     @staticmethod
     def _dispatcher(prev: dict, cur: dict, dt: float, kinds: dict, dropped: dict) -> dict:

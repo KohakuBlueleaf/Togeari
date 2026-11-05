@@ -12,7 +12,7 @@ use pyo3::{PyTraverseError, PyVisit};
 
 use super::core::Core;
 use super::inbox::Inbox;
-use super::state::{effective, InfRef, JobRef, Key, Obj, SlotState};
+use super::state::{effective, InfRef, InfState, JobRef, Key, Obj, SlotState, StrandState};
 use crate::telemetry::python::TelemetryRing;
 
 /// The core, owned by its dispatcher instance. Only the dispatcher thread runs it; another
@@ -685,6 +685,61 @@ impl PyCore {
             ],
         )?;
         Ok(Some(t))
+    }
+
+    /// Resident jobs by ``JOB_STATES``: ``(executing, queued, waiting, parked)``, the rule of
+    /// ``togeari.core.plugin.base.job_state`` in one pass with no job views built.
+    fn _job_states(&self, py: Python<'_>) -> PyResult<(u64, u64, u64, u64)> {
+        let c = self.c();
+        c.outside_region(py);
+        let jobs: Vec<JobRef> = c.jobs.borrow().values().cloned().collect();
+        let (mut executing, mut queued, mut waiting, mut parked) = (0, 0, 0, 0);
+        let (ext, sent) = (intern!(py, "ext"), intern!(py, "sent"));
+        for j in jobs {
+            // Copied out first: reading an item's ``ext`` runs Python
+            let (paused, issued, busy, stalled, items) = {
+                let b = j.borrow();
+                let mut items: Vec<Option<Obj>> = Vec::new();
+                if !b.paused && b.issued > 0 {
+                    for x in b.window.live() {
+                        let x = x.borrow();
+                        if x.state != InfState::Issued {
+                            continue;
+                        }
+                        items.push(x.item.as_ref().map(|i| i.clone_ref(py)));
+                        if items.len() as i64 == b.issued {
+                            break;
+                        }
+                    }
+                }
+                let stalled = b
+                    .strands
+                    .values()
+                    .any(|s| s.borrow().state == StrandState::Stalled);
+                (b.paused, b.issued, b.unfinished != 0 || !b.runnable.is_empty(), stalled, items)
+            };
+            if paused {
+                parked += 1;
+            } else if issued > 0 {
+                let mut sent_one = false;
+                for item in items.iter().flatten() {
+                    if item.bind(py).getattr(ext)?.contains(sent)? {
+                        sent_one = true;
+                        break;
+                    }
+                }
+                if sent_one {
+                    executing += 1;
+                } else {
+                    queued += 1;
+                }
+            } else if busy || stalled {
+                waiting += 1;
+            } else {
+                parked += 1;
+            }
+        }
+        Ok((executing, queued, waiting, parked))
     }
 
     /// A resident job's window as ``(instr, key, state, item)`` rows.

@@ -142,7 +142,7 @@ level.
 | `ctx.service(name)` | another plugin's runtime service |
 | `ctx.signals()`, `ctx.knobs`, `ctx.code` | admission signals, the knob registry (a copy), code memory |
 | `ctx.listen(fn, kinds=None, passive=False)`, `ctx.unlisten(fn)` | `fn(kind, fields)` called synchronously on the dispatcher thread for each event of `kinds` (None: every kind); it must be cheap and must not keep the fields' objects. A listener that only records may say `passive=True`: the native core then keeps running its scheduling regions and hands it a region's events when the region ends; any other listener makes it run every cycle on its GIL path |
-| `ctx.stats()`, `ctx.summary(seconds)` | a deep copy of the dispatcher's counters; the run totals |
+| `ctx.stats()`, `ctx.summary(seconds)` | a copy of the dispatcher's counters the plugin owns; the run totals |
 | `ctx.lanes(loads=False, now=None)`, `ctx.units(loads=False)` | every lane and unit as dicts: state, in flight, rates, busy time, errors, configuration; with `loads`, each unit's `load()` |
 | `ctx.event_counts()`, `ctx.events_dropped()` | events emitted by kind; events each subscriber's queue dropped |
 | `ctx.unit_specs()`, `ctx.construction()`, `ctx.libraries`, `ctx.sig_path` | how the machine was built |
@@ -171,7 +171,7 @@ The `lanes` query and `ctx.lanes()` have different shapes:
 
 | Plugin (`togeari.plugins`) | Does |
 |---|---|
-| `Counters(interval_s=1.0)` | per-interval counters of the dispatcher, lanes, units, jobs (resident jobs by state: `executing`, `queued`, `waiting`, `parked`, and `job_seconds` per state: pool-wide, each sampled count times the interval) and work; the `counters` query and event |
+| `Counters(interval_s=1.0)` | per-interval counters of the dispatcher, lanes, units, jobs (resident jobs by state: `executing`, `queued`, `waiting`, `parked`, and `job_seconds` per state: pool-wide, each sampled count times the interval) and work; the `counters` query and event. The dispatcher takes only each sample's raw read (and each `readers` entry's read); the ticker thread derives the snapshot and calls the watchers |
 | `RunReport(path)` | `spec.json`, `env.json`, `metrics.jsonl`, `events.jsonl[.zst]`, conformance records, `summary.json` (rewritten with every counters snapshot, never dropped under an event flood, and at unload after the writer stops by the unload's deadline; with weak digests by type, `weak_digest_count`, `store_weak`, and `weak_jobs` / `weak_values` of the records) |
 | `Perfetto(path, sample_s=0.25, close_s=10.0)` | a trace file with tracks per dispatcher phase, lane queue, unit and job; at unload the writer drains by the unload's deadline, then the array closes |
 | `Recorder(path, close_s=10.0)` | conformance records of recorded jobs, for `togeari conform`; at unload the writer drains by the unload's deadline, then the record files close |

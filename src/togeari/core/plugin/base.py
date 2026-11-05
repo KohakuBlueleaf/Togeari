@@ -179,8 +179,18 @@ class PluginContext:
 
     # ------------------------------------------------------------ machine views
     def stats(self) -> dict:
-        """A deep copy of the dispatcher's counters (dispatcher thread)."""
-        return copy.deepcopy(self._m.dispatcher.stats)
+        """A copy of the dispatcher's counters the plugin owns (dispatcher thread). The native
+        core builds its ``stats`` afresh on every read; the Python core's dict holds numbers
+        and containers of numbers, copied two levels deep."""
+        d = self._m.dispatcher
+        if getattr(d, "stats_fresh", False):
+            return d.stats
+        return {
+            k: (
+                {kk: copy.copy(vv) for kk, vv in v.items()} if isinstance(v, dict) else copy.copy(v)
+            )
+            for k, v in d.stats.items()
+        }
 
     def dispatcher_totals(self) -> dict:
         """The dispatcher's cumulative scalar counters (cycles, busy seconds, calls, ...) and
@@ -235,9 +245,13 @@ class PluginContext:
 
     def job_states(self) -> dict[str, int]:
         """Resident jobs by ``JOB_STATES`` (dispatcher thread); one ``job_state`` per resident
-        job."""
+        job (the native core counts them in one pass, building no job views)."""
+        d = self._m.dispatcher
+        native = getattr(d, "_job_states", None)
+        if native is not None:
+            return dict(zip(JOB_STATES, native(), strict=True))
         counts = dict.fromkeys(JOB_STATES, 0)
-        for job in list(self._m.dispatcher.jobs.values()):
+        for job in list(d.jobs.values()):
             counts[job_state(job)] += 1
         return counts
 

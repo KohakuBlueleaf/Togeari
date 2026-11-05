@@ -13,11 +13,19 @@ Routes:
   ``{"body": bytes, "content_type": str, **query arguments}``. The answer is
   ``application/x-ndjson``, chunked: one line per finished job, in finishing order, as
   ``present`` makes it (default ``{"key", "entry", "ok", "outputs", "failure", "stats"}``);
-  a job refused before it runs answers ``{"key", "ok": false, "error"}``. Jobs are read while
+  a job refused before it runs (or lost with the run) answers ``{"key", "ok": false, "error",
+  "refused": true}``. Jobs are read while
   earlier ones run, and the answer ends when the body has ended and every job is answered.
 - ``GET /status``: jobs in flight (queued or running), answered, failed, refused; whether the
-  run is alive.
+  run is alive; ``load``: ``received`` (jobs taken in so far), ``queued`` (taken in, not yet
+  read by the machine), ``resident`` (read, not yet answered), ``rate`` (answers per second
+  over the last ``RATE_WINDOW_S``).
 - ``GET /``: the routes.
+
+With a ``balancer`` (``togeari.serve.balancer``), the service reports itself to it: its name,
+the URL the balancer reaches it at (``advertise``, default the bound URL) and its status, every
+``report_s`` and at once whenever the machine has read the last queued job (so a server about
+to run dry is refilled without waiting for the next report); a last report when it stops.
 
 A job's key is unique among the jobs in the service: a missing key is made
 (``job-<n>``), a key already in the service is refused. A client that goes away leaves its
@@ -36,6 +44,8 @@ import logging
 import queue
 import threading
 import time
+import urllib.request
+from collections import deque
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -51,6 +61,11 @@ NDJSON = "application/x-ndjson"
 QUEUE = 256
 # An end marker: the source stops, the run drains
 _END = object()
+# Answers counted in the reported rate: those of the last this many seconds
+RATE_WINDOW_S = 30.0
+# Seconds a report to the balancer may take; the least time between two reports
+REPORT_TIMEOUT_S = 5.0
+REPORT_GAP_S = 0.05
 
 
 def default_present(record: JobRecord) -> dict:
@@ -73,13 +88,17 @@ def default_prepare(job: dict) -> dict:
 
 
 class _Stream:
-    """The run's source: items put by the handlers, until the end marker."""
+    """The run's source: items put by the handlers, until the end marker. ``drained`` is
+    called when the machine has read the last queued item."""
 
     def __init__(self, size: int):
         self.q: queue.Queue = queue.Queue(maxsize=size)
+        self.drained: Callable[[], None] = lambda: None
 
     def __iter__(self):
         while (item := self.q.get()) is not _END:
+            if self.q.empty():
+                self.drained()
             yield item
 
 
@@ -100,7 +119,8 @@ class Service:
     "entry"?, "inputs"}`` turns a posted job into the machine's; ``present(record) -> dict``
     the answer line; ``plugins``: loaded into the machine before the run, in order (an
     inspector before a telemetry plugin that names it); ``queue`` bounds the jobs waiting for
-    the source reader."""
+    the source reader; ``balancer`` / ``advertise`` / ``name`` / ``report_s``: the balancer it
+    reports to (see the module)."""
 
     def __init__(
         self,
@@ -113,6 +133,10 @@ class Service:
         token: str | None = None,
         plugins: tuple | list = (),
         queue_size: int = QUEUE,
+        balancer: str | None = None,
+        advertise: str | None = None,
+        name: str | None = None,
+        report_s: float = 0.5,
     ):
         self.machine, self.sink = machine, sink
         self.prepare, self.present = prepare, present
@@ -122,12 +146,21 @@ class Service:
         self.waiting: dict[str, _Request | None] = {}
         self.lock = threading.Lock()
         self.keys = itertools.count(1)
-        self.counts = {"inflight": 0, "answered": 0, "failed": 0, "refused": 0}
+        self.counts = {"inflight": 0, "answered": 0, "failed": 0, "refused": 0, "received": 0}
+        self.answered_at: deque[float] = deque()
         self.started = 0.0
         self.run_error: BaseException | None = None
         self.server: ThreadingHTTPServer | None = None
         self.runner: threading.Thread | None = None
         self.http: threading.Thread | None = None
+
+        # The balancer it reports to
+        self.balancer = balancer.rstrip("/") if balancer else None
+        self.advertise, self.name, self.report_s = advertise, name, report_s
+        self.reporting = threading.Event()
+        self.poke = threading.Event()
+        self.reporter: threading.Thread | None = None
+        self.stream.drained = self.poke.set
 
     # ------------------------------------------------------------ lifecycle
     def start(self) -> str:
@@ -148,10 +181,25 @@ class Service:
             daemon=True,
         )
         self.http.start()
-        return f"http://{self.host}:{self.port}"
+        url = f"http://{self.host}:{self.port}"
+        if self.balancer is not None:
+            self.advertise = self.advertise or url
+            self.name = self.name or self.advertise
+            self.reporting.set()
+            self.reporter = threading.Thread(
+                target=self._report_loop, name="togeari-serve-report", daemon=True
+            )
+            self.reporter.start()
+        return url
 
     def stop(self, drain: bool = True, timeout: float = 600.0) -> None:
         """Stop taking jobs; with ``drain``, finish the queued and running ones first."""
+        if self.reporter is not None:
+            self.reporting.clear()
+            self.poke.set()
+            self.reporter.join(REPORT_TIMEOUT_S + 1.0)
+            self.reporter = None
+            self._report(leaving=True)
         if self.server is not None:
             self.server.shutdown()
             self.server.server_close()
@@ -161,6 +209,38 @@ class Service:
             if self.runner is not None:
                 self.runner.join(timeout)
         self.machine.stop(drain=drain)
+
+    # ------------------------------------------------------------ reports to the balancer
+    def _report_loop(self) -> None:
+        while self.reporting.is_set():
+            last = time.monotonic()
+            self._report()
+            self.poke.wait(self.report_s)
+            self.poke.clear()
+            # A poke reports at once, but never sooner than REPORT_GAP_S after the last report
+            gap = REPORT_GAP_S - (time.monotonic() - last)
+            if gap > 0:
+                time.sleep(gap)
+
+    def _report(self, leaving: bool = False) -> None:
+        """One report; a balancer that does not answer is tried again at the next."""
+        body = {
+            "name": self.name,
+            "url": self.advertise,
+            "leaving": leaving,
+            "status": self.status(),
+        }
+        headers = {"Content-Type": "application/json"}
+        if self.token is not None:
+            headers["Authorization"] = f"Bearer {self.token}"
+        req = urllib.request.Request(
+            f"{self.balancer}/servers/report", json.dumps(body).encode(), headers
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=REPORT_TIMEOUT_S) as r:
+                r.read()
+        except OSError as exc:
+            log.debug("report to %s failed: %s", self.balancer, exc)
 
     def _run(self) -> None:
         try:
@@ -174,7 +254,8 @@ class Service:
                 self.counts["failed"] += len(waiting)
             for key, req in waiting.items():
                 if req is not None:
-                    req.lines.put({"key": key, "ok": False, "error": f"run ended: {exc!r}"})
+                    line = {"key": key, "ok": False, "error": f"run ended: {exc!r}"}
+                    req.lines.put({**line, "refused": True})
                     self._settle(req)
 
     # ------------------------------------------------------------ the run's sink
@@ -188,6 +269,7 @@ class Service:
             req = self.waiting.pop(record.key, None)
             self.counts["inflight"] -= 1
             self.counts["answered" if record.ok else "failed"] += 1
+            self.answered_at.append(time.monotonic())
         if req is not None:
             try:
                 line = self.present(record)
@@ -218,6 +300,7 @@ class Service:
                     raise ValueError(f"key {key!r} is already in the service")
                 self.waiting[key] = req
                 self.counts["inflight"] += 1
+                self.counts["received"] += 1
             with req.lock:
                 req.owed += 1
             item = SourceItem(key, dict(prepared["inputs"]), prepared.get("entry"))
@@ -232,7 +315,8 @@ class Service:
         except Exception as exc:  # noqa: BLE001 - a refused job is answered, the stream goes on
             with self.lock:
                 self.counts["refused"] += 1
-            req.lines.put({"key": key, "ok": False, "error": f"{type(exc).__name__}: {exc}"})
+            line = {"key": key, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            req.lines.put({**line, "refused": True})
 
     def _drop(self, key: str, req: _Request) -> None:
         """A registered job that never reached the queue, taken back."""
@@ -256,25 +340,40 @@ class Service:
                 req.lines.put(_END)
 
     def status(self) -> dict:
+        now = time.monotonic()
         with self.lock:
             counts = dict(self.counts)
+            while self.answered_at and now - self.answered_at[0] > RATE_WINDOW_S:
+                self.answered_at.popleft()
+            recent = len(self.answered_at)
         alive = self.runner is not None and self.runner.is_alive()
+        uptime = time.time() - self.started if self.started else 0.0
+        queued = self.stream.q.qsize()
         return {
             **counts,
             "running": alive,
             "error": None if self.run_error is None else repr(self.run_error),
-            "uptime_s": round(time.time() - self.started, 1) if self.started else 0.0,
+            "uptime_s": round(uptime, 1),
+            "load": {
+                "received": counts["received"],
+                "queued": queued,
+                "resident": max(0, counts["inflight"] - queued),
+                "rate": recent / max(1e-9, min(RATE_WINDOW_S, uptime or RATE_WINDOW_S)),
+            },
         }
 
     def allowed(self, headers: Any) -> bool:
-        if self.token is None:
-            return True
-        auth = headers.get("Authorization", "")
-        given = [auth.removeprefix("Bearer ") if auth.startswith("Bearer ") else None]
-        given.append(headers.get("X-Togeari-Token"))
-        return any(
-            g is not None and hmac.compare_digest(g.encode(), self.token.encode()) for g in given
-        )
+        return token_ok(headers, self.token)
+
+
+def token_ok(headers: Any, token: str | None) -> bool:
+    """Whether a request's headers carry ``token`` (any request, without one)."""
+    if token is None:
+        return True
+    auth = headers.get("Authorization", "")
+    given = [auth.removeprefix("Bearer ") if auth.startswith("Bearer ") else None]
+    given.append(headers.get("X-Togeari-Token"))
+    return any(g is not None and hmac.compare_digest(g.encode(), token.encode()) for g in given)
 
 
 class _Handler(BaseHTTPRequestHandler):

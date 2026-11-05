@@ -33,6 +33,14 @@ def add(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--telemetry", default=None, help="telemetry directory (inspector + dash)")
     p.add_argument("--prepare", default=None, help="module:attr turning a posted job into inputs")
     p.add_argument("--present", default=None, help="module:attr turning a record into a line")
+    add_balancer_args(p)
+
+
+def add_balancer_args(p: argparse.ArgumentParser) -> None:
+    """``--balancer`` / ``--advertise`` / ``--name``: the balancer a service reports to."""
+    p.add_argument("--balancer", default=None, help="a togeari balance URL to report to")
+    p.add_argument("--advertise", default=None, help="the URL the balancer reaches this at")
+    p.add_argument("--name", default=None, help="this service's name at the balancer")
 
 
 def run(args: argparse.Namespace, out: TextIO) -> int:
@@ -58,6 +66,9 @@ def run(args: argparse.Namespace, out: TextIO) -> int:
         args.port,
         os.environ.get(args.token_env) if args.token_env else None,
         plugins,
+        balancer=args.balancer,
+        advertise=args.advertise,
+        name=args.name,
     )
     return serve_until_signal(service, out)
 

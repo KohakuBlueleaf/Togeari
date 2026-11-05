@@ -14,6 +14,11 @@ job gets exactly one reply.
 - ``swappable``: one model on the device at a time; its queue drains, then the
   oldest waiting model swaps in (sooner once a batch waited ``swap_quantum_ms``);
 - ``priority_streams``: one worker per model on a CUDA stream of its priority.
+
+Every worker runs its batches on a CUDA stream of its own (never the device's default
+stream) and waits only for that stream after a batch: other work on the device (another
+engine in the process, another placement's workers) neither waits behind it nor drains with
+it. Loading, swapping and memory measurement still wait for the device's current streams.
 """
 
 import contextlib
@@ -154,7 +159,7 @@ class DeviceRuntime:
             case "priority_streams":
                 plan = [(name, self._stream(slot.priority)) for name, slot in self.slots.items()]
             case _:
-                plan = [(None, None)]
+                plan = [(None, self._stream(0))]
         for only, stream in plan:
             worker = threading.Thread(
                 target=self._work,
@@ -345,10 +350,13 @@ class DeviceRuntime:
         return torch.cuda.stream(stream) if stream is not None else contextlib.nullcontext()
 
     def _sync(self, stream: Any) -> None:
-        """Wait for ``stream`` (if any) and the current stream of every CUDA device."""
+        """A worker's batch (``stream``): wait for its stream and, on a split placement, the
+        current streams of the other devices (``stream`` covers the first only). None: wait
+        for the current stream of every CUDA device of the placement."""
         if stream is not None:
             stream.synchronize()
-        for gpu in self.gpus:
+        others = self.gpus if stream is None else [g for g in self.gpus if g != self.primary]
+        for gpu in others:
             torch.cuda.current_stream(gpu).synchronize()
 
     def _allocated(self) -> int | None:

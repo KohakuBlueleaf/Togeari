@@ -211,7 +211,7 @@ with machine:
 |---|---|---|
 | `devices` | `("cuda:0",)` | the devices it owns, as the backend names them |
 | `memory_cap_gb` | `None` | allocator cap per device, set before any weights load; under process isolation a device used by several placements gives each placement's process an equal share |
-| `schedule` | `"priority_streams"` | `"priority_streams"`: one worker per module on a stream of its priority; `"co_resident"`: every module on the device, one worker, by priority then arrival; `"swappable"`: one module on the device at a time, its queue drains, then the oldest waiting module swaps in (sooner once a batch waited `swap_quantum_ms`) |
+| `schedule` | `"priority_streams"` | `"priority_streams"`: one worker per module on a stream of its priority; `"co_resident"`: every module on the device, one worker, by priority then arrival; `"swappable"`: one module on the device at a time, its queue drains, then the oldest waiting module swaps in (sooner once a batch waited `swap_quantum_ms`). Every worker runs on a CUDA stream of its own and waits only for it after a batch, so other work on the device (another engine in the process) never drains with it |
 | `isolation` | `"thread"` | `"thread"`: devices on threads of the machine's process; `"process"`: each device in its own process (restarted when it dies), batches crossing by `transport` |
 | `dtype` | (a dtype name) | the precision every module is loaded in |
 | `slots` | 2 (8 under `swappable`) | batch slots per unit; `capacity()` is the free ones |
